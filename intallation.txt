@@ -1,0 +1,44 @@
+Backend:
+
+Part 1: Create the backend server:
+1. npm init -y
+2. npm install express dotenv
+3. npm install --save-dev nodemon
+
+Part 2: Connect MongoDB Atlas:
+npm install mongoose
+
+Part 3: Essential Middleware and Health API:
+Helmet, CORS, Cookie parser, JSON/body parsing, API rate limiting, Versioned health endpoint
+
+npm install cors helmet cookie-parser express-rate-limit
+
+Part 4: Global Error Handling:
+1. Custom AppError class
+2. 404 route handler
+3. Global error middleware
+4. Safe development and production error responses
+5. Temporary routes to verify error handling
+
+Part 5: Validate Environment Variables with Zod:
+Currently, the backend reads environment variables directly through process.env. A missing or invalid value could cause an error later during application execution.
+We’ll create one validated configuration object and use it throughout the backend. Zod validates input against a defined schema, while dotenv loads values from .env into process.env.
+1: Install Zod
+npm install zod
+
+Part 6: Structured Logging with Pino:
+1. Application logger
+2. HTTP request logging
+3. Unique request IDs
+4. Sensitive-header redaction
+5. Proper database and server logs
+6. Request IDs in error responses
+pino-http attaches a child logger to each request as request.log, supports custom request-ID generation, and automatically logs request completion time. Its default numeric request ID is not ideal when an application eventually runs across multiple instances, so we’ll generate UUIDs instead.
+Step 1: Install Pino packages
+npm install pino pino-http
+npm install --save-dev pino-pretty
+We’ll use:
+pino         → Application logger
+pino-http    → Express request/response logger
+pino-pretty  → Readable development logs
+In production, Pino will output structured JSON. In development, pino-pretty will format logs for easier reading. Pino supports transports such as pino-pretty, and transports run separately from the main application thread.
