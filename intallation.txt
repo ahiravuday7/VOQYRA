@@ -42,3 +42,14 @@ pino         → Application logger
 pino-http    → Express request/response logger
 pino-pretty  → Readable development logs
 In production, Pino will output structured JSON. In development, pino-pretty will format logs for easier reading. Pino supports transports such as pino-pretty, and transports run separately from the main application thread.
+
+Part 7: Create the User Schema:
+1. User roles and statuses
+2. User Mongoose model
+3. Password hashing
+4. Password comparison
+5. Private-field protection
+6. Email and phone indexes
+7. A temporary verification script
+Install bcryptjs:
+npm install bcryptjs
