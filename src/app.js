@@ -12,6 +12,8 @@ import requestLoggerMiddleware from "./middlewares/request-logger.middleware.js"
 
 import healthRoutes from "./routes/health.routes.js";
 
+import authRoutes from "./modules/auth/auth.routes.js";
+
 // This creates the Express application instance.
 const app = express();
 
@@ -96,6 +98,7 @@ app.get("/", (request, response) => {
 });
 
 app.use("/api/v1/health", healthRoutes);
+app.use("/api/v1/auth", authRoutes);
 
 /*
 | 404 and Global Error Handling

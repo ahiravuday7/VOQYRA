@@ -91,7 +91,7 @@ soft deletion
 formatted address generation
 efficient user-address queries
 
-Part 9: Authentication Request Validation
+Part 9: Authentication Request Validation:
 1. Reusable request-validation middleware
 2. Registration validation schema
 3. Login validation schema
@@ -108,3 +108,40 @@ Business-rule validation,
 Password confirmation,
 Internal fields rejected,
 Sanitized payload sent to controller
+
+Part 10: Customer Registration API:
+POST /api/v1/auth/register
+
+This route will:
+Validate request
+→ Check duplicate email/phone
+→ Create customer
+→ Hash password automatically
+→ Return a safe user response
+At this point:
+Registration validation works
+Duplicate detection works
+Customer creation works
+Password hashing works
+Public response mapping works
+Role injection is blocked
+Final architecture flow:
+POST /api/v1/auth/register
+          ↓
+auth.routes.js
+          ↓
+validate-request.middleware.js
+          ↓
+auth.controller.js
+          ↓
+auth.service.js
+          ↓
+user.repository.js
+          ↓
+user.model.js
+          ↓
+MongoDB
+          ↓
+user.mapper.js
+          ↓
+201 Created response
