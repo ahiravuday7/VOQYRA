@@ -90,3 +90,21 @@ one default billing address
 soft deletion
 formatted address generation
 efficient user-address queries
+
+Part 9: Authentication Request Validation
+1. Reusable request-validation middleware
+2. Registration validation schema
+3. Login validation schema
+4. Password confirmation validation
+5. Payload sanitization
+6. Protection against unexpected fields such as role
+Zod 4 supports strict object schemas, string transformations, email and E.164 phone validation, and safeParseAsync() for non-throwing validation.
+We already installed Zod earlier, so no new package is required.
+This validation design provides several layers of protection:
+Strict field allowlist,
+Type validation,
+Input normalization,
+Business-rule validation,
+Password confirmation,
+Internal fields rejected,
+Sanitized payload sent to controller
