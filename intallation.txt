@@ -53,3 +53,40 @@ Part 7: Create the User Schema:
 7. A temporary verification script
 Install bcryptjs:
 npm install bcryptjs
+Overall design
+
+This model provides several layers of protection:
+
+Password validation
+        ↓
+Automatic password hashing
+        ↓
+Password excluded from normal queries
+        ↓
+Password removed during JSON conversion
+        ↓
+Authentication-specific query method
+        ↓
+Old JWT detection after password changes
+
+It also supports:
+customer and administrator roles
+account blocking and deactivation
+email verification
+unique email and phone numbers
+user avatars
+soft deletion
+active-user query helpers
+efficient administrative queries
+
+Part 8: Create the Address Schema
+The model supports:
+multiple addresses per user
+home, work, and custom address types
+primary and alternate phone numbers
+country-specific postal validation
+one default shipping address
+one default billing address
+soft deletion
+formatted address generation
+efficient user-address queries
