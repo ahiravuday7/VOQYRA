@@ -13,6 +13,24 @@ export const TOKEN_TYPES = Object.freeze({
   REFRESH: "refresh",
 });
 
+/*
+| Refresh Token Revocation Reasons
+*/
+
+export const REFRESH_SESSION_REVOKE_REASONS = Object.freeze({
+  LOGOUT: "logout",
+  ROTATED: "rotated",
+  PASSWORD_CHANGED: "password-changed",
+  ACCOUNT_BLOCKED: "account-blocked",
+  ACCOUNT_DELETED: "account-deleted",
+  SECURITY: "security",
+  ADMIN_ACTION: "admin-action",
+});
+
+export const REFRESH_SESSION_REVOKE_REASON_VALUES = Object.freeze(
+  Object.values(REFRESH_SESSION_REVOKE_REASONS),
+);
+
 /* HS256 is a symmetric signing algorithm.
 
 This means the same secret is used to:

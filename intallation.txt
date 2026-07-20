@@ -194,3 +194,38 @@ Algorithms are restricted
 Issuer and audience are verified
 Expired tokens are rejected
 Access tokens cannot be used as refresh tokens
+
+Part 12: Refresh Session Model:
+A JWT refresh token should not remain valid only because its signature is valid. We also need a database record so the token can be:
+
+Revoked during logout
+Rotated during token refresh
+Invalidated after password changes
+Invalidated when an account is blocked
+Tracked across multiple devices
+
+We will store only a SHA-256 hash of the refresh token—not the raw token.
+Complete security flow:
+User logs in
+Refresh JWT generated
+Raw token sent securely to client
+SHA-256 token hash stored in MongoDB
+Client later sends refresh token
+JWT signature verified
+Received token hashed
+Database session located
+Check revoked status
+Check expiration
+Accept, rotate, or reject
+
+
+
+info:
+The easiest way to remember is:
+
+Schema       → What data looks like
+Index        → How MongoDB finds/protects data
+Virtual      → Calculated information
+Method       → What one session can do
+Query helper → How sessions can be filtered
+Model        → How the application talks to MongoDB
