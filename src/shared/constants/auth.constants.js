@@ -14,6 +14,24 @@ export const TOKEN_TYPES = Object.freeze({
 });
 
 /*
+| Authentication Cookie Names
+*/
+
+export const AUTH_COOKIE_NAMES = Object.freeze({
+  ACCESS_TOKEN: "cc_access_token",
+  REFRESH_TOKEN: "cc_refresh_token",
+});
+
+/*
+| Authentication Cookie Paths
+*/
+
+export const AUTH_COOKIE_PATHS = Object.freeze({
+  ACCESS_TOKEN: "/api",
+  REFRESH_TOKEN: "/api/v1/auth",
+});
+
+/*
 | Refresh Token Revocation Reasons
 */
 

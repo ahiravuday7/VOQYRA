@@ -60,6 +60,8 @@ const environmentSchema = z.object({
   JWT_ISSUER: z.string().min(1, "JWT_ISSUER is required"),
 
   JWT_AUDIENCE: z.string().min(1, "JWT_AUDIENCE is required"),
+
+  AUTH_COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
 });
 
 /*

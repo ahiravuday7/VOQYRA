@@ -218,6 +218,34 @@ Check revoked status
 Check expiration
 Accept, rotate, or reject
 
+Part 13: Login API and Secure Authentication Cookies
+Flow:
+Validate credentials
+→ Find user
+→ Compare password
+→ Check account status
+→ Generate access and refresh tokens
+→ Store refresh-session hash
+→ Send HTTP-only cookies
+→ Return safe user data
+The complete login flow is:
+
+Validate email and password
+        ↓
+Find the user in MongoDB
+        ↓
+Compare the entered password
+        ↓
+Check whether the account is active
+        ↓
+Generate access and refresh JWTs
+        ↓
+Store the refresh-token hash in MongoDB
+        ↓
+Send both tokens as HTTP-only cookies
+        ↓
+Return safe user information
+
 
 
 info:

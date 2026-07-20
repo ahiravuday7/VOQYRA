@@ -48,3 +48,28 @@ export const createCustomer = ({
     status: USER_STATUSES.ACTIVE,
   });
 };
+
+/*
+| Find User for Authentication
+*/
+
+export const findUserByEmailForAuthentication = (email) => {
+  return User.findByEmailForAuthentication(email);
+};
+
+/*
+| Update Last Login
+*/
+
+export const updateUserLastLoginAt = (userId, lastLoginAt) => {
+  return User.updateOne(
+    {
+      _id: userId,
+    },
+    {
+      $set: {
+        lastLoginAt,
+      },
+    },
+  );
+};
