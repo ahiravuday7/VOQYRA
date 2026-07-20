@@ -34,6 +34,32 @@ const environmentSchema = z.object({
   ADMIN_URL: z.url({
     message: "ADMIN_URL must be a valid URL",
   }),
+
+  JWT_ACCESS_SECRET: z
+    .string()
+    .min(64, "JWT_ACCESS_SECRET must contain at least 64 characters"),
+
+  JWT_REFRESH_SECRET: z
+    .string()
+    .min(64, "JWT_REFRESH_SECRET must contain at least 64 characters"),
+
+  JWT_ACCESS_EXPIRES_IN: z
+    .string()
+    .regex(
+      /^\d+[smhd]$/,
+      "JWT_ACCESS_EXPIRES_IN must include a unit such as 15m",
+    ),
+
+  JWT_REFRESH_EXPIRES_IN: z
+    .string()
+    .regex(
+      /^\d+[smhd]$/,
+      "JWT_REFRESH_EXPIRES_IN must include a unit such as 7d",
+    ),
+
+  JWT_ISSUER: z.string().min(1, "JWT_ISSUER is required"),
+
+  JWT_AUDIENCE: z.string().min(1, "JWT_AUDIENCE is required"),
 });
 
 /*

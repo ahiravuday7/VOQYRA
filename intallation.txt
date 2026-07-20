@@ -145,3 +145,52 @@ MongoDB
 user.mapper.js
           ↓
 201 Created response
+
+
+Part 11: JWT Configuration and Token Utilities:
+1. Secure JWT secrets
+2. Access-token configuration
+3. Refresh-token configuration
+4. Access/refresh token generation
+5. Token verification
+6. Token-type validation
+Install jsonwebtoken:
+npm install jsonwebtoken
+Complete token-generation flow:
+generateAuthTokens(userId)
+generateAccessToken(userId)
+signToken(access configuration)
+Access token returned
+generateRefreshToken(userId)
+signToken(refresh configuration)
+Refresh token returned
+Complete verification flow:
+Token received
+Check token exists
+Verify signature
+Verify algorithm
+Verify expiration
+Verify issuer
+Verify audience
+Check payload is an object
+Check tokenType
+Check user ID in sub
+Return normalized token information
+Security layers in this implementation:
+Long random secrets
+Different access and refresh secrets
+Short access-token lifetime
+Restricted algorithm
+Issuer validation
+Audience validation
+Token-type validation
+Subject validation
+Current user will later be loaded from MongoDB
+At this point:
+Access tokens can be generated
+Refresh tokens can be generated
+Different secrets protect each token type
+Algorithms are restricted
+Issuer and audience are verified
+Expired tokens are rejected
+Access tokens cannot be used as refresh tokens
