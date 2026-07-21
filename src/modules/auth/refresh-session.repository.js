@@ -114,3 +114,38 @@ export const revokeActiveRefreshSessionsForUser = (
     },
   );
 };
+
+/*
+|--------------------------------------------------------------------------
+| Revoke Refresh Session by Token
+|--------------------------------------------------------------------------
+*/
+
+export const revokeRefreshSessionByToken = ({
+  tokenId,
+  tokenHash,
+  reason,
+  lastUsedIp = "",
+}) => {
+  const now = new Date();
+
+  return RefreshSession.findOneAndUpdate(
+    {
+      tokenId,
+      tokenHash,
+      revokedAt: null,
+    },
+    {
+      $set: {
+        revokedAt: now,
+        revokedReason: reason,
+        lastUsedAt: now,
+        lastUsedIp,
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+    },
+  );
+};

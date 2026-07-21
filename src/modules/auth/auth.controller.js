@@ -2,9 +2,10 @@ import {
   loginUser,
   registerCustomer,
   refreshAuthentication,
+  logoutAuthentication,
 } from "./auth.service.js";
 
-import { setAuthCookies } from "./auth-cookie.service.js";
+import { setAuthCookies, clearAuthCookies } from "./auth-cookie.service.js";
 
 import { toPublicUser } from "../users/user.mapper.js";
 
@@ -99,5 +100,32 @@ export const refresh = async (request, response) => {
     data: {
       user: toPublicUser(user),
     },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Logout User
+|--------------------------------------------------------------------------
+*/
+
+export const logout = async (request, response) => {
+  const refreshToken = request.cookies?.[AUTH_COOKIE_NAMES.REFRESH_TOKEN];
+
+  try {
+    await logoutAuthentication(refreshToken, {
+      ipAddress: request.ip,
+    });
+  } finally {
+    /*
+     * Clear browser cookies even if an unexpected
+     * database error occurs during session revocation.
+     */
+    clearAuthCookies(response);
+  }
+
+  return response.status(200).json({
+    success: true,
+    message: "Logout successful",
   });
 };

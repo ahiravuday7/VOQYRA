@@ -271,7 +271,14 @@ Read refresh cookie
 → Commit transaction
 → Replace authentication cookies
 
-
+Part 16: Logout API:
+Logout will:
+Read refresh-token cookie
+→ Verify it when possible
+→ Find the matching refresh session
+→ Revoke that session
+→ Clear access and refresh cookies
+→ Return success
 
 
 info:

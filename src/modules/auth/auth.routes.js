@@ -8,9 +8,16 @@ import {
   loginRequestSchema,
   registerRequestSchema,
   refreshRequestSchema,
+  logoutRequestSchema,
 } from "./auth.validation.js";
 
-import { login, register, getCurrentUser, refresh } from "./auth.controller.js";
+import {
+  login,
+  register,
+  getCurrentUser,
+  refresh,
+  logout,
+} from "./auth.controller.js";
 
 const router = Router();
 
@@ -56,6 +63,20 @@ router.post(
   validateRequest(refreshRequestSchema),
 
   refresh,
+);
+
+/*
+|--------------------------------------------------------------------------
+| User Logout
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/logout",
+
+  validateRequest(logoutRequestSchema),
+
+  logout,
 );
 
 /*

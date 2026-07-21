@@ -225,3 +225,15 @@ export const refreshRequestSchema = z.strictObject({
   params: emptyObjectSchema,
   query: emptyObjectSchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Logout Request Schema
+|--------------------------------------------------------------------------
+*/
+
+export const logoutRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: emptyObjectSchema,
+});

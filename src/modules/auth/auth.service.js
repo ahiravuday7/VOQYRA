@@ -27,6 +27,7 @@ import {
   findRefreshSessionByTokenId,
   revokeActiveRefreshSessionsForUser,
   rotateActiveRefreshSession,
+  revokeRefreshSessionByToken,
 } from "./refresh-session.repository.js";
 
 import { REFRESH_SESSION_REVOKE_REASONS } from "../../shared/constants/auth.constants.js";
@@ -567,4 +568,66 @@ export const refreshAuthentication = async (
   }
 
   return transactionOutcome;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Logout Authentication
+|--------------------------------------------------------------------------
+*/
+
+export const logoutAuthentication = async (
+  rawRefreshToken,
+  requestMetadata = {},
+) => {
+  /*
+   * Logout is intentionally idempotent.
+   *
+   * When the cookie is already missing, there is
+   * no database session that needs to be revoked.
+   */
+  if (!rawRefreshToken) {
+    return {
+      sessionRevoked: false,
+    };
+  }
+
+  let tokenDetails;
+
+  try {
+    tokenDetails = verifyRefreshToken(rawRefreshToken);
+  } catch (error) {
+    /*
+     * Invalid, malformed, expired or previously
+     * unusable cookies should not prevent logout.
+     *
+     * Cookies will still be cleared by the controller.
+     */
+    if (error instanceof AppError && error.statusCode === 401) {
+      return {
+        sessionRevoked: false,
+      };
+    }
+
+    throw error;
+  }
+
+  const ipAddress =
+    typeof requestMetadata.ipAddress === "string"
+      ? requestMetadata.ipAddress.slice(0, 100)
+      : "";
+
+  const revokedSession = await revokeRefreshSessionByToken({
+    tokenId: tokenDetails.tokenId,
+
+    tokenHash: hashToken(rawRefreshToken),
+
+    reason: REFRESH_SESSION_REVOKE_REASONS.LOGOUT,
+
+    lastUsedIp: ipAddress,
+  });
+
+  return {
+    sessionRevoked: Boolean(revokedSession),
+  };
 };
