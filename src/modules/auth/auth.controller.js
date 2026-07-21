@@ -1,8 +1,14 @@
-import { loginUser, registerCustomer } from "./auth.service.js";
+import {
+  loginUser,
+  registerCustomer,
+  refreshAuthentication,
+} from "./auth.service.js";
 
 import { setAuthCookies } from "./auth-cookie.service.js";
 
 import { toPublicUser } from "../users/user.mapper.js";
+
+import { AUTH_COOKIE_NAMES } from "../../shared/constants/auth.constants.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -64,6 +70,34 @@ export const getCurrentUser = async (request, response) => {
 
     data: {
       user: toPublicUser(request.user),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refresh Authentication
+|--------------------------------------------------------------------------
+*/
+
+export const refresh = async (request, response) => {
+  const refreshToken = request.cookies?.[AUTH_COOKIE_NAMES.REFRESH_TOKEN];
+
+  const { user, tokens } = await refreshAuthentication(refreshToken, {
+    ipAddress: request.ip,
+
+    userAgent: request.headers["user-agent"],
+  });
+
+  setAuthCookies(response, tokens);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Authentication refreshed successfully",
+
+    data: {
+      user: toPublicUser(user),
     },
   });
 };

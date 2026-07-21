@@ -7,9 +7,10 @@ import authenticate from "../../middlewares/authenticate.middleware.js";
 import {
   loginRequestSchema,
   registerRequestSchema,
+  refreshRequestSchema,
 } from "./auth.validation.js";
 
-import { login, register, getCurrentUser } from "./auth.controller.js";
+import { login, register, getCurrentUser, refresh } from "./auth.controller.js";
 
 const router = Router();
 
@@ -41,6 +42,20 @@ router.post(
   validateRequest(loginRequestSchema),
 
   login,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Refresh Authentication
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/refresh",
+
+  validateRequest(refreshRequestSchema),
+
+  refresh,
 );
 
 /*

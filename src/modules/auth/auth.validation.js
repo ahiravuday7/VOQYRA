@@ -202,3 +202,26 @@ export const loginRequestSchema = z.strictObject({
   params: z.strictObject({}),
   query: z.strictObject({}),
 });
+
+/*
+|--------------------------------------------------------------------------
+| Empty Request Object
+|--------------------------------------------------------------------------
+*/
+
+const emptyObjectSchema = z.preprocess(
+  (value) => value ?? {},
+  z.strictObject({}),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Refresh Request Schema
+|--------------------------------------------------------------------------
+*/
+
+export const refreshRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: emptyObjectSchema,
+});

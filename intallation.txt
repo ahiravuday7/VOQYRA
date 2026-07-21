@@ -257,6 +257,23 @@ Read access-token cookie
 → Attach user to request
 → Return safe user data
 
+
+Part 15: Refresh-Token Rotation:
+Flow:
+Read refresh cookie
+→ Verify JWT
+→ Find stored refresh session
+→ Compare token hash
+→ Check user and account status
+→ Revoke old session
+→ Generate replacement tokens
+→ Create replacement session
+→ Commit transaction
+→ Replace authentication cookies
+
+
+
+
 info:
 The easiest way to remember is:
 
