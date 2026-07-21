@@ -150,11 +150,26 @@ const verifyToken = ({ token, secret, expectedTokenType }) => {
     });
   }
 
+  if (typeof decodedToken.jti !== "string" || !decodedToken.jti) {
+    throw new AppError("Token does not contain a valid token identifier", 401, {
+      errorCode: "INVALID_TOKEN_ID",
+    });
+  }
+
+  if (
+    !Number.isInteger(decodedToken.iat) ||
+    !Number.isInteger(decodedToken.exp)
+  ) {
+    throw new AppError("Token does not contain valid timestamps", 401, {
+      errorCode: "INVALID_TOKEN_TIMESTAMPS",
+    });
+  }
+
   return {
     userId: decodedToken.sub,
-    tokenId: decodedToken.jti ?? null,
-    issuedAt: decodedToken.iat ?? null,
-    expiresAt: decodedToken.exp ?? null,
+    tokenId: decodedToken.jti,
+    issuedAt: decodedToken.iat,
+    expiresAt: decodedToken.exp,
   };
 };
 

@@ -2,13 +2,14 @@ import { Router } from "express";
 
 import loginRateLimiter from "../../middlewares/login-rate-limit.middleware.js";
 import validateRequest from "../../middlewares/validate-request.middleware.js";
+import authenticate from "../../middlewares/authenticate.middleware.js";
 
 import {
   loginRequestSchema,
   registerRequestSchema,
 } from "./auth.validation.js";
 
-import { login, register } from "./auth.controller.js";
+import { login, register, getCurrentUser } from "./auth.controller.js";
 
 const router = Router();
 
@@ -41,5 +42,13 @@ router.post(
 
   login,
 );
+
+/*
+|--------------------------------------------------------------------------
+| Current Authenticated User
+|--------------------------------------------------------------------------
+*/
+
+router.get("/me", authenticate, getCurrentUser);
 
 export default router;

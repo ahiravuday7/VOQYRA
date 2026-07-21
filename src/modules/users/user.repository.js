@@ -73,3 +73,14 @@ export const updateUserLastLoginAt = (userId, lastLoginAt) => {
     },
   );
 };
+
+/*
+| Find User for Access-Token Authentication
+*/
+
+export const findUserByIdForAuthentication = (userId) => {
+  return User.findOne({
+    _id: userId,
+    deletedAt: null,
+  }).select("+passwordChangedAt");
+};

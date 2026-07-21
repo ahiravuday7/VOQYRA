@@ -246,7 +246,16 @@ Send both tokens as HTTP-only cookies
         ↓
 Return safe user information
 
+Part 14: Authentication Middleware and /auth/me
+Flow:
 
+Read access-token cookie
+→ Verify JWT
+→ Load current user
+→ Check account status
+→ Check whether password changed after token creation
+→ Attach user to request
+→ Return safe user data
 
 info:
 The easiest way to remember is:

@@ -51,3 +51,19 @@ export const login = async (request, response) => {
     },
   });
 };
+
+/*
+| Get Current Authenticated User
+*/
+
+export const getCurrentUser = async (request, response) => {
+  return response.status(200).json({
+    success: true,
+
+    message: "Authenticated user retrieved successfully",
+
+    data: {
+      user: toPublicUser(request.user),
+    },
+  });
+};
