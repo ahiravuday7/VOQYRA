@@ -280,6 +280,12 @@ Read refresh-token cookie
 → Clear access and refresh cookies
 → Return success
 
+Part 17: Role-Based Authorization Middleware
+We’ll now separate authenticated users by role.
+Authentication
+→ Confirms who the user is
+Authorization
+→ Confirms whether that user can access the route
 
 info:
 The easiest way to remember is:
