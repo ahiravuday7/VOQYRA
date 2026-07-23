@@ -333,6 +333,16 @@ sortOrder
 query helpers
 → reusable category filters
 
+Part 19: Category Request Validation
+createCategoryRequestSchema
+→ What new category should be created?
+
+updateCategoryRequestSchema
+→ Which category and what should be changed?
+
+categoryIdRequestSchema
+→ Which category should this action apply to?
+
 
 info:
 The easiest way to remember is:
