@@ -343,6 +343,19 @@ updateCategoryRequestSchema
 categoryIdRequestSchema
 → Which category should this action apply to?
 
+Part 20: Category Repository and Service
+This code handles:
+
+Create category
+Check duplicate slug
+Validate parent category
+Build ancestors and level
+Update category
+Move category in hierarchy
+Prevent circular hierarchy
+Update all descendants after a move
+Set createdBy and updatedBy internally
+
 
 info:
 The easiest way to remember is:
