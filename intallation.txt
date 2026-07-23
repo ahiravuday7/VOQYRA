@@ -356,6 +356,20 @@ Prevent circular hierarchy
 Update all descendants after a move
 Set createdBy and updatedBy internally
 
+Part 21: Category Mapper and Admin Controller
+Mapper:
+“What category information should the API return?”
+
+Controller:
+“How should this HTTP request and response be handled?”
+
+Service:
+“What business rules must be followed?”
+
+Repository:
+“How should Category data be read or written in MongoDB?”
+
+
 
 info:
 The easiest way to remember is:
