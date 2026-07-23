@@ -287,6 +287,53 @@ Authentication
 Authorization
 → Confirms whether that user can access the route
 
+Part 18: Create the Category Model
+Complete model flow
+Category data provided
+        ↓
+Mongoose creates Category document
+        ↓
+Default values applied
+        ↓
+String trimming/lowercasing applied
+        ↓
+pre("validate") runs
+        ↓
+Prevent self-parent
+        ↓
+Root category?
+   Yes → ancestors = [], level = 0
+   No  → validate ancestor duplicates
+        → prevent self in ancestors
+        → level = ancestors.length
+        ↓
+Mongoose field validation runs
+        ↓
+Required/min/max/enum/regex checked
+        ↓
+Document saved in categories collection
+        ↓
+Indexes support fast queries
+        ↓
+Virtuals provide isRoot and isDeleted
+
+The easiest way to remember the model is:
+parent
+→ immediate parent
+ancestors
+→ complete path
+level
+→ hierarchy depth
+status
+→ visible or inactive
+deletedAt
+→ soft deletion
+sortOrder
+→ display sequence
+query helpers
+→ reusable category filters
+
+
 info:
 The easiest way to remember is:
 
