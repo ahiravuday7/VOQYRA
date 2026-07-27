@@ -1,17 +1,25 @@
 Backend:
 
+|--------------------------------------------------------------------------
+
 Part 1: Create the backend server:
 1. npm init -y
 2. npm install express dotenv
 3. npm install --save-dev nodemon
 
+|--------------------------------------------------------------------------
+
 Part 2: Connect MongoDB Atlas:
 npm install mongoose
+
+|--------------------------------------------------------------------------
 
 Part 3: Essential Middleware and Health API:
 Helmet, CORS, Cookie parser, JSON/body parsing, API rate limiting, Versioned health endpoint
 
 npm install cors helmet cookie-parser express-rate-limit
+
+|--------------------------------------------------------------------------
 
 Part 4: Global Error Handling:
 1. Custom AppError class
@@ -20,11 +28,15 @@ Part 4: Global Error Handling:
 4. Safe development and production error responses
 5. Temporary routes to verify error handling
 
+|--------------------------------------------------------------------------
+
 Part 5: Validate Environment Variables with Zod:
 Currently, the backend reads environment variables directly through process.env. A missing or invalid value could cause an error later during application execution.
 We’ll create one validated configuration object and use it throughout the backend. Zod validates input against a defined schema, while dotenv loads values from .env into process.env.
 1: Install Zod
 npm install zod
+
+|--------------------------------------------------------------------------
 
 Part 6: Structured Logging with Pino:
 1. Application logger
@@ -42,6 +54,8 @@ pino         → Application logger
 pino-http    → Express request/response logger
 pino-pretty  → Readable development logs
 In production, Pino will output structured JSON. In development, pino-pretty will format logs for easier reading. Pino supports transports such as pino-pretty, and transports run separately from the main application thread.
+
+|--------------------------------------------------------------------------
 
 Part 7: Create the User Schema:
 1. User roles and statuses
@@ -79,6 +93,8 @@ soft deletion
 active-user query helpers
 efficient administrative queries
 
+|--------------------------------------------------------------------------
+
 Part 8: Create the Address Schema
 The model supports:
 multiple addresses per user
@@ -90,6 +106,8 @@ one default billing address
 soft deletion
 formatted address generation
 efficient user-address queries
+
+|--------------------------------------------------------------------------
 
 Part 9: Authentication Request Validation:
 1. Reusable request-validation middleware
@@ -108,6 +126,8 @@ Business-rule validation,
 Password confirmation,
 Internal fields rejected,
 Sanitized payload sent to controller
+
+|--------------------------------------------------------------------------
 
 Part 10: Customer Registration API:
 POST /api/v1/auth/register
@@ -146,6 +166,7 @@ user.mapper.js
           ↓
 201 Created response
 
+|--------------------------------------------------------------------------
 
 Part 11: JWT Configuration and Token Utilities:
 1. Secure JWT secrets
@@ -195,6 +216,8 @@ Issuer and audience are verified
 Expired tokens are rejected
 Access tokens cannot be used as refresh tokens
 
+|--------------------------------------------------------------------------
+
 Part 12: Refresh Session Model:
 A JWT refresh token should not remain valid only because its signature is valid. We also need a database record so the token can be:
 
@@ -217,6 +240,8 @@ Database session located
 Check revoked status
 Check expiration
 Accept, rotate, or reject
+
+|--------------------------------------------------------------------------
 
 Part 13: Login API and Secure Authentication Cookies
 Flow:
@@ -246,6 +271,8 @@ Send both tokens as HTTP-only cookies
         ↓
 Return safe user information
 
+|--------------------------------------------------------------------------
+
 Part 14: Authentication Middleware and /auth/me
 Flow:
 
@@ -257,6 +284,7 @@ Read access-token cookie
 → Attach user to request
 → Return safe user data
 
+|--------------------------------------------------------------------------
 
 Part 15: Refresh-Token Rotation:
 Flow:
@@ -271,6 +299,8 @@ Read refresh cookie
 → Commit transaction
 → Replace authentication cookies
 
+|--------------------------------------------------------------------------
+
 Part 16: Logout API:
 Logout will:
 Read refresh-token cookie
@@ -280,12 +310,16 @@ Read refresh-token cookie
 → Clear access and refresh cookies
 → Return success
 
+|--------------------------------------------------------------------------
+
 Part 17: Role-Based Authorization Middleware
 We’ll now separate authenticated users by role.
 Authentication
 → Confirms who the user is
 Authorization
 → Confirms whether that user can access the route
+
+|--------------------------------------------------------------------------
 
 Part 18: Create the Category Model
 Complete model flow
@@ -333,6 +367,8 @@ sortOrder
 query helpers
 → reusable category filters
 
+|--------------------------------------------------------------------------
+
 Part 19: Category Request Validation
 createCategoryRequestSchema
 → What new category should be created?
@@ -342,6 +378,8 @@ updateCategoryRequestSchema
 
 categoryIdRequestSchema
 → Which category should this action apply to?
+
+|--------------------------------------------------------------------------
 
 Part 20: Category Repository and Service
 This code handles:
@@ -356,6 +394,8 @@ Prevent circular hierarchy
 Update all descendants after a move
 Set createdBy and updatedBy internally
 
+|--------------------------------------------------------------------------
+
 Part 21: Category Mapper and Admin Controller
 Mapper:
 “What category information should the API return?”
@@ -366,11 +406,12 @@ Service:
 Repository:
 “How should Category data be read or written in MongoDB?”
 
+|--------------------------------------------------------------------------
+
 Part 22: Register Admin Category Routes
 POST  /api/v1/admin/categories
 PATCH /api/v1/admin/categories/:categoryId
 
-|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 
 Part 23: Admin Category Details and List APIs
@@ -399,6 +440,24 @@ GET   /api/v1/admin/categories
 GET   /api/v1/admin/categories/:categoryId
 POST  /api/v1/admin/categories
 PATCH /api/v1/admin/categories/:categoryId
+|--------------------------------------------------------------------------
+
+Part 24: Category Soft Delete and Restore
+This part updates five existing files:
+
+1. category.repository.js
+2. category.service.js
+3. category.controller.js
+4. category.routes.js
+5. category.validation.js — no code change required
+New endpoints:
+
+DELETE /api/v1/admin/categories/:categoryId
+PATCH  /api/v1/admin/categories/:categoryId/restore
+A category cannot be deleted while it still has non-deleted child categories.
+The central business rules are:
+A parent cannot be deleted before its children.
+A child cannot be restored before its parent.
 
 |--------------------------------------------------------------------------
 info:

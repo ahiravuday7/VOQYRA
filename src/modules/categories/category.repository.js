@@ -6,12 +6,17 @@ This finds an active category using its MongoDB ID.
 */
 
 export const findCategoryById = (categoryId, options = {}) => {
-  const { session = null } = options;
+  const { session = null, includeDeleted = false } = options;
 
-  const query = Category.findOne({
+  const filter = {
     _id: categoryId,
-    deletedAt: null,
-  });
+  };
+
+  if (!includeDeleted) {
+    filter.deletedAt = null;
+  }
+
+  const query = Category.findOne(filter);
 
   if (session) {
     query.session(session);
@@ -155,4 +160,25 @@ export const findCategories = (filter, options = {}) => {
 
 export const countCategories = (filter) => {
   return Category.countDocuments(filter);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Count Non-Deleted Child Categories
+|--------------------------------------------------------------------------
+*/
+
+export const countCategoryChildren = (categoryId, options = {}) => {
+  const { session = null } = options;
+
+  const query = Category.countDocuments({
+    parent: categoryId,
+    deletedAt: null,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
 };

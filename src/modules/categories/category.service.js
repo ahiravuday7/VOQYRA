@@ -10,6 +10,7 @@ import {
   updateCategoryDescendants,
   countCategories,
   findCategories,
+  countCategoryChildren,
 } from "./category.repository.js";
 
 /*
@@ -582,4 +583,150 @@ export const listAdminCategories = async (queryData) => {
       sortDirection,
     },
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Soft Delete Category
+|--------------------------------------------------------------------------
+*/
+
+export const deleteCategory = async (categoryId, actorUserId) => {
+  let deletedCategory = null;
+
+  await mongoose.connection.transaction(async (session) => {
+    const category = await findCategoryById(categoryId, {
+      session,
+      includeDeleted: true,
+    });
+
+    if (!category) {
+      throw createCategoryNotFoundError();
+    }
+
+    /*
+     * Deletion is idempotent.
+     */
+    if (category.deletedAt) {
+      deletedCategory = category;
+      return;
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Protect Category Hierarchy
+      |--------------------------------------------------------------------------
+      */
+
+    const childCount = await countCategoryChildren(category._id, {
+      session,
+    });
+
+    if (childCount > 0) {
+      throw new AppError(
+        "Category cannot be deleted while it contains child categories",
+        409,
+        {
+          errorCode: "CATEGORY_HAS_CHILDREN",
+
+          details: {
+            childCount,
+          },
+        },
+      );
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Soft Delete
+      |--------------------------------------------------------------------------
+      */
+
+    category.deletedAt = new Date();
+
+    category.deletedBy = actorUserId;
+
+    category.updatedBy = actorUserId;
+
+    await category.save({
+      session,
+    });
+
+    deletedCategory = category;
+  });
+
+  return deletedCategory;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Restore Category
+|--------------------------------------------------------------------------
+*/
+
+export const restoreCategory = async (categoryId, actorUserId) => {
+  let restoredCategory = null;
+
+  await mongoose.connection.transaction(async (session) => {
+    const category = await findCategoryById(categoryId, {
+      session,
+      includeDeleted: true,
+    });
+
+    if (!category) {
+      throw createCategoryNotFoundError();
+    }
+
+    /*
+     * Restore is idempotent.
+     */
+    if (!category.deletedAt) {
+      restoredCategory = category;
+      return;
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Check Parent Category
+      |--------------------------------------------------------------------------
+      |
+      | A child category cannot be restored while
+      | its parent remains deleted.
+      |--------------------------------------------------------------------------
+      */
+
+    if (category.parent) {
+      const parentCategory = await findCategoryById(category.parent, {
+        session,
+      });
+
+      if (!parentCategory) {
+        throw new AppError(
+          "Restore the parent category before restoring this category",
+          409,
+          {
+            errorCode: "CATEGORY_PARENT_UNAVAILABLE",
+          },
+        );
+      }
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Restore Category
+      |--------------------------------------------------------------------------
+      */
+
+    category.deletedAt = null;
+    category.deletedBy = null;
+    category.updatedBy = actorUserId;
+
+    await category.save({
+      session,
+    });
+
+    restoredCategory = category;
+  });
+
+  return restoredCategory;
 };

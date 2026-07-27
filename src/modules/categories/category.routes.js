@@ -18,6 +18,8 @@ import {
   updateCategoryController,
   getCategoryController,
   listCategoriesController,
+  deleteCategoryController,
+  restoreCategoryController,
 } from "./category.controller.js";
 
 const router = Router();
@@ -71,6 +73,18 @@ router.post(
 
 /*
 |--------------------------------------------------------------------------
+| Restore Category
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/:categoryId/restore",
+  validateRequest(categoryIdRequestSchema),
+  restoreCategoryController,
+);
+
+/*
+|--------------------------------------------------------------------------
 | Update Category
 |--------------------------------------------------------------------------
 |
@@ -82,6 +96,18 @@ router.patch(
   "/:categoryId",
   validateRequest(updateCategoryRequestSchema),
   updateCategoryController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Delete Category
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/:categoryId",
+  validateRequest(categoryIdRequestSchema),
+  deleteCategoryController,
 );
 
 export default router;

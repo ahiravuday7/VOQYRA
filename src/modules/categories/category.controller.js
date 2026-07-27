@@ -3,6 +3,8 @@ import {
   updateCategory,
   getAdminCategory,
   listAdminCategories,
+  deleteCategory,
+  restoreCategory,
 } from "./category.service.js";
 
 import { toAdminCategory } from "./category.mapper.js";
@@ -130,6 +132,78 @@ export const getCategoryController = async (request, response) => {
     success: true,
 
     message: "Category retrieved successfully",
+
+    data: {
+      category: toAdminCategory(category),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Delete Category
+|--------------------------------------------------------------------------
+|
+| DELETE /api/v1/admin/categories/:categoryId
+|--------------------------------------------------------------------------
+*/
+
+export const deleteCategoryController = async (request, response) => {
+  const { categoryId } = request.validated.params;
+
+  const actorUserId = request.user._id;
+
+  const category = await deleteCategory(categoryId, actorUserId);
+
+  request.log?.info(
+    {
+      categoryId: category._id,
+
+      actorUserId,
+    },
+    "Category soft deleted",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Category deleted successfully",
+
+    data: {
+      category: toAdminCategory(category),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Restore Category
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/categories/:categoryId/restore
+|--------------------------------------------------------------------------
+*/
+
+export const restoreCategoryController = async (request, response) => {
+  const { categoryId } = request.validated.params;
+
+  const actorUserId = request.user._id;
+
+  const category = await restoreCategory(categoryId, actorUserId);
+
+  request.log?.info(
+    {
+      categoryId: category._id,
+
+      actorUserId,
+    },
+    "Category restored",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Category restored successfully",
 
     data: {
       category: toAdminCategory(category),
