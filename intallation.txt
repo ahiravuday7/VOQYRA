@@ -567,6 +567,173 @@ Supported deleted filters:
 ?deleted=only
 
 |--------------------------------------------------------------------------
+
+Part 30: Integration-Test Foundation
+
+Before writing Category tests, we’ll configure an isolated test environment.
+
+This part creates four files and updates package.json:
+
+Create:
+1. vitest.config.js
+2. tests/setup/global.setup.js
+3. tests/setup/test.setup.js
+4. tests/integration/health.integration.test.js
+
+Update:
+5. package.json
+6. environment.js only when "test" is missing
+
+We’ll use:
+
+Vitest
+→ Test runner and assertions
+
+Supertest
+→ Sends HTTP requests directly to the Express app
+
+mongodb-memory-server
+→ Runs an isolated temporary MongoDB replica set
+
+We need a replica set because the Category update, delete, restore, and hierarchy operations use MongoDB transactions. MongoMemoryReplSet supports this when configured with the WiredTiger storage engine.
+
+1. Confirm your Node.js version
+
+Run:
+node -v
+Use Node.js:
+20.19.0 or newer
+Current Vitest requires Node.js 20+, while the current mongodb-memory-server documentation specifies Node.js 20.19.0 or newer.
+
+2. Install test dependencies
+
+From the backend folder:
+npm install --save-dev vitest supertest mongodb-memory-server
+Supertest can test the Express application directly without manually starting the backend on a fixed port. When passed an Express app, it can bind an ephemeral port automatically.
+
+3. Update package.json
+
+Open:
+package.json
+Add these scripts:
+
+{
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run tests/integration"
+  }
+}
+
+Keep all your existing scripts. Only add the test scripts.
+
+4. Confirm the test environment is accepted
+
+Open:
+src/config/environment.js
+Check your NODE_ENV validation.
+It should include:
+NODE_ENV: z
+  .enum([
+    "development",
+    "test",
+    "production",
+  ])
+  .default("development"),
+
+When "test" is already included, no change is needed.
+
+5. Create Vitest configuration
+Create:
+vitest.config.js
+Vitest supports a dedicated configuration file when the project is not using Vite. It also provides separate globalSetup and setupFiles hooks; global setup executes before workers, while setup files execute in the test process before each test file.
+
+6. Create the global MongoDB setup
+Create the folder:
+tests/setup
+Create:
+tests/setup/global.setup.js
+The database is temporary and separate from your MongoDB Atlas database. The in-memory server starts an actual MongoDB process for isolated testing and stops it after the test suite.
+
+Vitest global setup executes in a separate scope, so project.provide() and inject() are the supported way to pass serializable information such as the temporary MongoDB URI into test workers.
+
+7. Create the per-test-file setup
+Create:
+tests/setup/test.setup.js
+
+Why we don’t use .env
+
+Integration tests should not depend on your local .env values.
+
+Most importantly:
+Tests must never connect to:
+clothing_commerce_dev
+They connect only to:
+clothing_commerce_test
+inside the temporary MongoDB process.
+
+8. Create a smoke integration test
+
+Create the folder:
+tests/integration
+Create:
+tests/integration/health.integration.test.js
+server.js starts the real HTTP listener and connects through the normal application startup process. Supertest only needs the Express app.
+
+9. Run the smoke test
+Run:
+npm test
+Expected output will look similar to:
+
+✓ tests/integration/health.integration.test.js
+  ✓ GET /api/v1/health
+    ✓ returns a successful JSON response
+
+Test Files  1 passed
+Tests       1 passed
+
+You can also run:
+npm run test:integration
+
+For watch mode:
+npm run test:watch
+
+First-run note
+
+On the first execution, mongodb-memory-server may download a MongoDB binary and cache it locally. Later test runs should reuse the cached binary.
+
+Do not cancel the first test run merely because the MongoDB binary initialization takes longer than later runs.
+
+Final testing structure
+backend/
+├── tests/
+│   ├── integration/
+│   │   └── health.integration.test.js
+│   │
+│   └── setup/
+│       ├── global.setup.js
+│       └── test.setup.js
+│
+├── src/
+├── package.json
+└── vitest.config.js
+
+What this foundation now verifies
+Vitest starts
+→ Temporary MongoDB replica set starts
+→ Test environment variables load
+→ Mongoose connects to temporary database
+→ Express app loads
+→ Supertest sends a request
+→ Health API responds
+→ Test data is cleaned
+→ Database connection closes
+→ Temporary MongoDB stops
+
+
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
