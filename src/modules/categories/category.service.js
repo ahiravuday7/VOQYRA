@@ -13,6 +13,8 @@ import {
   countCategoryChildren,
   findPublicCategories,
   findPublicCategoryBySlug,
+  countActiveCategoryDescendants,
+  findCategoriesByIds,
 } from "./category.repository.js";
 import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
@@ -144,6 +146,95 @@ const ensureCategorySlugIsAvailable = async (slug, options = {}) => {
 };
 
 /*
+|--------------------------------------------------------------------------
+| Check Whether Every Ancestor Is Active
+|--------------------------------------------------------------------------
+*/
+
+const isAncestorPathActive = async (ancestorIds, options = {}) => {
+  const { session = null } = options;
+
+  if (!ancestorIds?.length) {
+    return true;
+  }
+
+  const normalizedIds = [...new Set(ancestorIds.map(objectIdToString))];
+
+  const ancestorCategories = await findCategoriesByIds(normalizedIds, {
+    session,
+    includeDeleted: true,
+  });
+
+  const ancestorMap = new Map(
+    ancestorCategories.map((category) => [
+      objectIdToString(category._id),
+      category,
+    ]),
+  );
+
+  return normalizedIds.every((ancestorId) => {
+    const ancestor = ancestorMap.get(ancestorId);
+
+    return Boolean(
+      ancestor &&
+      !ancestor.deletedAt &&
+      ancestor.status === CATEGORY_STATUSES.ACTIVE,
+    );
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Require Active Ancestor Path
+|--------------------------------------------------------------------------
+*/
+
+const ensureAncestorPathIsActive = async (ancestorIds, options = {}) => {
+  const isActive = await isAncestorPathActive(ancestorIds, options);
+
+  if (!isActive) {
+    throw new AppError(
+      "An active category requires every parent category to be active",
+      409,
+      {
+        errorCode: "CATEGORY_ANCESTOR_INACTIVE",
+      },
+    );
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Load Publicly Visible Categories
+|--------------------------------------------------------------------------
+|
+| A category is publicly visible only when:
+|
+| - It is active
+| - It is not deleted
+| - Every ancestor is also active and non-deleted
+|--------------------------------------------------------------------------
+*/
+
+const loadVisiblePublicCategories = async () => {
+  const categories = await findPublicCategories({
+    status: CATEGORY_STATUSES.ACTIVE,
+
+    deletedAt: null,
+  });
+
+  const activeCategoryIds = new Set(
+    categories.map((category) => objectIdToString(category._id)),
+  );
+
+  return categories.filter((category) => {
+    return (category.ancestors ?? []).every((ancestorId) => {
+      return activeCategoryIds.has(objectIdToString(ancestorId));
+    });
+  });
+};
+
+/*
 | Create Category
 */
 
@@ -153,6 +244,12 @@ export const createCategory = async (categoryData, actorUserId) => {
   await ensureCategorySlugIsAvailable(categoryFields.slug);
 
   const hierarchy = await buildCategoryHierarchy(parentId);
+
+  const resultingStatus = categoryFields.status ?? CATEGORY_STATUSES.ACTIVE;
+
+  if (resultingStatus === CATEGORY_STATUSES.ACTIVE) {
+    await ensureAncestorPathIsActive(hierarchy.ancestors);
+  }
 
   const category = await createCategoryDocument({
     ...categoryFields,
@@ -309,6 +406,52 @@ export const updateCategory = async (categoryId, updateData, actorUserId) => {
       parentIsChanging = currentParentId !== newParentId;
     }
 
+    /*
+|--------------------------------------------------------------------------
+| Validate Resulting Active State
+|--------------------------------------------------------------------------
+*/
+
+    const resultingStatus = updateData.status ?? category.status;
+
+    if (resultingStatus === CATEGORY_STATUSES.ACTIVE) {
+      await ensureAncestorPathIsActive(hierarchy.ancestors, {
+        session,
+      });
+    }
+
+    /*
+|--------------------------------------------------------------------------
+| Prevent Inactive Parent with Active Descendants
+|--------------------------------------------------------------------------
+*/
+
+    const isChangingToInactive =
+      category.status === CATEGORY_STATUSES.ACTIVE &&
+      updateData.status === CATEGORY_STATUSES.INACTIVE;
+
+    if (isChangingToInactive) {
+      const activeDescendantCount = await countActiveCategoryDescendants(
+        category._id,
+        {
+          session,
+        },
+      );
+
+      if (activeDescendantCount > 0) {
+        throw new AppError(
+          "Category cannot be made inactive while it contains active descendants",
+          409,
+          {
+            errorCode: "CATEGORY_HAS_ACTIVE_DESCENDANTS",
+
+            details: {
+              activeDescendantCount,
+            },
+          },
+        );
+      }
+    }
     /*
       |--------------------------------------------------------------------------
       | Assign Editable Fields
@@ -771,45 +914,40 @@ export const restoreCategory = async (categoryId, actorUserId) => {
 export const listPublicCategories = async (queryData) => {
   const { parent, isFeatured, level } = queryData;
 
-  const filter = {
-    status: CATEGORY_STATUSES.ACTIVE,
+  const categories = await loadVisiblePublicCategories();
 
-    deletedAt: null,
-  };
+  return categories.filter((category) => {
+    /*
+     * Parent filter
+     */
+    if (parent === "root" && category.parent) {
+      return false;
+    }
 
-  /*
-    |--------------------------------------------------------------------------
-    | Parent Filter
-    |--------------------------------------------------------------------------
-    */
+    if (
+      parent &&
+      parent !== "root" &&
+      objectIdToString(category.parent) !== parent
+    ) {
+      return false;
+    }
 
-  if (parent === "root") {
-    filter.parent = null;
-  } else if (parent) {
-    filter.parent = parent;
-  }
+    /*
+     * Featured filter
+     */
+    if (typeof isFeatured === "boolean" && category.isFeatured !== isFeatured) {
+      return false;
+    }
 
-  /*
-    |--------------------------------------------------------------------------
-    | Featured Filter
-    |--------------------------------------------------------------------------
-    */
+    /*
+     * Level filter
+     */
+    if (typeof level === "number" && category.level !== level) {
+      return false;
+    }
 
-  if (typeof isFeatured === "boolean") {
-    filter.isFeatured = isFeatured;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Level Filter
-    |--------------------------------------------------------------------------
-    */
-
-  if (typeof level === "number") {
-    filter.level = level;
-  }
-
-  return findPublicCategories(filter);
+    return true;
+  });
 };
 
 /*
@@ -822,9 +960,20 @@ export const getPublicCategoryBySlug = async (slug) => {
   const category = await findPublicCategoryBySlug(slug);
 
   if (!category) {
-    throw new AppError("Category was not found", 404, {
-      errorCode: "CATEGORY_NOT_FOUND",
-    });
+    throw createCategoryNotFoundError();
+  }
+
+  const ancestorPathIsActive = await isAncestorPathActive(
+    category.ancestors ?? [],
+  );
+
+  /*
+   * Public callers receive the same 404 whether
+   * the category or one of its ancestors is
+   * unavailable.
+   */
+  if (!ancestorPathIsActive) {
+    throw createCategoryNotFoundError();
   }
 
   return category;
@@ -840,11 +989,7 @@ export const getPublicCategoryTree = async () => {
   /*
    * Load every active, non-deleted category.
    */
-  const categories = await findPublicCategories({
-    status: CATEGORY_STATUSES.ACTIVE,
-
-    deletedAt: null,
-  });
+  const categories = await loadVisiblePublicCategories();
 
   /*
    * Create one mutable tree node for every

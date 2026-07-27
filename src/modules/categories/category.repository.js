@@ -1,4 +1,5 @@
 import Category from "./category.model.js";
+import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
 /*
 | Find Category by ID
@@ -243,4 +244,60 @@ export const findPublicCategoryBySlug = (slug) => {
       ].join(" "),
     )
     .lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Categories by IDs
+|--------------------------------------------------------------------------
+*/
+
+export const findCategoriesByIds = (categoryIds, options = {}) => {
+  const { session = null, includeDeleted = false } = options;
+
+  if (!categoryIds?.length) {
+    return [];
+  }
+
+  const filter = {
+    _id: {
+      $in: categoryIds,
+    },
+  };
+
+  if (!includeDeleted) {
+    filter.deletedAt = null;
+  }
+
+  const query = Category.find(filter).select("_id status deletedAt").lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Count Active Descendants
+|--------------------------------------------------------------------------
+*/
+
+export const countActiveCategoryDescendants = (categoryId, options = {}) => {
+  const { session = null } = options;
+
+  const query = Category.countDocuments({
+    ancestors: categoryId,
+
+    status: CATEGORY_STATUSES.ACTIVE,
+
+    deletedAt: null,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
 };

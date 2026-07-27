@@ -525,6 +525,21 @@ New public endpoint:
 GET /api/v1/categories/tree
 
 |--------------------------------------------------------------------------
+Part 28: Category Activation and Visibility Rules
+
+This part updates only two files:
+
+1. category.repository.js
+2. category.service.js
+Rules:
+
+Active category
+→ Every ancestor must be active and non-deleted
+Inactive parent
+→ Cannot have active descendants
+Public list, detail and tree
+→ Hide categories whose ancestor path is unavailable
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
