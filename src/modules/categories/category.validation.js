@@ -397,6 +397,74 @@ const categoryListQuerySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Public Category List Query
+|--------------------------------------------------------------------------
+*/
+
+const publicCategoryListQuerySchema = z.strictObject({
+  /*
+   * parent=root
+   * parent=CATEGORY_OBJECT_ID
+   *
+   * Omit parent to retrieve all active categories.
+   */
+  parent: z.union([objectIdSchema, z.literal("root")]).optional(),
+
+  isFeatured: booleanQuerySchema.optional(),
+
+  level: z.preprocess(
+    (value) => {
+      return value === undefined || value === "" ? undefined : value;
+    },
+    z.coerce
+      .number({
+        error: "Category level must be a number",
+      })
+      .int({
+        error: "Category level must be a whole number",
+      })
+      .min(0, {
+        error: "Category level cannot be negative",
+      })
+      .optional(),
+  ),
+});
+/*
+|--------------------------------------------------------------------------
+| Category Slug Parameters
+|--------------------------------------------------------------------------
+*/
+
+const categorySlugParamsSchema = z.strictObject({
+  slug: categorySlugSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Public Category List Request
+|--------------------------------------------------------------------------
+*/
+
+export const publicCategoryListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: publicCategoryListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Public Category by Slug Request
+|--------------------------------------------------------------------------
+*/
+
+export const publicCategoryBySlugRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: categorySlugParamsSchema,
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Category List Request
 |--------------------------------------------------------------------------
 */

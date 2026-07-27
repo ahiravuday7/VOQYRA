@@ -118,3 +118,61 @@ export const toAdminCategory = (category) => {
     updatedAt: categoryObject.updatedAt,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Public Category Mapper
+|--------------------------------------------------------------------------
+|
+| This mapper does not expose:
+|
+| status
+| createdBy
+| updatedBy
+| deletedBy
+| deletedAt
+| createdAt
+| updatedAt
+|--------------------------------------------------------------------------
+*/
+
+export const toPublicCategory = (category) => {
+  if (!category) {
+    return null;
+  }
+
+  const categoryObject =
+    typeof category.toObject === "function"
+      ? category.toObject({
+          virtuals: true,
+        })
+      : category;
+
+  return {
+    id: mapObjectId(categoryObject._id),
+
+    name: categoryObject.name,
+
+    slug: categoryObject.slug,
+
+    description: categoryObject.description ?? "",
+
+    parent: mapObjectId(categoryObject.parent),
+
+    ancestors: (categoryObject.ancestors ?? []).map(mapObjectId),
+
+    level: categoryObject.level,
+
+    image: mapCategoryImage(categoryObject.image),
+
+    bannerImage: mapCategoryImage(categoryObject.bannerImage),
+
+    seo: mapCategorySeo(categoryObject.seo),
+
+    isFeatured: categoryObject.isFeatured,
+
+    sortOrder: categoryObject.sortOrder,
+
+    isRoot: !categoryObject.parent,
+  };
+};

@@ -480,6 +480,36 @@ GET /api/v1/admin/categories
 returns only non-deleted categories.
 
 |--------------------------------------------------------------------------
+
+Part 26: Public Category API
+
+This part creates two new files and updates five existing files.
+Create:
+1. src/modules/categories/category.public.controller.js
+2. src/modules/categories/category.public.routes.js
+
+Update:
+3. category.validation.js
+4. category.repository.js
+5. category.service.js
+6. category.mapper.js
+7. app.js
+Public endpoints:
+
+GET /api/v1/categories
+GET /api/v1/categories/:slug
+These endpoints:
+
+Do not require authentication
+Return only active categories
+Exclude soft-deleted categories
+Do not expose admin audit fields
+
+The central rule is:
+Admin APIs manage category data.
+Public APIs expose only active, non-deleted, customer-safe
+
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

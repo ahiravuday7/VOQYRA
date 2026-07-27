@@ -182,3 +182,65 @@ export const countCategoryChildren = (categoryId, options = {}) => {
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Public Categories
+|--------------------------------------------------------------------------
+*/
+
+export const findPublicCategories = (filter) => {
+  return Category.find(filter)
+    .select(
+      [
+        "name",
+        "slug",
+        "description",
+        "parent",
+        "ancestors",
+        "level",
+        "image",
+        "bannerImage",
+        "seo",
+        "isFeatured",
+        "sortOrder",
+      ].join(" "),
+    )
+    .sort({
+      level: 1,
+      sortOrder: 1,
+      name: 1,
+      _id: 1,
+    })
+    .lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Public Category by Slug
+|--------------------------------------------------------------------------
+*/
+
+export const findPublicCategoryBySlug = (slug) => {
+  return Category.findOne({
+    slug,
+    status: "active",
+    deletedAt: null,
+  })
+    .select(
+      [
+        "name",
+        "slug",
+        "description",
+        "parent",
+        "ancestors",
+        "level",
+        "image",
+        "bannerImage",
+        "seo",
+        "isFeatured",
+        "sortOrder",
+      ].join(" "),
+    )
+    .lean();
+};

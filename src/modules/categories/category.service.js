@@ -11,7 +11,10 @@ import {
   countCategories,
   findCategories,
   countCategoryChildren,
+  findPublicCategories,
+  findPublicCategoryBySlug,
 } from "./category.repository.js";
+import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
 /*
 | Category Errors
@@ -757,4 +760,72 @@ export const restoreCategory = async (categoryId, actorUserId) => {
   });
 
   return restoredCategory;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Public Categories
+|--------------------------------------------------------------------------
+*/
+
+export const listPublicCategories = async (queryData) => {
+  const { parent, isFeatured, level } = queryData;
+
+  const filter = {
+    status: CATEGORY_STATUSES.ACTIVE,
+
+    deletedAt: null,
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | Parent Filter
+    |--------------------------------------------------------------------------
+    */
+
+  if (parent === "root") {
+    filter.parent = null;
+  } else if (parent) {
+    filter.parent = parent;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Featured Filter
+    |--------------------------------------------------------------------------
+    */
+
+  if (typeof isFeatured === "boolean") {
+    filter.isFeatured = isFeatured;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Level Filter
+    |--------------------------------------------------------------------------
+    */
+
+  if (typeof level === "number") {
+    filter.level = level;
+  }
+
+  return findPublicCategories(filter);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Category by Slug
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicCategoryBySlug = async (slug) => {
+  const category = await findPublicCategoryBySlug(slug);
+
+  if (!category) {
+    throw new AppError("Category was not found", 404, {
+      errorCode: "CATEGORY_NOT_FOUND",
+    });
+  }
+
+  return category;
 };

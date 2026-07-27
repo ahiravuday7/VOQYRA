@@ -14,6 +14,7 @@ import healthRoutes from "./routes/health.routes.js";
 
 import authRoutes from "./modules/auth/auth.routes.js";
 import categoryRoutes from "./modules/categories/category.routes.js";
+import publicCategoryRoutes from "./modules/categories/category.public.routes.js";
 
 // This creates the Express application instance.
 const app = express();
@@ -100,6 +101,7 @@ app.get("/", (request, response) => {
 
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/categories", publicCategoryRoutes);
 app.use("/api/v1/admin/categories", categoryRoutes);
 
 /*
