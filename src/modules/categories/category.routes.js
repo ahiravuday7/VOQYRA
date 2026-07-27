@@ -9,11 +9,15 @@ import { USER_ROLES } from "../../shared/constants/user.constants.js";
 import {
   createCategoryRequestSchema,
   updateCategoryRequestSchema,
+  categoryIdRequestSchema,
+  categoryListRequestSchema,
 } from "./category.validation.js";
 
 import {
   createCategoryController,
   updateCategoryController,
+  getCategoryController,
+  listCategoriesController,
 } from "./category.controller.js";
 
 const router = Router();
@@ -25,6 +29,30 @@ const router = Router();
 */
 
 router.use(authenticate, authorizeRoles(USER_ROLES.ADMIN));
+
+/*
+|--------------------------------------------------------------------------
+| List Categories
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/",
+  validateRequest(categoryListRequestSchema),
+  listCategoriesController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Category by ID
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:categoryId",
+  validateRequest(categoryIdRequestSchema),
+  getCategoryController,
+);
 
 /*
 |--------------------------------------------------------------------------

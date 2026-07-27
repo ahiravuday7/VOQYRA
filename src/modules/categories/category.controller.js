@@ -1,4 +1,9 @@
-import { createCategory, updateCategory } from "./category.service.js";
+import {
+  createCategory,
+  updateCategory,
+  getAdminCategory,
+  listAdminCategories,
+} from "./category.service.js";
 
 import { toAdminCategory } from "./category.mapper.js";
 
@@ -73,6 +78,58 @@ export const updateCategoryController = async (request, response) => {
     success: true,
 
     message: "Category updated successfully",
+
+    data: {
+      category: toAdminCategory(category),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Categories
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/categories
+|--------------------------------------------------------------------------
+*/
+
+export const listCategoriesController = async (request, response) => {
+  const result = await listAdminCategories(request.validated.query);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Categories retrieved successfully",
+
+    data: {
+      categories: result.categories.map(toAdminCategory),
+
+      pagination: result.pagination,
+
+      filters: result.filters,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Category
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/categories/:categoryId
+|--------------------------------------------------------------------------
+*/
+
+export const getCategoryController = async (request, response) => {
+  const { categoryId } = request.validated.params;
+
+  const category = await getAdminCategory(categoryId);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Category retrieved successfully",
 
     data: {
       category: toAdminCategory(category),

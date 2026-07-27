@@ -370,7 +370,37 @@ Part 22: Register Admin Category Routes
 POST  /api/v1/admin/categories
 PATCH /api/v1/admin/categories/:categoryId
 
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
+Part 23: Admin Category Details and List APIs
+
+This part updates five existing files:
+1. category.validation.js
+2. category.repository.js
+3. category.service.js
+4. category.controller.js
+5. category.routes.js
+New endpoints:
+GET /api/v1/admin/categories
+GET /api/v1/admin/categories/:categoryId
+
+The list endpoint supports:
+Pagination
+Search
+Status filter
+Parent/root filter
+Featured filter
+Level filter
+Sorting
+
+Current Category APIs
+GET   /api/v1/admin/categories
+GET   /api/v1/admin/categories/:categoryId
+POST  /api/v1/admin/categories
+PATCH /api/v1/admin/categories/:categoryId
+
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

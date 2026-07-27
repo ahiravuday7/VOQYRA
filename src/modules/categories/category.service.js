@@ -8,6 +8,8 @@ import {
   findCategoryBySlug,
   findCategoryDescendants,
   updateCategoryDescendants,
+  countCategories,
+  findCategories,
 } from "./category.repository.js";
 
 /*
@@ -407,4 +409,177 @@ export const updateCategory = async (categoryId, updateData, actorUserId) => {
   });
 
   return updatedCategory;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Escape Search Value
+|--------------------------------------------------------------------------
+|
+| Prevent user input from being interpreted as
+| regular-expression syntax.
+|--------------------------------------------------------------------------
+*/
+
+const escapeRegularExpression = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Category
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminCategory = async (categoryId) => {
+  const category = await findCategoryById(categoryId);
+
+  if (!category) {
+    throw createCategoryNotFoundError();
+  }
+
+  return category;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Categories
+|--------------------------------------------------------------------------
+*/
+
+export const listAdminCategories = async (queryData) => {
+  const {
+    page,
+    limit,
+    search,
+    status,
+    parent,
+    isFeatured,
+    level,
+    sortBy,
+    sortDirection,
+  } = queryData;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Build Database Filter
+    |--------------------------------------------------------------------------
+    */
+
+  const filter = {
+    deletedAt: null,
+  };
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (typeof isFeatured === "boolean") {
+    filter.isFeatured = isFeatured;
+  }
+
+  if (typeof level === "number") {
+    filter.level = level;
+  }
+
+  if (parent === "root") {
+    filter.parent = null;
+  } else if (parent) {
+    filter.parent = parent;
+  }
+
+  if (search) {
+    const escapedSearch = escapeRegularExpression(search);
+
+    const searchExpression = new RegExp(escapedSearch, "i");
+
+    filter.$or = [
+      {
+        name: searchExpression,
+      },
+      {
+        slug: searchExpression,
+      },
+      {
+        description: searchExpression,
+      },
+    ];
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+  const skip = (page - 1) * limit;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Sorting
+    |--------------------------------------------------------------------------
+    */
+
+  const direction = sortDirection === "desc" ? -1 : 1;
+
+  const sort = {
+    [sortBy]: direction,
+  };
+
+  /*
+   * Add stable secondary sorting.
+   */
+  if (sortBy !== "name") {
+    sort.name = 1;
+  }
+
+  sort._id = direction;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Execute Queries
+    |--------------------------------------------------------------------------
+    */
+
+  const [categories, totalItems] = await Promise.all([
+    findCategories(filter, {
+      skip,
+      limit,
+      sort,
+    }),
+
+    countCategories(filter),
+  ]);
+
+  const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+
+  return {
+    categories,
+
+    pagination: {
+      page,
+      limit,
+      totalItems,
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+
+    filters: {
+      search: search ?? null,
+
+      status: status ?? null,
+
+      parent: parent ?? null,
+
+      isFeatured: typeof isFeatured === "boolean" ? isFeatured : null,
+
+      level: typeof level === "number" ? level : null,
+
+      sortBy,
+      sortDirection,
+    },
+  };
 };

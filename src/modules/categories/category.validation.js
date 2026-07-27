@@ -267,6 +267,142 @@ const emptyObjectSchema = z.preprocess(
 
 /*
 |--------------------------------------------------------------------------
+| Pagination Query Values
+|--------------------------------------------------------------------------
+*/
+
+const pageQuerySchema = z.preprocess(
+  (value) => {
+    return value === undefined || value === "" ? undefined : value;
+  },
+  z.coerce
+    .number({
+      error: "Page must be a number",
+    })
+    .int({
+      error: "Page must be a whole number",
+    })
+    .min(1, {
+      error: "Page must be at least 1",
+    })
+    .default(1),
+);
+
+const limitQuerySchema = z.preprocess(
+  (value) => {
+    return value === undefined || value === "" ? undefined : value;
+  },
+  z.coerce
+    .number({
+      error: "Limit must be a number",
+    })
+    .int({
+      error: "Limit must be a whole number",
+    })
+    .min(1, {
+      error: "Limit must be at least 1",
+    })
+    .max(100, {
+      error: "Limit cannot exceed 100",
+    })
+    .default(20),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Boolean Query Value
+|--------------------------------------------------------------------------
+*/
+
+const booleanQuerySchema = z.stringbool({
+  truthy: ["true"],
+  falsy: ["false"],
+  error: "Boolean filter must be true or false",
+});
+
+/*
+|--------------------------------------------------------------------------
+| Category List Query
+|--------------------------------------------------------------------------
+*/
+
+const categoryListQuerySchema = z.strictObject({
+  page: pageQuerySchema,
+
+  limit: limitQuerySchema,
+
+  search: z
+    .string()
+    .trim()
+    .min(1, {
+      error: "Search cannot be empty",
+    })
+    .max(100, {
+      error: "Search cannot exceed 100 characters",
+    })
+    .optional(),
+
+  status: z
+    .enum(CATEGORY_STATUS_VALUES, {
+      error: "Category status must be active or inactive",
+    })
+    .optional(),
+
+  /*
+   * Use:
+   *
+   * parent=root
+   *
+   * to retrieve root categories.
+   */
+  parent: z.union([objectIdSchema, z.literal("root")]).optional(),
+
+  isFeatured: booleanQuerySchema.optional(),
+
+  level: z.preprocess(
+    (value) => {
+      return value === undefined || value === "" ? undefined : value;
+    },
+    z.coerce
+      .number({
+        error: "Category level must be a number",
+      })
+      .int({
+        error: "Category level must be a whole number",
+      })
+      .min(0, {
+        error: "Category level cannot be negative",
+      })
+      .optional(),
+  ),
+
+  sortBy: z
+    .enum(["sortOrder", "name", "level", "createdAt", "updatedAt"], {
+      error: "Invalid category sorting field",
+    })
+    .default("sortOrder"),
+
+  sortDirection: z
+    .enum(["asc", "desc"], {
+      error: "Sort direction must be asc or desc",
+    })
+    .default("asc"),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Category List Request
+|--------------------------------------------------------------------------
+*/
+
+export const categoryListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: categoryListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Category Request
 |--------------------------------------------------------------------------
 */

@@ -126,3 +126,33 @@ export const updateCategoryDescendants = (descendantUpdates, options = {}) => {
     ordered: true,
   });
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Categories
+|--------------------------------------------------------------------------
+*/
+
+export const findCategories = (filter, options = {}) => {
+  const {
+    skip = 0,
+    limit = 20,
+    sort = {
+      sortOrder: 1,
+      name: 1,
+      _id: 1,
+    },
+  } = options;
+
+  return Category.find(filter).sort(sort).skip(skip).limit(limit).lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Count Categories
+|--------------------------------------------------------------------------
+*/
+
+export const countCategories = (filter) => {
+  return Category.countDocuments(filter);
+};
