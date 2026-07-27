@@ -432,8 +432,12 @@ const escapeRegularExpression = (value) => {
 |--------------------------------------------------------------------------
 */
 
-export const getAdminCategory = async (categoryId) => {
-  const category = await findCategoryById(categoryId);
+export const getAdminCategory = async (categoryId, options = {}) => {
+  const { includeDeleted = false } = options;
+
+  const category = await findCategoryById(categoryId, {
+    includeDeleted,
+  });
 
   if (!category) {
     throw createCategoryNotFoundError();
@@ -457,6 +461,7 @@ export const listAdminCategories = async (queryData) => {
     parent,
     isFeatured,
     level,
+    deleted,
     sortBy,
     sortDirection,
   } = queryData;
@@ -467,9 +472,30 @@ export const listAdminCategories = async (queryData) => {
     |--------------------------------------------------------------------------
     */
 
-  const filter = {
-    deletedAt: null,
-  };
+  const filter = {};
+
+  /*
+|--------------------------------------------------------------------------
+| Deleted Record Filter
+|--------------------------------------------------------------------------
+*/
+
+  if (deleted === "exclude") {
+    filter.deletedAt = null;
+  }
+
+  if (deleted === "only") {
+    filter.deletedAt = {
+      $ne: null,
+    };
+  }
+
+  /*
+   * deleted === "include"
+   *
+   * No deletedAt filter is added, so both deleted
+   * and non-deleted categories are returned.
+   */
 
   if (status) {
     filter.status = status;
@@ -578,6 +604,8 @@ export const listAdminCategories = async (queryData) => {
       isFeatured: typeof isFeatured === "boolean" ? isFeatured : null,
 
       level: typeof level === "number" ? level : null,
+
+      deleted,
 
       sortBy,
       sortDirection,

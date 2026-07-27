@@ -459,6 +459,26 @@ The central business rules are:
 A parent cannot be deleted before its children.
 A child cannot be restored before its parent.
 
+Part 25: View Deleted Categories
+This part updates four existing files:
+1. category.validation.js
+2. category.service.js
+3. category.controller.js
+4. category.routes.js
+No new file is required.
+
+We’ll support:
+
+GET /api/v1/admin/categories?deleted=only
+GET /api/v1/admin/categories?deleted=include
+GET /api/v1/admin/categories/:categoryId?includeDeleted=true
+
+Default behaviour remains unchanged:
+
+GET /api/v1/admin/categories
+
+returns only non-deleted categories.
+
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

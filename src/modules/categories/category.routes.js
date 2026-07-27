@@ -11,6 +11,7 @@ import {
   updateCategoryRequestSchema,
   categoryIdRequestSchema,
   categoryListRequestSchema,
+  getCategoryRequestSchema,
 } from "./category.validation.js";
 
 import {
@@ -52,7 +53,7 @@ router.get(
 
 router.get(
   "/:categoryId",
-  validateRequest(categoryIdRequestSchema),
+  validateRequest(getCategoryRequestSchema),
   getCategoryController,
 );
 

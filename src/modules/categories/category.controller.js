@@ -126,7 +126,11 @@ export const listCategoriesController = async (request, response) => {
 export const getCategoryController = async (request, response) => {
   const { categoryId } = request.validated.params;
 
-  const category = await getAdminCategory(categoryId);
+  const { includeDeleted } = request.validated.query;
+
+  const category = await getAdminCategory(categoryId, {
+    includeDeleted,
+  });
 
   return response.status(200).json({
     success: true,

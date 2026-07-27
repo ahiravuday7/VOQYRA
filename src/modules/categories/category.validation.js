@@ -376,6 +376,12 @@ const categoryListQuerySchema = z.strictObject({
       .optional(),
   ),
 
+  deleted: z
+    .enum(["exclude", "only", "include"], {
+      error: "Deleted filter must be exclude, only or include",
+    })
+    .default("exclude"),
+
   sortBy: z
     .enum(["sortOrder", "name", "level", "createdAt", "updatedAt"], {
       error: "Invalid category sorting field",
@@ -441,4 +447,26 @@ export const categoryIdRequestSchema = z.strictObject({
   body: emptyObjectSchema,
   params: categoryIdParamsSchema,
   query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Get Category Query
+|--------------------------------------------------------------------------
+*/
+
+const getCategoryQuerySchema = z.strictObject({
+  includeDeleted: booleanQuerySchema.default(false),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Get Category Request
+|--------------------------------------------------------------------------
+*/
+
+export const getCategoryRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: categoryIdParamsSchema,
+  query: getCategoryQuerySchema,
 });
