@@ -829,3 +829,70 @@ export const getPublicCategoryBySlug = async (slug) => {
 
   return category;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Build Public Category Tree
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicCategoryTree = async () => {
+  /*
+   * Load every active, non-deleted category.
+   */
+  const categories = await findPublicCategories({
+    status: CATEGORY_STATUSES.ACTIVE,
+
+    deletedAt: null,
+  });
+
+  /*
+   * Create one mutable tree node for every
+   * category.
+   */
+  const categoryNodeMap = new Map();
+
+  for (const category of categories) {
+    categoryNodeMap.set(String(category._id), {
+      ...category,
+      children: [],
+    });
+  }
+
+  const rootCategories = [];
+
+  /*
+   * Connect every category to its parent.
+   */
+  for (const category of categories) {
+    const categoryId = String(category._id);
+
+    const categoryNode = categoryNodeMap.get(categoryId);
+
+    /*
+     * Category has no parent, so it is
+     * a root-category node.
+     */
+    if (!category.parent) {
+      rootCategories.push(categoryNode);
+
+      continue;
+    }
+
+    const parentNode = categoryNodeMap.get(String(category.parent));
+
+    /*
+     * Only attach the category when its parent
+     * is also active and non-deleted.
+     *
+     * This prevents an active child category
+     * from appearing publicly underneath an
+     * inactive parent.
+     */
+    if (parentNode) {
+      parentNode.children.push(categoryNode);
+    }
+  }
+
+  return rootCategories;
+};

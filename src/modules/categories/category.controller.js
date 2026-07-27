@@ -5,9 +5,16 @@ import {
   listAdminCategories,
   deleteCategory,
   restoreCategory,
+  getPublicCategoryBySlug,
+  getPublicCategoryTree,
+  listPublicCategories,
 } from "./category.service.js";
 
-import { toAdminCategory } from "./category.mapper.js";
+import {
+  toAdminCategory,
+  toPublicCategory,
+  toPublicCategoryTree,
+} from "./category.mapper.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -211,6 +218,29 @@ export const restoreCategoryController = async (request, response) => {
 
     data: {
       category: toAdminCategory(category),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Category Tree
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/categories/tree
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicCategoryTreeController = async (request, response) => {
+  const categoryTree = await getPublicCategoryTree();
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Category tree retrieved successfully",
+
+    data: {
+      categories: categoryTree.map(toPublicCategoryTree),
     },
   });
 };

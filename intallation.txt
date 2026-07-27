@@ -508,6 +508,21 @@ Do not expose admin audit fields
 The central rule is:
 Admin APIs manage category data.
 Public APIs expose only active, non-deleted, customer-safe
+|--------------------------------------------------------------------------
+
+Part 27: Public Category Tree API
+
+This part updates four existing files:
+
+1. category.validation.js
+2. category.service.js
+3. category.mapper.js
+4. category.public.controller.js
+5. category.public.routes.js
+
+No new file is required.
+New public endpoint:
+GET /api/v1/categories/tree
 
 |--------------------------------------------------------------------------
 info:

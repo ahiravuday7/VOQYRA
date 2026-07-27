@@ -1,9 +1,10 @@
 import {
   getPublicCategoryBySlug,
   listPublicCategories,
+  getPublicCategoryTree,
 } from "./category.service.js";
 
-import { toPublicCategory } from "./category.mapper.js";
+import { toPublicCategory, toPublicCategoryTree } from "./category.mapper.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -49,6 +50,29 @@ export const getPublicCategoryController = async (request, response) => {
 
     data: {
       category: toPublicCategory(category),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Category Tree
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/categories/tree
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicCategoryTreeController = async (request, response) => {
+  const categoryTree = await getPublicCategoryTree();
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Category tree retrieved successfully",
+
+    data: {
+      categories: categoryTree.map(toPublicCategoryTree),
     },
   });
 };

@@ -538,3 +538,15 @@ export const getCategoryRequestSchema = z.strictObject({
   params: categoryIdParamsSchema,
   query: getCategoryQuerySchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Public Category Tree Request
+|--------------------------------------------------------------------------
+*/
+
+export const publicCategoryTreeRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: emptyObjectSchema,
+});

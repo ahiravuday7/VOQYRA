@@ -5,11 +5,13 @@ import validateRequest from "../../middlewares/validate-request.middleware.js";
 import {
   publicCategoryBySlugRequestSchema,
   publicCategoryListRequestSchema,
+  publicCategoryTreeRequestSchema,
 } from "./category.validation.js";
 
 import {
   getPublicCategoryController,
   listPublicCategoriesController,
+  getPublicCategoryTreeController,
 } from "./category.public.controller.js";
 
 const router = Router();
@@ -24,6 +26,18 @@ router.get(
   "/",
   validateRequest(publicCategoryListRequestSchema),
   listPublicCategoriesController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Category Tree
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/tree",
+  validateRequest(publicCategoryTreeRequestSchema),
+  getPublicCategoryTreeController,
 );
 
 /*

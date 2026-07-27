@@ -176,3 +176,19 @@ export const toPublicCategory = (category) => {
     isRoot: !categoryObject.parent,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Public Category Tree Mapper
+|--------------------------------------------------------------------------
+*/
+
+export const toPublicCategoryTree = (category) => {
+  const mappedCategory = toPublicCategory(category);
+
+  return {
+    ...mappedCategory,
+
+    children: (category.children ?? []).map(toPublicCategoryTree),
+  };
+};
