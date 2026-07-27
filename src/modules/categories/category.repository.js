@@ -301,3 +301,20 @@ export const countActiveCategoryDescendants = (categoryId, options = {}) => {
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Categories for Tree
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminCategoriesForTree = (filter) => {
+  return Category.find(filter)
+    .sort({
+      level: 1,
+      sortOrder: 1,
+      name: 1,
+      _id: 1,
+    })
+    .lean();
+};

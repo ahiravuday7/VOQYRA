@@ -540,6 +540,33 @@ Inactive parent
 Public list, detail and tree
 → Hide categories whose ancestor path is unavailable
 |--------------------------------------------------------------------------
+Part 29: Admin Category Tree API
+This part updates six existing files:
+
+1. category.validation.js
+2. category.repository.js
+3. category.service.js
+4. category.mapper.js
+5. category.controller.js
+6. category.routes.js
+
+New endpoint:
+
+GET /api/v1/admin/categories/tree
+
+It requires:
+
+Authenticated user
++
+Admin role
+
+Supported deleted filters:
+
+?deleted=exclude
+?deleted=include
+?deleted=only
+
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

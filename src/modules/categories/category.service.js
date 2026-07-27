@@ -15,6 +15,7 @@ import {
   findPublicCategoryBySlug,
   countActiveCategoryDescendants,
   findCategoriesByIds,
+  findAdminCategoriesForTree,
 } from "./category.repository.js";
 import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
@@ -1040,4 +1041,100 @@ export const getPublicCategoryTree = async () => {
   }
 
   return rootCategories;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Category Tree
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminCategoryTree = async (queryData) => {
+  const { deleted } = queryData;
+
+  const filter = {};
+
+  /*
+    |--------------------------------------------------------------------------
+    | Deleted Category Filter
+    |--------------------------------------------------------------------------
+    */
+
+  if (deleted === "exclude") {
+    filter.deletedAt = null;
+  }
+
+  if (deleted === "only") {
+    filter.deletedAt = {
+      $ne: null,
+    };
+  }
+
+  /*
+   * deleted === "include"
+   *
+   * Do not add a deletedAt filter.
+   */
+
+  const categories = await findAdminCategoriesForTree(filter);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Create Tree Nodes
+    |--------------------------------------------------------------------------
+    */
+
+  const categoryNodeMap = new Map();
+
+  for (const category of categories) {
+    categoryNodeMap.set(objectIdToString(category._id), {
+      ...category,
+      children: [],
+      isOrphaned: false,
+    });
+  }
+
+  const rootCategories = [];
+
+  /*
+    |--------------------------------------------------------------------------
+    | Connect Children to Parents
+    |--------------------------------------------------------------------------
+    */
+
+  for (const category of categories) {
+    const categoryNode = categoryNodeMap.get(objectIdToString(category._id));
+
+    if (!category.parent) {
+      rootCategories.push(categoryNode);
+
+      continue;
+    }
+
+    const parentNode = categoryNodeMap.get(objectIdToString(category.parent));
+
+    if (parentNode) {
+      parentNode.children.push(categoryNode);
+
+      continue;
+    }
+
+    /*
+     * The parent was excluded by the selected
+     * deleted filter or the database contains
+     * inconsistent legacy hierarchy data.
+     *
+     * Keep the category visible to administrators
+     * instead of silently removing it.
+     */
+    categoryNode.isOrphaned = true;
+
+    rootCategories.push(categoryNode);
+  }
+
+  return {
+    categories: rootCategories,
+
+    deletedFilter: deleted,
+  };
 };

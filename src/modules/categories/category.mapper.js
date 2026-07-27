@@ -192,3 +192,21 @@ export const toPublicCategoryTree = (category) => {
     children: (category.children ?? []).map(toPublicCategoryTree),
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Admin Category Tree Mapper
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminCategoryTree = (category) => {
+  const mappedCategory = toAdminCategory(category);
+
+  return {
+    ...mappedCategory,
+
+    isOrphaned: Boolean(category.isOrphaned),
+
+    children: (category.children ?? []).map(toAdminCategoryTree),
+  };
+};

@@ -12,6 +12,7 @@ import {
   categoryIdRequestSchema,
   categoryListRequestSchema,
   getCategoryRequestSchema,
+  adminCategoryTreeRequestSchema,
 } from "./category.validation.js";
 
 import {
@@ -21,6 +22,7 @@ import {
   listCategoriesController,
   deleteCategoryController,
   restoreCategoryController,
+  getAdminCategoryTreeController,
 } from "./category.controller.js";
 
 const router = Router();
@@ -43,6 +45,18 @@ router.get(
   "/",
   validateRequest(categoryListRequestSchema),
   listCategoriesController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Category Tree
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/tree",
+  validateRequest(adminCategoryTreeRequestSchema),
+  getAdminCategoryTreeController,
 );
 
 /*

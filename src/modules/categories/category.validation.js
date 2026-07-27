@@ -441,6 +441,31 @@ const categorySlugParamsSchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Category Tree Query
+|--------------------------------------------------------------------------
+*/
+
+const adminCategoryTreeQuerySchema = z.strictObject({
+  deleted: z
+    .enum(["exclude", "include", "only"], {
+      error: "Deleted filter must be exclude, include or only",
+    })
+    .default("exclude"),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Category Tree Request
+|--------------------------------------------------------------------------
+*/
+
+export const adminCategoryTreeRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+  params: emptyObjectSchema,
+  query: adminCategoryTreeQuerySchema,
+});
+/*
+|--------------------------------------------------------------------------
 | Public Category List Request
 |--------------------------------------------------------------------------
 */
