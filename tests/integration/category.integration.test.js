@@ -634,6 +634,191 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Prevent Inactive Parent with Active Descendants
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects making a category inactive while active descendants exist", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Men
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      status: "active",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Topwear
+    |--------------------------------------------------------------------------
+    */
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create T-Shirts
+    |--------------------------------------------------------------------------
+    */
+
+    const tshirtResponse = await createCategoryRequest(agent, {
+      name: "T-Shirts",
+      slug: "men-tshirts",
+      parent: topwearCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const tshirtCategory = tshirtResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Attempt to Make Men Inactive
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await agent
+      .patch(`${adminCategoryUrl}/${menCategory.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(409);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("CATEGORY_HAS_ACTIVE_DESCENDANTS");
+
+    expect(response.body.details.activeDescendantCount).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deactivate Categories Bottom-Up
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(`${adminCategoryUrl}/${tshirtCategory.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    await agent
+      .patch(`${adminCategoryUrl}/${topwearCategory.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    const menInactiveResponse = await agent
+      .patch(`${adminCategoryUrl}/${menCategory.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    expect(menInactiveResponse.body.data.category.status).toBe("inactive");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Prevent Active Child under Inactive Parent
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects activating a child while its parent is inactive", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Inactive Parent
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      status: "inactive",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    /*
+     * An inactive child is allowed under
+     * an inactive parent.
+     */
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+      status: "inactive",
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Attempt to Activate Child
+    |--------------------------------------------------------------------------
+    */
+
+    const blockedResponse = await agent
+      .patch(`${adminCategoryUrl}/${topwearCategory.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(409);
+
+    expect(blockedResponse.body.success).toBe(false);
+
+    expect(blockedResponse.body.errorCode).toBe("CATEGORY_ANCESTOR_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Activate Parent First
+    |--------------------------------------------------------------------------
+    */
+
+    const parentResponse = await agent
+      .patch(`${adminCategoryUrl}/${menCategory.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(200);
+
+    expect(parentResponse.body.data.category.status).toBe("active");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Child Can Now Be Activated
+    |--------------------------------------------------------------------------
+    */
+
+    const childResponse = await agent
+      .patch(`${adminCategoryUrl}/${topwearCategory.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(200);
+
+    expect(childResponse.body.data.category.status).toBe("active");
+  });
+  /*
     |--------------------------------------------------------------------------
     | Circular Hierarchy
     |--------------------------------------------------------------------------

@@ -794,6 +794,15 @@ Men
 T-Shirts
 └── Oversized T-Shirts
 |--------------------------------------------------------------------------  
+
+Part 34: Test Category Activation Rules
+
+Update only:
+tests/integration/category.integration.test.js
+Run only the new tests
+npx vitest run tests/integration/category.integration.test.js -t "inactive"
+
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 
