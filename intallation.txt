@@ -774,6 +774,26 @@ Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "updates every descendant"
 
 |--------------------------------------------------------------------------  
+
+Part 33: Test Moving a Category to Root Level
+
+Update only:
+tests/integration/category.integration.test.js
+This test starts with:
+
+Men
+└── Topwear
+    └── T-Shirts
+        └── Oversized T-Shirts
+
+Then moves T-Shirts to the root:
+
+Men
+└── Topwear
+
+T-Shirts
+└── Oversized T-Shirts
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

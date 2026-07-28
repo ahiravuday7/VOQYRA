@@ -359,6 +359,233 @@ describe("Category API integration", () => {
 
   /*
     |--------------------------------------------------------------------------
+    | Move Nested Category to Root
+    |--------------------------------------------------------------------------
+    */
+
+  it("moves a nested category to root and recalculates its descendants", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Men
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Topwear
+    |--------------------------------------------------------------------------
+    */
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create T-Shirts
+    |--------------------------------------------------------------------------
+    */
+
+    const tshirtResponse = await createCategoryRequest(agent, {
+      name: "T-Shirts",
+      slug: "men-tshirts",
+      parent: topwearCategory.id,
+    }).expect(201);
+
+    const tshirtCategory = tshirtResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Oversized T-Shirts
+    |--------------------------------------------------------------------------
+    */
+
+    const oversizedResponse = await createCategoryRequest(agent, {
+      name: "Oversized T-Shirts",
+
+      slug: "men-oversized-tshirts",
+
+      parent: tshirtCategory.id,
+    }).expect(201);
+
+    const oversizedCategory = oversizedResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Confirm Original Hierarchy
+    |--------------------------------------------------------------------------
+    */
+
+    expect(tshirtCategory.parent).toBe(topwearCategory.id);
+
+    expect(tshirtCategory.ancestors).toEqual([
+      menCategory.id,
+      topwearCategory.id,
+    ]);
+
+    expect(tshirtCategory.level).toBe(2);
+
+    expect(oversizedCategory.ancestors).toEqual([
+      menCategory.id,
+      topwearCategory.id,
+      tshirtCategory.id,
+    ]);
+
+    expect(oversizedCategory.level).toBe(3);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Move T-Shirts to Root
+    |--------------------------------------------------------------------------
+    */
+
+    const moveResponse = await agent
+      .patch(`${adminCategoryUrl}/${tshirtCategory.id}`)
+      .send({
+        parent: null,
+      })
+      .expect(200);
+
+    const movedTshirt = moveResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify T-Shirts Became Root
+    |--------------------------------------------------------------------------
+    */
+
+    expect(movedTshirt.parent).toBeNull();
+
+    expect(movedTshirt.ancestors).toEqual([]);
+
+    expect(movedTshirt.level).toBe(0);
+
+    expect(movedTshirt.isRoot).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Descendant Was Recalculated
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedOversizedResponse = await agent
+      .get(`${adminCategoryUrl}/${oversizedCategory.id}`)
+      .expect(200);
+
+    const updatedOversized = updatedOversizedResponse.body.data.category;
+
+    /*
+     * Immediate parent remains T-Shirts.
+     */
+    expect(updatedOversized.parent).toBe(tshirtCategory.id);
+
+    /*
+     * Previous ancestors:
+     *
+     * [Men, Topwear, T-Shirts]
+     *
+     * New ancestors:
+     *
+     * [T-Shirts]
+     */
+    expect(updatedOversized.ancestors).toEqual([tshirtCategory.id]);
+
+    expect(updatedOversized.level).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Original Parent Remains Unchanged
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedTopwearResponse = await agent
+      .get(`${adminCategoryUrl}/${topwearCategory.id}`)
+      .expect(200);
+
+    const updatedTopwear = updatedTopwearResponse.body.data.category;
+
+    expect(updatedTopwear.parent).toBe(menCategory.id);
+
+    expect(updatedTopwear.ancestors).toEqual([menCategory.id]);
+
+    expect(updatedTopwear.level).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Public Tree
+    |--------------------------------------------------------------------------
+    */
+
+    const treeResponse = await request(app)
+      .get(`${publicCategoryUrl}/tree`)
+      .expect(200);
+
+    const rootCategories = treeResponse.body.data.categories;
+
+    const publicMen = rootCategories.find(
+      (category) => category.id === menCategory.id,
+    );
+
+    const publicTshirt = rootCategories.find(
+      (category) => category.id === tshirtCategory.id,
+    );
+
+    expect(publicMen).toBeDefined();
+
+    expect(publicTshirt).toBeDefined();
+
+    /*
+     * T-Shirts is no longer under Topwear.
+     */
+    const publicTopwear = publicMen.children.find(
+      (category) => category.id === topwearCategory.id,
+    );
+
+    expect(publicTopwear).toBeDefined();
+
+    expect(
+      publicTopwear.children.some(
+        (category) => category.id === tshirtCategory.id,
+      ),
+    ).toBe(false);
+
+    /*
+     * T-Shirts is now a root category.
+     */
+    expect(publicTshirt.parent).toBeNull();
+
+    expect(publicTshirt.ancestors).toEqual([]);
+
+    expect(publicTshirt.level).toBe(0);
+
+    expect(publicTshirt.isRoot).toBe(true);
+
+    /*
+     * Oversized T-Shirts remains below T-Shirts.
+     */
+    expect(publicTshirt.children).toHaveLength(1);
+
+    expect(publicTshirt.children[0].id).toBe(oversizedCategory.id);
+
+    expect(publicTshirt.children[0].ancestors).toEqual([tshirtCategory.id]);
+
+    expect(publicTshirt.children[0].level).toBe(1);
+  });
+  /*
+    |--------------------------------------------------------------------------
     | Duplicate Slug
     |--------------------------------------------------------------------------
     */
