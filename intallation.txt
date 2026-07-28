@@ -754,6 +754,26 @@ npx vitest run tests/integration/category.integration.test.js
 
 
 |--------------------------------------------------------------------------
+
+Part 32: Test Moving a Category Branch
+
+This part updates only one existing file:
+tests/integration/category.integration.test.js
+The test will verify:
+Men
+└── Topwear
+    └── T-Shirts
+        └── Oversized T-Shirts
+After moving Topwear under Women:
+Women
+└── Topwear
+    └── T-Shirts
+        └── Oversized T-Shirts
+The service must automatically update every descendant’s ancestors and level inside the existing MongoDB transaction. Mongoose’s connection.transaction() wraps the database transaction and integrates it with document change tracking.
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "updates every descendant"
+
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

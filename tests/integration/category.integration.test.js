@@ -132,6 +132,233 @@ describe("Category API integration", () => {
 
   /*
     |--------------------------------------------------------------------------
+    | Move Category Hierarchy
+    |--------------------------------------------------------------------------
+    */
+
+  it("updates every descendant when a category branch is moved", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Root Categories
+        |--------------------------------------------------------------------------
+        */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      sortOrder: 1,
+    }).expect(201);
+
+    const womenResponse = await createCategoryRequest(agent, {
+      name: "Women",
+      slug: "women",
+      sortOrder: 2,
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    const womenCategory = womenResponse.body.data.category;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Men → Topwear
+        |--------------------------------------------------------------------------
+        */
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Topwear → T-Shirts
+        |--------------------------------------------------------------------------
+        */
+
+    const tshirtResponse = await createCategoryRequest(agent, {
+      name: "T-Shirts",
+      slug: "men-tshirts",
+      parent: topwearCategory.id,
+    }).expect(201);
+
+    const tshirtCategory = tshirtResponse.body.data.category;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create T-Shirts → Oversized T-Shirts
+        |--------------------------------------------------------------------------
+        */
+
+    const oversizedResponse = await createCategoryRequest(agent, {
+      name: "Oversized T-Shirts",
+
+      slug: "men-oversized-tshirts",
+
+      parent: tshirtCategory.id,
+    }).expect(201);
+
+    const oversizedCategory = oversizedResponse.body.data.category;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Confirm Original Hierarchy
+        |--------------------------------------------------------------------------
+        */
+
+    expect(topwearCategory.ancestors).toEqual([menCategory.id]);
+
+    expect(topwearCategory.level).toBe(1);
+
+    expect(tshirtCategory.ancestors).toEqual([
+      menCategory.id,
+      topwearCategory.id,
+    ]);
+
+    expect(tshirtCategory.level).toBe(2);
+
+    expect(oversizedCategory.ancestors).toEqual([
+      menCategory.id,
+      topwearCategory.id,
+      tshirtCategory.id,
+    ]);
+
+    expect(oversizedCategory.level).toBe(3);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Move Topwear from Men to Women
+        |--------------------------------------------------------------------------
+        */
+
+    const moveResponse = await agent
+      .patch(`${adminCategoryUrl}/${topwearCategory.id}`)
+      .send({
+        parent: womenCategory.id,
+      })
+      .expect(200);
+
+    const movedTopwear = moveResponse.body.data.category;
+
+    expect(movedTopwear.parent).toBe(womenCategory.id);
+
+    expect(movedTopwear.ancestors).toEqual([womenCategory.id]);
+
+    expect(movedTopwear.level).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify T-Shirts Was Updated
+        |--------------------------------------------------------------------------
+        */
+
+    const updatedTshirtResponse = await agent
+      .get(`${adminCategoryUrl}/${tshirtCategory.id}`)
+      .expect(200);
+
+    const updatedTshirt = updatedTshirtResponse.body.data.category;
+
+    /*
+     * Its immediate parent does not change.
+     */
+    expect(updatedTshirt.parent).toBe(topwearCategory.id);
+
+    /*
+     * Men is replaced by Women
+     * in the ancestor path.
+     */
+    expect(updatedTshirt.ancestors).toEqual([
+      womenCategory.id,
+      topwearCategory.id,
+    ]);
+
+    expect(updatedTshirt.level).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify Oversized T-Shirts Was Updated
+        |--------------------------------------------------------------------------
+        */
+
+    const updatedOversizedResponse = await agent
+      .get(`${adminCategoryUrl}/${oversizedCategory.id}`)
+      .expect(200);
+
+    const updatedOversized = updatedOversizedResponse.body.data.category;
+
+    expect(updatedOversized.parent).toBe(tshirtCategory.id);
+
+    expect(updatedOversized.ancestors).toEqual([
+      womenCategory.id,
+      topwearCategory.id,
+      tshirtCategory.id,
+    ]);
+
+    expect(updatedOversized.level).toBe(3);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify Public Tree
+        |--------------------------------------------------------------------------
+        */
+
+    const treeResponse = await request(app)
+      .get(`${publicCategoryUrl}/tree`)
+      .expect(200);
+
+    const rootCategories = treeResponse.body.data.categories;
+
+    const publicMen = rootCategories.find(
+      (category) => category.slug === "men",
+    );
+
+    const publicWomen = rootCategories.find(
+      (category) => category.slug === "women",
+    );
+
+    expect(publicMen).toBeDefined();
+
+    expect(publicWomen).toBeDefined();
+
+    /*
+     * Men no longer contains Topwear.
+     */
+    expect(
+      publicMen.children.some((category) => category.id === topwearCategory.id),
+    ).toBe(false);
+
+    /*
+     * Women now contains the complete
+     * moved branch.
+     */
+    const publicTopwear = publicWomen.children.find(
+      (category) => category.id === topwearCategory.id,
+    );
+
+    expect(publicTopwear).toBeDefined();
+
+    expect(publicTopwear.parent).toBe(womenCategory.id);
+
+    const publicTshirt = publicTopwear.children.find(
+      (category) => category.id === tshirtCategory.id,
+    );
+
+    expect(publicTshirt).toBeDefined();
+
+    const publicOversized = publicTshirt.children.find(
+      (category) => category.id === oversizedCategory.id,
+    );
+
+    expect(publicOversized).toBeDefined();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
     | Duplicate Slug
     |--------------------------------------------------------------------------
     */
