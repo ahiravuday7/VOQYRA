@@ -894,7 +894,12 @@ tests/integration/category.integration.test.js
 Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "updates a category slug"
 |--------------------------------------------------------------------------  
-
+Part 43: Test Public Category Query Validation
+Update only:
+tests/integration/category.integration.test.js
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "invalid public category query"
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

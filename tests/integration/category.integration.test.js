@@ -2336,4 +2336,100 @@ describe("Category API integration", () => {
 
     expect(publicMen.children).toEqual([]);
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Public Category Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid public category query values", async () => {
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Parent Category ID
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidParentResponse = await request(app)
+      .get(`${publicCategoryUrl}?parent=invalid-id`)
+      .expect(400);
+
+    expect(invalidParentResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Featured Boolean
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidFeaturedResponse = await request(app)
+      .get(`${publicCategoryUrl}?isFeatured=yes`)
+      .expect(400);
+
+    expect(invalidFeaturedResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Negative Category Level
+    |--------------------------------------------------------------------------
+    */
+
+    const negativeLevelResponse = await request(app)
+      .get(`${publicCategoryUrl}?level=-1`)
+      .expect(400);
+
+    expect(negativeLevelResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Non-Numeric Category Level
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidLevelResponse = await request(app)
+      .get(`${publicCategoryUrl}?level=abc`)
+      .expect(400);
+
+    expect(invalidLevelResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown List Query Property
+    |--------------------------------------------------------------------------
+    |
+    | publicCategoryListQuerySchema uses
+    | z.strictObject(), so unknown fields fail.
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownListQueryResponse = await request(app)
+      .get(`${publicCategoryUrl}?unknown=value`)
+      .expect(400);
+
+    expect(unknownListQueryResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tree Endpoint Does Not Accept Query Parameters
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidTreeQueryResponse = await request(app)
+      .get(`${publicCategoryUrl}/tree?level=0`)
+      .expect(400);
+
+    expect(invalidTreeQueryResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Slug Endpoint Does Not Accept Query Parameters
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidSlugQueryResponse = await request(app)
+      .get(`${publicCategoryUrl}/men?includeDeleted=true`)
+      .expect(400);
+
+    expect(invalidSlugQueryResponse.body.success).toBe(false);
+  });
 });
