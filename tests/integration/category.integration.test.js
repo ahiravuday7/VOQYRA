@@ -609,6 +609,74 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Category Not-Found Handling
+|--------------------------------------------------------------------------
+*/
+
+  it("returns correct errors for missing categories and parent categories", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const unknownCategoryId = "507f1f77bcf86cd799439011";
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Admin Category ID
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownCategoryResponse = await agent
+      .get(`${adminCategoryUrl}/${unknownCategoryId}`)
+      .expect(404);
+
+    expect(unknownCategoryResponse.body.success).toBe(false);
+
+    expect(unknownCategoryResponse.body.errorCode).toBe("CATEGORY_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Missing Parent Category
+    |--------------------------------------------------------------------------
+    |
+    | The parent value is a valid ObjectId, but no
+    | matching Category document exists.
+    |--------------------------------------------------------------------------
+    */
+
+    const missingParentResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: unknownCategoryId,
+    }).expect(400);
+
+    expect(missingParentResponse.body.success).toBe(false);
+
+    expect(missingParentResponse.body.errorCode).toBe(
+      "PARENT_CATEGORY_NOT_FOUND",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Public Category Slug
+    |--------------------------------------------------------------------------
+    |
+    | Public APIs return the same 404 for unavailable,
+    | inactive, deleted, or nonexistent categories.
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownPublicCategoryResponse = await request(app)
+      .get(`${publicCategoryUrl}/unknown-category`)
+      .expect(404);
+
+    expect(unknownPublicCategoryResponse.body.success).toBe(false);
+
+    expect(unknownPublicCategoryResponse.body.errorCode).toBe(
+      "CATEGORY_NOT_FOUND",
+    );
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Ancestor Status
     |--------------------------------------------------------------------------

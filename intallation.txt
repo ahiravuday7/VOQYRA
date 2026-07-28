@@ -879,6 +879,14 @@ Men is excluded because it is not deleted. Therefore, Topwear should remain visi
 Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "marks a category as orphaned"
 |--------------------------------------------------------------------------  
+
+Part 41: Test Category Not-Found Handling
+
+Update only:
+tests/integration/category.integration.test.js
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "missing categories and parent categories"
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 
