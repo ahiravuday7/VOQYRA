@@ -891,6 +891,212 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Category List Pagination and Search
+|--------------------------------------------------------------------------
+*/
+
+  it("lists categories with pagination, search and sorting", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      sortOrder: 3,
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    await createCategoryRequest(agent, {
+      name: "Women",
+      slug: "women",
+      sortOrder: 1,
+    }).expect(201);
+
+    await createCategoryRequest(agent, {
+      name: "Kids",
+      slug: "kids",
+      sortOrder: 2,
+    }).expect(201);
+
+    await createCategoryRequest(agent, {
+      name: "T-Shirts",
+      slug: "men-tshirts",
+      description: "Casual cotton T-shirts",
+      parent: menCategory.id,
+      sortOrder: 1,
+    }).expect(201);
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Page — Alphabetical Order
+    |--------------------------------------------------------------------------
+    */
+
+    const firstPageResponse = await agent
+      .get(`${adminCategoryUrl}?page=1&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    const firstPageData = firstPageResponse.body.data;
+
+    expect(firstPageData.categories).toHaveLength(2);
+
+    expect(firstPageData.categories.map((category) => category.name)).toEqual([
+      "Kids",
+      "Men",
+    ]);
+
+    expect(firstPageData.pagination).toEqual({
+      page: 1,
+      limit: 2,
+      totalItems: 4,
+      totalPages: 2,
+      hasPreviousPage: false,
+      hasNextPage: true,
+    });
+
+    expect(firstPageData.filters.sortBy).toBe("name");
+
+    expect(firstPageData.filters.sortDirection).toBe("asc");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Page
+    |--------------------------------------------------------------------------
+    */
+
+    const secondPageResponse = await agent
+      .get(`${adminCategoryUrl}?page=2&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    const secondPageData = secondPageResponse.body.data;
+
+    expect(secondPageData.categories.map((category) => category.name)).toEqual([
+      "T-Shirts",
+      "Women",
+    ]);
+
+    expect(secondPageData.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      totalItems: 4,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search Category
+    |--------------------------------------------------------------------------
+    */
+
+    const searchResponse = await agent
+      .get(`${adminCategoryUrl}?search=shirt&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    expect(searchResponse.body.data.categories).toHaveLength(1);
+
+    expect(searchResponse.body.data.categories[0].slug).toBe("men-tshirts");
+
+    expect(searchResponse.body.data.pagination.totalItems).toBe(1);
+
+    expect(searchResponse.body.data.filters.search).toBe("shirt");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Category List Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid category list query values", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Page
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidPageResponse = await agent
+      .get(`${adminCategoryUrl}?page=0`)
+      .expect(400);
+
+    expect(invalidPageResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Limit Exceeds Maximum
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidLimitResponse = await agent
+      .get(`${adminCategoryUrl}?limit=101`)
+      .expect(400);
+
+    expect(invalidLimitResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Boolean
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidFeaturedResponse = await agent
+      .get(`${adminCategoryUrl}?isFeatured=yes`)
+      .expect(400);
+
+    expect(invalidFeaturedResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Negative Category Level
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidLevelResponse = await agent
+      .get(`${adminCategoryUrl}?level=-1`)
+      .expect(400);
+
+    expect(invalidLevelResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Sorting Field
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidSortingResponse = await agent
+      .get(`${adminCategoryUrl}?sortBy=password`)
+      .expect(400);
+
+    expect(invalidSortingResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Query Property
+    |--------------------------------------------------------------------------
+    |
+    | categoryListQuerySchema uses strictObject(),
+    | so unexpected query fields are rejected.
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownQueryResponse = await agent
+      .get(`${adminCategoryUrl}?unknown=value`)
+      .expect(400);
+
+    expect(unknownQueryResponse.body.success).toBe(false);
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Soft Delete and Restore
     |--------------------------------------------------------------------------

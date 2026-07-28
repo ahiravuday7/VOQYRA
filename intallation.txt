@@ -822,6 +822,15 @@ npx vitest run tests/integration/category.integration.test.js -t "lists and retr
 
 |--------------------------------------------------------------------------  
 
+Part 36: Test Category Pagination, Search, Sorting, and Validation
+Update only:
+tests/integration/category.integration.test.js
+Run only the pagination test
+npx vitest run tests/integration/category.integration.test.js -t "pagination"
+Run only the validation test
+npx vitest run tests/integration/category.integration.test.js -t "invalid category list"
+
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 
