@@ -610,6 +610,128 @@ describe("Category API integration", () => {
 
   /*
 |--------------------------------------------------------------------------
+| Category Slug Update Rules
+|--------------------------------------------------------------------------
+*/
+
+  it("updates a category slug and rejects an existing slug", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Two Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+    }).expect(201);
+
+    const womenResponse = await createCategoryRequest(agent, {
+      name: "Women",
+      slug: "women",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    const womenCategory = womenResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Successfully Update Men Slug
+    |--------------------------------------------------------------------------
+    */
+
+    const updateResponse = await agent
+      .patch(`${adminCategoryUrl}/${menCategory.id}`)
+      .send({
+        slug: "mens-fashion",
+      })
+      .expect(200);
+
+    const updatedCategory = updateResponse.body.data.category;
+
+    expect(updatedCategory.id).toBe(menCategory.id);
+
+    expect(updatedCategory.slug).toBe("mens-fashion");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Old Public Slug Is No Longer Available
+    |--------------------------------------------------------------------------
+    */
+
+    const oldSlugResponse = await request(app)
+      .get(`${publicCategoryUrl}/men`)
+      .expect(404);
+
+    expect(oldSlugResponse.body.errorCode).toBe("CATEGORY_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | New Public Slug Works
+    |--------------------------------------------------------------------------
+    */
+
+    const newSlugResponse = await request(app)
+      .get(`${publicCategoryUrl}/mens-fashion`)
+      .expect(200);
+
+    expect(newSlugResponse.body.data.category.id).toBe(menCategory.id);
+
+    expect(newSlugResponse.body.data.category.slug).toBe("mens-fashion");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reject Duplicate Slug During Update
+    |--------------------------------------------------------------------------
+    |
+    | Women cannot use the slug already assigned
+    | to the Men category.
+    |--------------------------------------------------------------------------
+    */
+
+    const duplicateSlugResponse = await agent
+      .patch(`${adminCategoryUrl}/${womenCategory.id}`)
+      .send({
+        slug: "mens-fashion",
+      })
+      .expect(409);
+
+    expect(duplicateSlugResponse.body.success).toBe(false);
+
+    expect(duplicateSlugResponse.body.errorCode).toBe(
+      "CATEGORY_SLUG_ALREADY_EXISTS",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failed Update Must Not Change Women
+    |--------------------------------------------------------------------------
+    */
+
+    const womenAfterFailureResponse = await agent
+      .get(`${adminCategoryUrl}/${womenCategory.id}`)
+      .expect(200);
+
+    expect(womenAfterFailureResponse.body.data.category.slug).toBe("women");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Existing Women Public Slug Still Works
+    |--------------------------------------------------------------------------
+    */
+
+    const womenPublicResponse = await request(app)
+      .get(`${publicCategoryUrl}/women`)
+      .expect(200);
+
+    expect(womenPublicResponse.body.data.category.id).toBe(womenCategory.id);
+  });
+
+  /*
+|--------------------------------------------------------------------------
 | Category Not-Found Handling
 |--------------------------------------------------------------------------
 */

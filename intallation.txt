@@ -887,6 +887,14 @@ tests/integration/category.integration.test.js
 Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "missing categories and parent categories"
 |--------------------------------------------------------------------------  
+Part 42: Test Category Slug Update Rules
+
+Update only:
+tests/integration/category.integration.test.js
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "updates a category slug"
+|--------------------------------------------------------------------------  
+
 info:
 The easiest way to remember is:
 
