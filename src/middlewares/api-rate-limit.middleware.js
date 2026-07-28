@@ -1,4 +1,5 @@
 import { rateLimit } from "express-rate-limit";
+import env from "../config/environment.js";
 
 const apiRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -9,9 +10,29 @@ const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 
-  message: {
-    success: false,
-    message: "Too many requests. Please try again later.",
+  /*
+  |--------------------------------------------------------------------------
+  | Skip During Automated Tests
+  |--------------------------------------------------------------------------
+  |
+  | Integration tests can make hundreds of requests
+  | from the same local IP address.
+  |--------------------------------------------------------------------------
+  */
+  skip: () => {
+    return env.NODE_ENV === "test";
+  },
+
+  handler: (request, response, options) => {
+    return response.status(options.statusCode).json({
+      success: false,
+
+      message: "Too many requests. Please try again later.",
+
+      errorCode: "TOO_MANY_REQUESTS",
+
+      requestId: request.id,
+    });
   },
 });
 

@@ -831,6 +831,16 @@ Run only the validation test
 npx vitest run tests/integration/category.integration.test.js -t "invalid category list"
 
 |--------------------------------------------------------------------------  
+
+Part 37: Test Category Request Validation
+Update only:
+tests/integration/category.integration.test.js
+Run only the creation-validation test
+npx vitest run tests/integration/category.integration.test.js -t "protected category creation"
+Run only the update-validation test
+npx vitest run tests/integration/category.integration.test.js -t "empty and invalid category update"
+
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

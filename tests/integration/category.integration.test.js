@@ -853,6 +853,200 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Create Category Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid and protected category creation fields", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Protected Backend-Controlled Fields
+    |--------------------------------------------------------------------------
+    */
+
+    const protectedFieldsResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+
+      ancestors: ["507f1f77bcf86cd799439011"],
+
+      level: 5,
+
+      createdBy: String(user._id),
+    }).expect(400);
+
+    expect(protectedFieldsResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Parent ObjectId
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidParentResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: "invalid-id",
+    }).expect(400);
+
+    expect(invalidParentResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Slug
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidSlugResponse = await createCategoryRequest(agent, {
+      name: "Men T-Shirts",
+      slug: "Men T Shirts",
+    }).expect(400);
+
+    expect(invalidSlugResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Image URL
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidImageResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+
+      image: {
+        url: "javascript:alert(1)",
+      },
+    }).expect(400);
+
+    expect(invalidImageResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Negative Sort Order
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidSortOrderResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      sortOrder: -1,
+    }).expect(400);
+
+    expect(invalidSortOrderResponse.body.success).toBe(false);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Update Category Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects empty and invalid category update payloads", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Empty Update Body
+    |--------------------------------------------------------------------------
+    */
+
+    const emptyUpdateResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}`)
+      .send({})
+      .expect(400);
+
+    expect(emptyUpdateResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Field
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownFieldResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}`)
+      .send({
+        productCount: 100,
+      })
+      .expect(400);
+
+    expect(unknownFieldResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Protected Hierarchy Fields
+    |--------------------------------------------------------------------------
+    */
+
+    const protectedFieldResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}`)
+      .send({
+        ancestors: ["507f1f77bcf86cd799439011"],
+
+        level: 10,
+      })
+      .expect(400);
+
+    expect(protectedFieldResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Category ID Parameter
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidIdResponse = await agent
+      .patch(`${adminCategoryUrl}/invalid-id`)
+      .send({
+        name: "Updated Category",
+      })
+      .expect(400);
+
+    expect(invalidIdResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Status
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidStatusResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}`)
+      .send({
+        status: "published",
+      })
+      .expect(400);
+
+    expect(invalidStatusResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Featured Value
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidFeaturedResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}`)
+      .send({
+        isFeatured: "true",
+      })
+      .expect(400);
+
+    expect(invalidFeaturedResponse.body.success).toBe(false);
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Admin List Filters
     |--------------------------------------------------------------------------
