@@ -803,6 +803,25 @@ Run only the new tests
 npx vitest run tests/integration/category.integration.test.js -t "inactive"
 
 |--------------------------------------------------------------------------  
+
+Part 35: Test Deleted Category Admin Views
+
+Update only:
+
+tests/integration/category.integration.test.js
+
+This test will verify:
+
+Default admin list → excludes deleted categories
+deleted=only       → returns only deleted categories
+deleted=include    → returns all categories
+includeDeleted=true → retrieves a deleted category
+Admin tree filters → preserve deleted hierarchy
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "lists and retrieves deleted categories"
+
+|--------------------------------------------------------------------------  
+
 info:
 The easiest way to remember is:
 

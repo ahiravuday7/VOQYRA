@@ -973,6 +973,249 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Deleted Category Admin Views
+|--------------------------------------------------------------------------
+*/
+
+  it("lists and retrieves deleted categories using admin filters", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Men
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      sortOrder: 1,
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Topwear under Men
+    |--------------------------------------------------------------------------
+    */
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+      sortOrder: 1,
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Women as a Non-Deleted Category
+    |--------------------------------------------------------------------------
+    */
+
+    const womenResponse = await createCategoryRequest(agent, {
+      name: "Women",
+      slug: "women",
+      sortOrder: 2,
+    }).expect(201);
+
+    const womenCategory = womenResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Child Before Parent
+    |--------------------------------------------------------------------------
+    */
+
+    await agent.delete(`${adminCategoryUrl}/${topwearCategory.id}`).expect(200);
+
+    await agent.delete(`${adminCategoryUrl}/${menCategory.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default List Excludes Deleted Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const defaultListResponse = await agent.get(adminCategoryUrl).expect(200);
+
+    expect(defaultListResponse.body.data.filters.deleted).toBe("exclude");
+
+    expect(defaultListResponse.body.data.categories).toHaveLength(1);
+
+    expect(defaultListResponse.body.data.categories[0].id).toBe(
+      womenCategory.id,
+    );
+
+    expect(defaultListResponse.body.data.categories[0].isDeleted).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | List Only Deleted Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedOnlyResponse = await agent
+      .get(`${adminCategoryUrl}?deleted=only`)
+      .expect(200);
+
+    expect(deletedOnlyResponse.body.data.filters.deleted).toBe("only");
+
+    const deletedCategories = deletedOnlyResponse.body.data.categories;
+
+    expect(deletedCategories).toHaveLength(2);
+
+    expect(
+      deletedCategories.every((category) => category.isDeleted === true),
+    ).toBe(true);
+
+    expect(deletedCategories.map((category) => category.slug)).toEqual(
+      expect.arrayContaining(["men", "men-topwear"]),
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Include Deleted and Non-Deleted Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const includeDeletedResponse = await agent
+      .get(`${adminCategoryUrl}?deleted=include`)
+      .expect(200);
+
+    expect(includeDeletedResponse.body.data.filters.deleted).toBe("include");
+
+    expect(includeDeletedResponse.body.data.categories).toHaveLength(3);
+
+    expect(
+      includeDeletedResponse.body.data.categories.map(
+        (category) => category.slug,
+      ),
+    ).toEqual(expect.arrayContaining(["men", "men-topwear", "women"]));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted Category Is Hidden by Default
+    |--------------------------------------------------------------------------
+    */
+
+    const hiddenCategoryResponse = await agent
+      .get(`${adminCategoryUrl}/${menCategory.id}`)
+      .expect(404);
+
+    expect(hiddenCategoryResponse.body.errorCode).toBe("CATEGORY_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Retrieve Deleted Category Explicitly
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedCategoryResponse = await agent
+      .get(`${adminCategoryUrl}/${menCategory.id}?includeDeleted=true`)
+      .expect(200);
+
+    const deletedMen = deletedCategoryResponse.body.data.category;
+
+    expect(deletedMen.id).toBe(menCategory.id);
+
+    expect(deletedMen.slug).toBe("men");
+
+    expect(deletedMen.isDeleted).toBe(true);
+
+    expect(deletedMen.deletedAt).not.toBeNull();
+
+    expect(deletedMen.deletedBy).toBeDefined();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Admin Tree Excludes Deleted Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const defaultTreeResponse = await agent
+      .get(`${adminCategoryUrl}/tree`)
+      .expect(200);
+
+    expect(defaultTreeResponse.body.data.filters.deleted).toBe("exclude");
+
+    expect(defaultTreeResponse.body.data.categories).toHaveLength(1);
+
+    expect(defaultTreeResponse.body.data.categories[0].id).toBe(
+      womenCategory.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted-Only Tree Preserves Hierarchy
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedTreeResponse = await agent
+      .get(`${adminCategoryUrl}/tree?deleted=only`)
+      .expect(200);
+
+    expect(deletedTreeResponse.body.data.filters.deleted).toBe("only");
+
+    const deletedTreeRoots = deletedTreeResponse.body.data.categories;
+
+    expect(deletedTreeRoots).toHaveLength(1);
+
+    const deletedMenTree = deletedTreeRoots.find(
+      (category) => category.id === menCategory.id,
+    );
+
+    expect(deletedMenTree).toBeDefined();
+
+    expect(deletedMenTree.isDeleted).toBe(true);
+
+    expect(deletedMenTree.isOrphaned).toBe(false);
+
+    expect(deletedMenTree.children).toHaveLength(1);
+
+    expect(deletedMenTree.children[0].id).toBe(topwearCategory.id);
+
+    expect(deletedMenTree.children[0].isDeleted).toBe(true);
+
+    expect(deletedMenTree.children[0].isOrphaned).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Included Tree Contains Every Category
+    |--------------------------------------------------------------------------
+    */
+
+    const includedTreeResponse = await agent
+      .get(`${adminCategoryUrl}/tree?deleted=include`)
+      .expect(200);
+
+    expect(includedTreeResponse.body.data.filters.deleted).toBe("include");
+
+    const includedTreeRoots = includedTreeResponse.body.data.categories;
+
+    expect(includedTreeRoots).toHaveLength(2);
+
+    const includedMen = includedTreeRoots.find(
+      (category) => category.id === menCategory.id,
+    );
+
+    const includedWomen = includedTreeRoots.find(
+      (category) => category.id === womenCategory.id,
+    );
+
+    expect(includedMen).toBeDefined();
+
+    expect(includedWomen).toBeDefined();
+
+    expect(includedMen.children).toHaveLength(1);
+
+    expect(includedMen.children[0].id).toBe(topwearCategory.id);
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Public Category APIs
     |--------------------------------------------------------------------------
