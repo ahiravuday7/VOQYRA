@@ -848,6 +848,19 @@ Update only:
 tests/integration/category.integration.test.js
 npx vitest run tests/integration/category.integration.test.js -t "hides active categories publicly"
 |--------------------------------------------------------------------------  
+Part 39: Test Idempotent Delete and Restore
+
+Update only:
+tests/integration/category.integration.test.js
+This test confirms:
+Delete category once  → deleted
+Delete category again → still succeeds
+
+Restore category once  → restored
+Restore category again → still succeeds
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "operations to be repeated safely"
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

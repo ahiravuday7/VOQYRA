@@ -1376,6 +1376,131 @@ describe("Category API integration", () => {
 
   /*
 |--------------------------------------------------------------------------
+| Idempotent Category Delete and Restore
+|--------------------------------------------------------------------------
+*/
+
+  it("allows category delete and restore operations to be repeated safely", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Accessories",
+      slug: "accessories",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Delete
+    |--------------------------------------------------------------------------
+    */
+
+    const firstDeleteResponse = await agent
+      .delete(`${adminCategoryUrl}/${category.id}`)
+      .expect(200);
+
+    const firstDeletedCategory = firstDeleteResponse.body.data.category;
+
+    expect(firstDeletedCategory.isDeleted).toBe(true);
+
+    expect(firstDeletedCategory.deletedAt).not.toBeNull();
+
+    expect(firstDeletedCategory.deletedBy).toBeDefined();
+
+    const firstDeletedAt = firstDeletedCategory.deletedAt;
+
+    const firstDeletedBy = firstDeletedCategory.deletedBy;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Repeated Delete
+    |--------------------------------------------------------------------------
+    |
+    | The category is already deleted, but the endpoint
+    | should still return a successful response.
+    |--------------------------------------------------------------------------
+    */
+
+    const secondDeleteResponse = await agent
+      .delete(`${adminCategoryUrl}/${category.id}`)
+      .expect(200);
+
+    const secondDeletedCategory = secondDeleteResponse.body.data.category;
+
+    expect(secondDeletedCategory.isDeleted).toBe(true);
+
+    expect(secondDeletedCategory.deletedAt).toBe(firstDeletedAt);
+
+    expect(secondDeletedCategory.deletedBy).toBe(firstDeletedBy);
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Restore
+    |--------------------------------------------------------------------------
+    */
+
+    const firstRestoreResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}/restore`)
+      .send({})
+      .expect(200);
+
+    const firstRestoredCategory = firstRestoreResponse.body.data.category;
+
+    expect(firstRestoredCategory.isDeleted).toBe(false);
+
+    expect(firstRestoredCategory.deletedAt).toBeNull();
+
+    expect(firstRestoredCategory.deletedBy).toBeNull();
+
+    const firstRestoredUpdatedAt = firstRestoredCategory.updatedAt;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Repeated Restore
+    |--------------------------------------------------------------------------
+    |
+    | The category is already restored, but the endpoint
+    | should remain successful.
+    |--------------------------------------------------------------------------
+    */
+
+    const secondRestoreResponse = await agent
+      .patch(`${adminCategoryUrl}/${category.id}/restore`)
+      .send({})
+      .expect(200);
+
+    const secondRestoredCategory = secondRestoreResponse.body.data.category;
+
+    expect(secondRestoredCategory.isDeleted).toBe(false);
+
+    expect(secondRestoredCategory.deletedAt).toBeNull();
+
+    expect(secondRestoredCategory.deletedBy).toBeNull();
+
+    expect(secondRestoredCategory.updatedAt).toBe(firstRestoredUpdatedAt);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Confirm Category Is Publicly Available Again
+    |--------------------------------------------------------------------------
+    */
+
+    const publicResponse = await request(app)
+      .get(`${publicCategoryUrl}/${category.slug}`)
+      .expect(200);
+
+    expect(publicResponse.body.data.category.id).toBe(category.id);
+  });
+
+  /*
+|--------------------------------------------------------------------------
 | Deleted Category Admin Views
 |--------------------------------------------------------------------------
 */
