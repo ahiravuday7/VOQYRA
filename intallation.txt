@@ -841,6 +841,13 @@ Run only the update-validation test
 npx vitest run tests/integration/category.integration.test.js -t "empty and invalid category update"
 
 |--------------------------------------------------------------------------  
+Part 38: Test Public Visibility with Unavailable Ancestors
+This test verifies defensive handling of inconsistent or legacy database data.
+
+Update only:
+tests/integration/category.integration.test.js
+npx vitest run tests/integration/category.integration.test.js -t "hides active categories publicly"
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 

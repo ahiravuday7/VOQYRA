@@ -1,5 +1,7 @@
 import request from "supertest";
 
+import Category from "../../src/modules/categories/category.model.js";
+
 import { describe, expect, it } from "vitest";
 
 import app from "../../src/app.js";
@@ -1696,5 +1698,206 @@ describe("Category API integration", () => {
       .expect(200);
 
     expect(updatedTreeResponse.body.data.categories[0].children).toEqual([]);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Public Visibility with Unavailable Ancestors
+|--------------------------------------------------------------------------
+*/
+
+  it("hides active categories publicly when an ancestor is inactive or deleted", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Hierarchy
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      status: "active",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    const tshirtResponse = await createCategoryRequest(agent, {
+      name: "T-Shirts",
+      slug: "men-tshirts",
+      parent: topwearCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const tshirtCategory = tshirtResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Simulate Legacy Inconsistent Data
+    |--------------------------------------------------------------------------
+    |
+    | We bypass the service and directly make Men inactive.
+    | Topwear and T-Shirts remain active in MongoDB.
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: menCategory.id,
+      },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Flat Public List
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveAncestorListResponse = await request(app)
+      .get(publicCategoryUrl)
+      .expect(200);
+
+    const visibleSlugs = inactiveAncestorListResponse.body.data.categories.map(
+      (category) => category.slug,
+    );
+
+    expect(visibleSlugs).not.toContain("men");
+
+    expect(visibleSlugs).not.toContain("men-topwear");
+
+    expect(visibleSlugs).not.toContain("men-tshirts");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Detail API
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveAncestorDetailResponse = await request(app)
+      .get(`${publicCategoryUrl}/${tshirtCategory.slug}`)
+      .expect(404);
+
+    expect(inactiveAncestorDetailResponse.body.errorCode).toBe(
+      "CATEGORY_NOT_FOUND",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Tree
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveAncestorTreeResponse = await request(app)
+      .get(`${publicCategoryUrl}/tree`)
+      .expect(200);
+
+    expect(inactiveAncestorTreeResponse.body.data.categories).toEqual([]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Men and Soft-Delete Topwear Directly
+    |--------------------------------------------------------------------------
+    |
+    | This again simulates inconsistent legacy data:
+    |
+    | Men       → active
+    | Topwear   → deleted
+    | T-Shirts  → active
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: menCategory.id,
+      },
+      {
+        $set: {
+          status: "active",
+        },
+      },
+    );
+
+    await Category.updateOne(
+      {
+        _id: topwearCategory.id,
+      },
+      {
+        $set: {
+          deletedAt: new Date(),
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Flat List Hides Descendant of Deleted Parent
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedAncestorListResponse = await request(app)
+      .get(publicCategoryUrl)
+      .expect(200);
+
+    const categoriesAfterParentDeletion =
+      deletedAncestorListResponse.body.data.categories;
+
+    expect(
+      categoriesAfterParentDeletion.map((category) => category.slug),
+    ).toContain("men");
+
+    expect(
+      categoriesAfterParentDeletion.map((category) => category.slug),
+    ).not.toContain("men-topwear");
+
+    expect(
+      categoriesAfterParentDeletion.map((category) => category.slug),
+    ).not.toContain("men-tshirts");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Detail API Hides Descendant
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedAncestorDetailResponse = await request(app)
+      .get(`${publicCategoryUrl}/${tshirtCategory.slug}`)
+      .expect(404);
+
+    expect(deletedAncestorDetailResponse.body.errorCode).toBe(
+      "CATEGORY_NOT_FOUND",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tree Shows Men without Hidden Children
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedAncestorTreeResponse = await request(app)
+      .get(`${publicCategoryUrl}/tree`)
+      .expect(200);
+
+    const publicMen = deletedAncestorTreeResponse.body.data.categories.find(
+      (category) => category.id === menCategory.id,
+    );
+
+    expect(publicMen).toBeDefined();
+
+    expect(publicMen.children).toEqual([]);
   });
 });
