@@ -731,6 +731,26 @@ Vitest starts
 → Test data is cleaned
 → Database connection closes
 → Temporary MongoDB stops
+*
+npm test
+→ Runs once and exits
+npm run test:integration
+→ Runs integration tests once and exits
+npm run test:watch
+→ Runs tests and keeps watching files
+
+|--------------------------------------------------------------------------
+
+Part 31: Category Integration Tests
+
+Create exactly two files:
+1. tests/helpers/auth-test.helper.js
+2. tests/integration/category.integration.test.js
+The helper creates a user, logs in through the real Login API, and returns a Supertest agent. The agent retains authentication cookies for subsequent requests, allowing tests to behave like a logged-in browser.
+
+Run only Category tests
+From the backend folder:
+npx vitest run tests/integration/category.integration.test.js
 
 
 |--------------------------------------------------------------------------
