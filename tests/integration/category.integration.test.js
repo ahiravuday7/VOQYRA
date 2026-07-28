@@ -1743,6 +1743,127 @@ describe("Category API integration", () => {
   });
 
   /*
+|--------------------------------------------------------------------------
+| Admin Tree Orphan Detection
+|--------------------------------------------------------------------------
+*/
+
+  it("marks a category as orphaned when its parent is excluded from the admin tree", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Parent
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      status: "active",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Child
+    |--------------------------------------------------------------------------
+    */
+
+    const topwearResponse = await createCategoryRequest(agent, {
+      name: "Topwear",
+      slug: "men-topwear",
+      parent: menCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const topwearCategory = topwearResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Only the Child
+    |--------------------------------------------------------------------------
+    |
+    | The parent remains active and non-deleted.
+    |--------------------------------------------------------------------------
+    */
+
+    await agent.delete(`${adminCategoryUrl}/${topwearCategory.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted-Only Tree
+    |--------------------------------------------------------------------------
+    |
+    | Men is excluded because it is not deleted.
+    | Topwear must still appear for administrators.
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedOnlyTreeResponse = await agent
+      .get(`${adminCategoryUrl}/tree?deleted=only`)
+      .expect(200);
+
+    expect(deletedOnlyTreeResponse.body.data.filters.deleted).toBe("only");
+
+    const deletedTreeRoots = deletedOnlyTreeResponse.body.data.categories;
+
+    expect(deletedTreeRoots).toHaveLength(1);
+
+    const orphanedTopwear = deletedTreeRoots[0];
+
+    expect(orphanedTopwear.id).toBe(topwearCategory.id);
+
+    expect(orphanedTopwear.slug).toBe("men-topwear");
+
+    /*
+     * The original parent reference remains stored.
+     */
+    expect(orphanedTopwear.parent).toBe(menCategory.id);
+
+    expect(orphanedTopwear.isDeleted).toBe(true);
+
+    expect(orphanedTopwear.isOrphaned).toBe(true);
+
+    expect(orphanedTopwear.children).toEqual([]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Included Tree Restores Normal Hierarchy
+    |--------------------------------------------------------------------------
+    |
+    | With deleted=include, both parent and child
+    | are present, so Topwear is no longer orphaned.
+    |--------------------------------------------------------------------------
+    */
+
+    const includedTreeResponse = await agent
+      .get(`${adminCategoryUrl}/tree?deleted=include`)
+      .expect(200);
+
+    const includedRoots = includedTreeResponse.body.data.categories;
+
+    const includedMen = includedRoots.find(
+      (category) => category.id === menCategory.id,
+    );
+
+    expect(includedMen).toBeDefined();
+
+    expect(includedMen.isOrphaned).toBe(false);
+
+    const includedTopwear = includedMen.children.find(
+      (category) => category.id === topwearCategory.id,
+    );
+
+    expect(includedTopwear).toBeDefined();
+
+    expect(includedTopwear.isDeleted).toBe(true);
+
+    expect(includedTopwear.isOrphaned).toBe(false);
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Public Category APIs
     |--------------------------------------------------------------------------

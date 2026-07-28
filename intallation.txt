@@ -861,6 +861,24 @@ Restore category again → still succeeds
 Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "operations to be repeated safely"
 |--------------------------------------------------------------------------  
+Part 40: Test Admin Tree Orphan Detection
+
+Update only:
+tests/integration/category.integration.test.js
+This test verifies:
+Men — active
+└── Topwear — deleted
+When requesting:
+GET /api/v1/admin/categories/tree?deleted=only
+Men is excluded because it is not deleted. Therefore, Topwear should remain visible to the admin as an orphaned root node:
+{
+  "slug": "men-topwear",
+  "isDeleted": true,
+  "isOrphaned": true
+}
+Run only this test
+npx vitest run tests/integration/category.integration.test.js -t "marks a category as orphaned"
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 
