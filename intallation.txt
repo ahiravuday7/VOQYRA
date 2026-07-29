@@ -900,6 +900,44 @@ tests/integration/category.integration.test.js
 Run only this test
 npx vitest run tests/integration/category.integration.test.js -t "invalid public category query"
 |--------------------------------------------------------------------------  
+Part 44: Product Constants and Product Model
+Create exactly two files:
+1. src/shared/constants/product.constants.js
+2. src/modules/products/product.model.js
+
+The model will support:
+Product information
+Category relationship
+Product images
+Multiple size/color variants
+SKU management
+Buying, selling and discount prices
+Stock and reserved stock
+Shipping weight and dimensions
+SEO
+Soft deletion
+Admin audit fields
+
+Mongoose validates embedded subdocuments when the parent document is saved. We will use this for variant pricing, inventory, colour, and shipping validation.
+
+Embedded Product schemas
+The Product document contains smaller schemas inside it.
+Product
+├── images[]
+├── variants[]
+│   ├── color
+│   ├── pricing
+│   ├── inventory
+│   └── shipping
+│       └── dimensions
+├── attributes[]
+└── seo
+These are embedded subdocuments rather than separate MongoDB collections.
+When the Product is saved, Mongoose also validates these embedded objects.
+
+|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
 
