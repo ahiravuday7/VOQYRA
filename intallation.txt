@@ -967,6 +967,29 @@ availableStock
 totalStock
 priceRange
 |--------------------------------------------------------------------------  
+Part 46: Product Repository and Creation Service
+
+Create exactly two files:
+
+1. src/modules/products/product.repository.js
+2. src/modules/products/product.service.js
+
+This part handles:
+
+Product category validation
+Active ancestor validation
+Unique product slug
+Unique variant SKUs
+Active-product publishing requirements
+publishedAt management
+Product creation
+Audit fields
+
+No controller or routes yet.
+|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------  
 |--------------------------------------------------------------------------  
 info:
 The easiest way to remember is:
