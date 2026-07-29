@@ -986,7 +986,15 @@ Product creation
 Audit fields
 
 No controller or routes yet.
-|--------------------------------------------------------------------------  
+|--------------------------------------------------------------------------
+Part 47: Product Mapper and Admin Create Controller
+
+Create exactly two files:
+
+1. src/modules/products/product.mapper.js
+2. src/modules/products/product.controller.js
+
+No route changes in this part.
 |--------------------------------------------------------------------------  
 |--------------------------------------------------------------------------  
 |--------------------------------------------------------------------------  
