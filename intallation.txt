@@ -995,10 +995,57 @@ Create exactly two files:
 2. src/modules/products/product.controller.js
 
 No route changes in this part.
-|--------------------------------------------------------------------------  
-|--------------------------------------------------------------------------  
-|--------------------------------------------------------------------------  
-|--------------------------------------------------------------------------  
+Responsibility summary:
+
+Mapper responsibilities:
+Convert ObjectIds into strings
+Convert Mongoose documents into plain objects
+Apply stable response defaults
+Map Product images
+Map colours
+Map pricing
+Map inventory
+Map shipping
+Map variants
+Calculate effective price
+Calculate low-stock status
+Calculate Product stock totals
+Calculate price range
+Expose admin audit information
+
+Controller responsibilities:
+Read validated Product data
+Read authenticated admin ID
+Call Product creation service
+Write a structured success log
+Map the Product response
+Return HTTP 201
+Controller should not do
+Direct MongoDB queries
+Slug uniqueness checks
+SKU uniqueness checks
+Category business validation
+Inventory calculations
+Raw Mongoose response formatting
+Audit-field decisions
+|--------------------------------------------------------------------------
+Part 48: Register Admin Product Creation Route
+
+In this part:
+Create:
+src/modules/products/product.routes.js
+Update:
+src/app.js
+New endpoint:
+POST /api/v1/admin/products
+It requires an authenticated admin account.
+
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
