@@ -936,6 +936,36 @@ These are embedded subdocuments rather than separate MongoDB collections.
 When the Product is saved, Mongoose also validates these embedded objects.
 
 |--------------------------------------------------------------------------  
+Part 45: Product Request Validation
+
+Create only one file:
+
+src/modules/products/product.validation.js
+
+It will validate:
+Product details
+Category ID
+Images
+Variants
+SKU
+Colour
+Pricing
+Inventory
+Shipping
+Attributes
+SEO
+Product status
+Create and update requests
+
+It will reject backend-controlled fields such as:
+createdBy
+updatedBy
+deletedAt
+deletedBy
+publishedAt
+availableStock
+totalStock
+priceRange
 |--------------------------------------------------------------------------  
 |--------------------------------------------------------------------------  
 info:
