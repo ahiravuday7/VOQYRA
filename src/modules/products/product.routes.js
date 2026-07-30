@@ -9,11 +9,13 @@ import { USER_ROLES } from "../../shared/constants/user.constants.js";
 import {
   createProductRequestSchema,
   productIdRequestSchema,
+  adminProductListRequestSchema,
 } from "./product.validation.js";
 
 import {
   createProductController,
   getAdminProductController,
+  getAdminProductsController,
 } from "./product.controller.js";
 
 const router = Router();
@@ -39,6 +41,18 @@ router.post(
   "/",
   validateRequest(createProductRequestSchema),
   createProductController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Products
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/",
+  validateRequest(adminProductListRequestSchema),
+  getAdminProductsController,
 );
 
 /*
