@@ -1073,3 +1073,188 @@ export const adminProductListRequestSchema = z.strictObject({
 
   query: adminProductListQuerySchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Sort Values
+|--------------------------------------------------------------------------
+*/
+
+const PUBLIC_PRODUCT_SORT_VALUES = Object.freeze([
+  "newest",
+  "oldest",
+  "price-low-to-high",
+  "price-high-to-low",
+  "name-asc",
+  "name-desc",
+]);
+/*
+|--------------------------------------------------------------------------
+| Query Number
+|--------------------------------------------------------------------------
+|
+| Used for Product price filtering.
+|--------------------------------------------------------------------------
+*/
+
+const createQueryNumberSchema = ({ fieldName, minimum, maximum }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (normalizedValue === "") {
+        return Number.NaN;
+      }
+
+      return Number(normalizedValue);
+    },
+
+    z
+      .number({
+        error: `${fieldName} must be a number`,
+      })
+      .finite({
+        error: `${fieldName} must be a finite number`,
+      })
+      .min(minimum, {
+        error: `${fieldName} cannot be less than ${minimum}`,
+      })
+      .max(maximum, {
+        error: `${fieldName} cannot exceed ${maximum}`,
+      }),
+  );
+};
+/*
+|--------------------------------------------------------------------------
+| Public Product Slug Parameters
+|--------------------------------------------------------------------------
+*/
+
+const publicProductSlugParamsSchema = z.strictObject({
+  slug: productSlugSchema,
+});
+/*
+|--------------------------------------------------------------------------
+| Public Product List Query
+|--------------------------------------------------------------------------
+|
+| Public users cannot request:
+|
+| - Draft Products
+| - Inactive Products
+| - Archived Products
+| - Deleted Products
+|--------------------------------------------------------------------------
+*/
+
+const publicProductListQuerySchema = z
+  .strictObject({
+    page: createQueryIntegerSchema({
+      fieldName: "Page",
+      minimum: 1,
+      maximum: 100000,
+    })
+      .optional()
+      .default(1),
+
+    limit: createQueryIntegerSchema({
+      fieldName: "Limit",
+      minimum: 1,
+      maximum: 50,
+    })
+      .optional()
+      .default(20),
+
+    search: z
+      .string({
+        error: "Product search must be a string",
+      })
+      .trim()
+      .min(1, {
+        error: "Product search cannot be empty",
+      })
+      .max(100, {
+        error: "Product search cannot exceed 100 characters",
+      })
+      .optional(),
+
+    category: objectIdSchema.optional(),
+
+    isFeatured: queryBooleanSchema.optional(),
+
+    isNewArrival: queryBooleanSchema.optional(),
+
+    isBestSeller: queryBooleanSchema.optional(),
+
+    inStock: queryBooleanSchema.optional(),
+
+    minPrice: createQueryNumberSchema({
+      fieldName: "Minimum price",
+      minimum: 0,
+      maximum: 10000000,
+    }).optional(),
+
+    maxPrice: createQueryNumberSchema({
+      fieldName: "Maximum price",
+      minimum: 0,
+      maximum: 10000000,
+    }).optional(),
+
+    sort: createQueryEnumSchema(
+      PUBLIC_PRODUCT_SORT_VALUES,
+      "Invalid public Product sorting option",
+    )
+      .optional()
+      .default("newest"),
+  })
+  .superRefine((query, context) => {
+    if (
+      query.minPrice !== undefined &&
+      query.maxPrice !== undefined &&
+      query.minPrice > query.maxPrice
+    ) {
+      context.addIssue({
+        code: "custom",
+
+        message: "Minimum price cannot exceed maximum price",
+
+        path: ["minPrice"],
+      });
+    }
+  });
+/*
+|--------------------------------------------------------------------------
+| Public Product List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/products
+|--------------------------------------------------------------------------
+*/
+
+export const publicProductListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: publicProductListQuerySchema,
+});
+/*
+|--------------------------------------------------------------------------
+| Public Product Details Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/products/:slug
+|--------------------------------------------------------------------------
+*/
+
+export const publicProductDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: publicProductSlugParamsSchema,
+
+  query: emptyObjectSchema,
+});

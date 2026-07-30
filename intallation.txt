@@ -1162,6 +1162,26 @@ It has no active variants
 It has no Product image
 It does not have exactly one primary image
 |--------------------------------------------------------------------------
+Part 56: Public Product Mapper and Request Validation
+Update exactly two files:
+
+1. src/modules/products/product.mapper.js
+2. src/modules/products/product.validation.js
+
+This part prepares the customer-facing Product API.
+
+The public response will not expose:
+
+buyingPrice
+reservedStock
+createdBy
+updatedBy
+deletedAt
+deletedBy
+barcode
+inactive variants
+
+No public route is registered yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

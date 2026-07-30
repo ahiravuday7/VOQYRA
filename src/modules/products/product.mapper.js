@@ -355,3 +355,379 @@ export const toAdminProduct = (product) => {
     updatedAt: productObject.updatedAt,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Category Mapper
+|--------------------------------------------------------------------------
+|
+| Supports both:
+|
+| - An unpopulated category ObjectId
+| - A populated Category document
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductCategory = (category) => {
+  if (!category) {
+    return null;
+  }
+
+  if (typeof category === "object" && category._id) {
+    return {
+      id: mapObjectId(category._id),
+
+      name: category.name ?? null,
+
+      slug: category.slug ?? null,
+    };
+  }
+
+  return {
+    id: mapObjectId(category),
+
+    name: null,
+    slug: null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Image Mapper
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductImage = (image) => {
+  return {
+    id: mapObjectId(image?._id),
+
+    url: image?.url ?? "",
+
+    altText: image?.altText ?? "",
+
+    sortOrder: image?.sortOrder ?? 0,
+
+    isPrimary: image?.isPrimary ?? false,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Sort Product Images
+|--------------------------------------------------------------------------
+*/
+
+const sortPublicProductImages = (images) => {
+  return [...images].sort((firstImage, secondImage) => {
+    /*
+     * Primary image should appear first.
+     */
+    if (firstImage.isPrimary !== secondImage.isPrimary) {
+      return firstImage.isPrimary ? -1 : 1;
+    }
+
+    return firstImage.sortOrder - secondImage.sortOrder;
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Variant Pricing Mapper
+|--------------------------------------------------------------------------
+|
+| Buying price is intentionally excluded.
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicVariantPricing = (pricing) => {
+  const sellingPrice = pricing?.sellingPrice ?? 0;
+
+  const discountPrice = pricing?.discountPrice ?? null;
+
+  const effectivePrice = discountPrice ?? sellingPrice;
+
+  const hasDiscount = discountPrice !== null && discountPrice < sellingPrice;
+
+  const discountPercentage =
+    hasDiscount && sellingPrice > 0
+      ? Math.round(((sellingPrice - discountPrice) / sellingPrice) * 100)
+      : 0;
+
+  return {
+    sellingPrice,
+
+    discountPrice,
+
+    effectivePrice,
+
+    currency: pricing?.currency ?? "INR",
+
+    hasDiscount,
+
+    discountPercentage,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Variant Availability Mapper
+|--------------------------------------------------------------------------
+|
+| Exact reserved stock is not exposed.
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicVariantAvailability = (inventory) => {
+  const stock = inventory?.stock ?? 0;
+
+  const reservedStock = inventory?.reservedStock ?? 0;
+
+  const availableStock = Math.max(stock - reservedStock, 0);
+
+  const lowStockThreshold = inventory?.lowStockThreshold ?? 0;
+
+  return {
+    availableStock,
+
+    isInStock: availableStock > 0,
+
+    isLowStock: availableStock > 0 && availableStock <= lowStockThreshold,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Variant Mapper
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductVariant = (variant) => {
+  const availability = mapPublicVariantAvailability(variant?.inventory);
+
+  return {
+    id: mapObjectId(variant?._id),
+
+    sku: variant?.sku ?? "",
+
+    size: variant?.size ?? "",
+
+    color: mapProductColor(variant?.color),
+
+    pricing: mapPublicVariantPricing(variant?.pricing),
+
+    availability,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Calculate Public Product Summary
+|--------------------------------------------------------------------------
+*/
+
+const calculatePublicProductSummary = (variants) => {
+  const availableStock = variants.reduce((total, variant) => {
+    return total + variant.availability.availableStock;
+  }, 0);
+
+  const isLowStock = variants.some((variant) => {
+    return variant.availability.isLowStock;
+  });
+
+  return {
+    availableStock,
+
+    isInStock: availableStock > 0,
+
+    isLowStock: availableStock > 0 && isLowStock,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Calculate Public Price Range
+|--------------------------------------------------------------------------
+*/
+
+const calculatePublicPriceRange = (variants) => {
+  const prices = variants
+    .map((variant) => {
+      return variant.pricing.effectivePrice;
+    })
+    .filter((price) => {
+      return Number.isFinite(price);
+    });
+
+  if (!prices.length) {
+    return {
+      minimum: null,
+      maximum: null,
+      currency: "INR",
+    };
+  }
+
+  return {
+    minimum: Math.min(...prices),
+
+    maximum: Math.max(...prices),
+
+    currency: variants[0]?.pricing.currency ?? "INR",
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Convert Product to Plain Object
+|--------------------------------------------------------------------------
+*/
+
+const convertProductToObject = (product) => {
+  if (!product) {
+    return null;
+  }
+
+  return typeof product.toObject === "function"
+    ? product.toObject({
+        virtuals: true,
+      })
+    : product;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Summary Mapper
+|--------------------------------------------------------------------------
+|
+| Intended for:
+|
+| GET /api/v1/products
+|--------------------------------------------------------------------------
+*/
+
+export const toPublicProductSummary = (product) => {
+  const productObject = convertProductToObject(product);
+
+  if (!productObject) {
+    return null;
+  }
+
+  const images = sortPublicProductImages(
+    (productObject.images ?? []).map(mapPublicProductImage),
+  );
+
+  const variants = (productObject.variants ?? [])
+    .filter((variant) => {
+      return variant.isActive !== false;
+    })
+    .map(mapPublicProductVariant);
+
+  const availability = calculatePublicProductSummary(variants);
+
+  return {
+    id: mapObjectId(productObject._id),
+
+    name: productObject.name,
+
+    slug: productObject.slug,
+
+    shortDescription: productObject.shortDescription ?? "",
+
+    category: mapPublicProductCategory(productObject.category),
+
+    brand: productObject.brand,
+
+    tags: productObject.tags ?? [],
+
+    primaryImage:
+      images.find((image) => {
+        return image.isPrimary;
+      }) ??
+      images[0] ??
+      null,
+
+    priceRange: calculatePublicPriceRange(variants),
+
+    availability,
+
+    isFeatured: productObject.isFeatured ?? false,
+
+    isNewArrival: productObject.isNewArrival ?? false,
+
+    isBestSeller: productObject.isBestSeller ?? false,
+
+    publishedAt: productObject.publishedAt ?? null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Details Mapper
+|--------------------------------------------------------------------------
+|
+| Intended for:
+|
+| GET /api/v1/products/:slug
+|--------------------------------------------------------------------------
+*/
+
+export const toPublicProduct = (product) => {
+  const productObject = convertProductToObject(product);
+
+  if (!productObject) {
+    return null;
+  }
+
+  const images = sortPublicProductImages(
+    (productObject.images ?? []).map(mapPublicProductImage),
+  );
+
+  const variants = (productObject.variants ?? [])
+    .filter((variant) => {
+      return variant.isActive !== false;
+    })
+    .map(mapPublicProductVariant);
+
+  return {
+    id: mapObjectId(productObject._id),
+
+    name: productObject.name,
+
+    slug: productObject.slug,
+
+    shortDescription: productObject.shortDescription ?? "",
+
+    description: productObject.description ?? "",
+
+    category: mapPublicProductCategory(productObject.category),
+
+    brand: productObject.brand,
+
+    attributes: (productObject.attributes ?? []).map(mapProductAttribute),
+
+    materials: productObject.materials ?? [],
+
+    careInstructions: productObject.careInstructions ?? [],
+
+    countryOfOrigin: productObject.countryOfOrigin ?? "India",
+
+    tags: productObject.tags ?? [],
+
+    images,
+
+    variants,
+
+    seo: mapProductSeo(productObject.seo),
+
+    priceRange: calculatePublicPriceRange(variants),
+
+    availability: calculatePublicProductSummary(variants),
+
+    isFeatured: productObject.isFeatured ?? false,
+
+    isNewArrival: productObject.isNewArrival ?? false,
+
+    isBestSeller: productObject.isBestSeller ?? false,
+
+    publishedAt: productObject.publishedAt ?? null,
+  };
+};
