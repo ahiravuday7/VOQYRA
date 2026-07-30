@@ -1242,6 +1242,19 @@ Update:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 63: Product Update and Publication Tests
+
+Update:
+
+tests/integration/product.integration.test.js
+
+These tests cover:
+
+Active Product category-ancestor validation
+PATCH field preservation
+publishedAt lifecycle
+Duplicate slug during update
+Duplicate SKU during update
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

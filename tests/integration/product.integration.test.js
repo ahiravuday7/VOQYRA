@@ -5,6 +5,7 @@ import app from "../../src/app.js";
 
 import { createAuthenticatedAgent } from "../helpers/auth-test.helper.js";
 import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
+import Category from "../../src/modules/categories/category.model.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 
@@ -1200,5 +1201,594 @@ describe("Product integration", () => {
     ).expect(400);
 
     expect(invalidInventoryResponse.body.success).toBe(false);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Category Ancestor Availability
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects Product activation when a category ancestor is inactive", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Category Hierarchy
+    |--------------------------------------------------------------------------
+    |
+    | Men
+    | └── T-Shirts
+    |--------------------------------------------------------------------------
+    */
+
+    const menResponse = await createCategoryRequest(agent, {
+      name: "Men",
+      slug: "men",
+      status: "active",
+    }).expect(201);
+
+    const menCategory = menResponse.body.data.category;
+
+    const tshirtResponse = await createCategoryRequest(agent, {
+      name: "Men T-Shirts",
+      slug: "men-tshirts",
+      parent: menCategory.id,
+      status: "active",
+    }).expect(201);
+
+    const tshirtCategory = tshirtResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Draft Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Men Cotton T-Shirt",
+
+        slug: "men-cotton-tshirt",
+
+        category: tshirtCategory.id,
+
+        images: [
+          {
+            url: "https://example.com/men-cotton-tshirt.jpg",
+
+            altText: "Men cotton T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "MEN-TSHIRT-BLK-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+
+        status: "draft",
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Simulate an Unavailable Ancestor
+    |--------------------------------------------------------------------------
+    |
+    | Direct database update is used because the Category
+    | service may block deactivating a parent that still
+    | has active descendants.
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: menCategory.id,
+      },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Activation Must Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const activationResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(409);
+
+    expect(activationResponse.body.success).toBe(false);
+
+    expect(activationResponse.body.errorCode).toBe(
+      "PRODUCT_CATEGORY_ANCESTOR_UNAVAILABLE",
+    );
+
+    /*
+     * The failed update must leave the Product as draft.
+     */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.status).toBe("draft");
+
+    expect(detailsResponse.body.data.product.publishedAt).toBeNull();
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product PATCH Field Preservation
+|--------------------------------------------------------------------------
+*/
+
+  it("updates only provided Product fields and preserves existing values", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Polo T-Shirts",
+      slug: "polo-tshirts",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Classic Polo T-Shirt",
+
+        slug: "classic-polo-tshirt",
+
+        category: category.id,
+
+        brand: "Aayu & Aura",
+
+        tags: ["polo", "cotton"],
+
+        variants: [
+          {
+            sku: "POLO-NVY-M",
+
+            size: "M",
+
+            color: {
+              name: "Navy",
+              code: "#000080",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 899,
+              discountPrice: 799,
+            },
+
+            inventory: {
+              stock: 15,
+              reservedStock: 3,
+              lowStockThreshold: 4,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const originalProduct = createResponse.body.data.product;
+
+    const updateResponse = await agent
+      .patch(`${adminProductUrl}/${originalProduct.id}`)
+      .send({
+        name: "Premium Classic Polo T-Shirt",
+
+        shortDescription: "Updated premium polo T-shirt.",
+
+        isFeatured: true,
+      })
+      .expect(200);
+
+    const updatedProduct = updateResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Updated Fields
+    |--------------------------------------------------------------------------
+    */
+
+    expect(updatedProduct.name).toBe("Premium Classic Polo T-Shirt");
+
+    expect(updatedProduct.shortDescription).toBe(
+      "Updated premium polo T-shirt.",
+    );
+
+    expect(updatedProduct.isFeatured).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Preserved Fields
+    |--------------------------------------------------------------------------
+    */
+
+    expect(updatedProduct.slug).toBe("classic-polo-tshirt");
+
+    expect(updatedProduct.category).toBe(category.id);
+
+    expect(updatedProduct.brand).toBe("Aayu & Aura");
+
+    expect(updatedProduct.tags).toEqual(["polo", "cotton"]);
+
+    expect(updatedProduct.variants).toHaveLength(1);
+
+    expect(updatedProduct.variants[0].sku).toBe("POLO-NVY-M");
+
+    expect(updatedProduct.variants[0].pricing.buyingPrice).toBe(400);
+
+    expect(updatedProduct.totalStock).toBe(15);
+
+    expect(updatedProduct.reservedStock).toBe(3);
+
+    expect(updatedProduct.availableStock).toBe(12);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Publication Date
+|--------------------------------------------------------------------------
+*/
+
+  it("manages publishedAt when Product status changes", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Casual Shirts",
+      slug: "casual-shirts",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Publishable Draft Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Casual Linen Shirt",
+
+        slug: "casual-linen-shirt",
+
+        category: category.id,
+
+        images: [
+          {
+            url: "https://example.com/casual-linen-shirt.jpg",
+
+            altText: "Casual linen shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "LINEN-SHIRT-BGE-M",
+
+            size: "M",
+
+            color: {
+              name: "Beige",
+              code: "#F5F5DC",
+            },
+
+            pricing: {
+              buyingPrice: 600,
+              sellingPrice: 1399,
+              discountPrice: 1199,
+            },
+
+            inventory: {
+              stock: 12,
+              reservedStock: 1,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+
+        status: "draft",
+      }),
+    ).expect(201);
+
+    const draftProduct = createResponse.body.data.product;
+
+    expect(draftProduct.publishedAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Draft → Active
+    |--------------------------------------------------------------------------
+    */
+
+    const activateResponse = await agent
+      .patch(`${adminProductUrl}/${draftProduct.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(200);
+
+    const firstPublishedAt = activateResponse.body.data.product.publishedAt;
+
+    expect(activateResponse.body.data.product.status).toBe("active");
+
+    expect(firstPublishedAt).not.toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active → Active
+    |--------------------------------------------------------------------------
+    |
+    | Updating another field must preserve the original
+    | publication date.
+    |--------------------------------------------------------------------------
+    */
+
+    const activeUpdateResponse = await agent
+      .patch(`${adminProductUrl}/${draftProduct.id}`)
+      .send({
+        isBestSeller: true,
+      })
+      .expect(200);
+
+    expect(activeUpdateResponse.body.data.product.status).toBe("active");
+
+    expect(activeUpdateResponse.body.data.product.publishedAt).toBe(
+      firstPublishedAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active → Inactive
+    |--------------------------------------------------------------------------
+    */
+
+    const deactivateResponse = await agent
+      .patch(`${adminProductUrl}/${draftProduct.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    expect(deactivateResponse.body.data.product.status).toBe("inactive");
+
+    expect(deactivateResponse.body.data.product.publishedAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactive → Active
+    |--------------------------------------------------------------------------
+    */
+
+    const reactivateResponse = await agent
+      .patch(`${adminProductUrl}/${draftProduct.id}`)
+      .send({
+        status: "active",
+      })
+      .expect(200);
+
+    const secondPublishedAt = reactivateResponse.body.data.product.publishedAt;
+
+    expect(reactivateResponse.body.data.product.status).toBe("active");
+
+    expect(secondPublishedAt).not.toBeNull();
+
+    expect(new Date(secondPublishedAt).getTime()).toBeGreaterThanOrEqual(
+      new Date(firstPublishedAt).getTime(),
+    );
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Update Conflicts
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects duplicate Product slug and SKU updates", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Wallets",
+      slug: "wallets",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create First Product
+    |--------------------------------------------------------------------------
+    */
+
+    const firstProductResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Brown Leather Wallet",
+
+        slug: "brown-leather-wallet",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "WALLET-BRN-STD",
+
+            size: "Standard",
+
+            color: {
+              name: "Brown",
+              code: "#964B00",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const firstProduct = firstProductResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Second Product
+    |--------------------------------------------------------------------------
+    */
+
+    const secondProductResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Black Leather Wallet",
+
+        slug: "black-leather-wallet",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "WALLET-BLK-STD",
+
+            size: "Standard",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 350,
+              sellingPrice: 899,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const secondProduct = secondProductResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Duplicate Slug Update
+    |--------------------------------------------------------------------------
+    */
+
+    const duplicateSlugResponse = await agent
+      .patch(`${adminProductUrl}/${secondProduct.id}`)
+      .send({
+        slug: firstProduct.slug,
+      })
+      .expect(409);
+
+    expect(duplicateSlugResponse.body.success).toBe(false);
+
+    expect(duplicateSlugResponse.body.errorCode).toBe(
+      "PRODUCT_SLUG_ALREADY_EXISTS",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Duplicate SKU Update
+    |--------------------------------------------------------------------------
+    */
+
+    const duplicateSkuResponse = await agent
+      .patch(`${adminProductUrl}/${secondProduct.id}`)
+      .send({
+        variants: [
+          {
+            sku: "WALLET-BRN-STD",
+
+            size: "Large",
+
+            color: {
+              name: "Dark Brown",
+
+              code: "#654321",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 999,
+            },
+          },
+        ],
+      })
+      .expect(409);
+
+    expect(duplicateSkuResponse.body.success).toBe(false);
+
+    expect(duplicateSkuResponse.body.errorCode).toBe(
+      "PRODUCT_SKU_ALREADY_EXISTS",
+    );
+
+    expect(duplicateSkuResponse.body.details.conflictingSkus).toContain(
+      "WALLET-BRN-STD",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failed Updates Must Not Modify Second Product
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${secondProduct.id}`)
+      .expect(200);
+
+    const unchangedProduct = detailsResponse.body.data.product;
+
+    expect(unchangedProduct.slug).toBe("black-leather-wallet");
+
+    expect(unchangedProduct.variants[0].sku).toBe("WALLET-BLK-STD");
   });
 });
