@@ -16,6 +16,8 @@ import {
   findProductsByVariantSkus,
   listAdminProducts,
   saveProductDocument,
+  findPublicProductBySlug,
+  listPublicProducts,
 } from "./product.repository.js";
 
 /*
@@ -377,6 +379,39 @@ export const getAdminProducts = async (filters) => {
   const result = await listAdminProducts(filters);
 
   return result;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Products
+|--------------------------------------------------------------------------
+|
+| Returns only Products that are publicly available.
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicProducts = async (filters) => {
+  return listPublicProducts(filters);
+};
+/*
+|--------------------------------------------------------------------------
+| Get Public Product by Slug
+|--------------------------------------------------------------------------
+|
+| Draft, inactive, archived, deleted, unpublished,
+| or category-unavailable Products return the same
+| not-found response.
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicProductBySlug = async (slug) => {
+  const product = await findPublicProductBySlug(slug);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  return product;
 };
 
 /*

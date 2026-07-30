@@ -1191,6 +1191,17 @@ Published.
 Assigned to an active, non-deleted category.
 Assigned to a category whose complete ancestor path is available.
 |--------------------------------------------------------------------------
+Part 58: Public Product Service and Controller
+Update exactly two files:
+1. src/modules/products/product.service.js
+2. src/modules/products/product.controller.js
+This part connects:
+Public controller
+→ Public service
+→ Public repository
+→ Public Product mapper
+→ Customer-safe response
+Public routes will be registered in the next part.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -5,9 +5,15 @@ import {
   updateProduct,
   deleteProduct,
   restoreProduct,
+  getPublicProductBySlug,
+  getPublicProducts,
 } from "./product.service.js";
 
-import { toAdminProduct } from "./product.mapper.js";
+import {
+  toAdminProduct,
+  toPublicProduct,
+  toPublicProductSummary,
+} from "./product.mapper.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -232,6 +238,80 @@ export const restoreProductController = async (request, response) => {
 
     data: {
       product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Products
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/products
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicProductsController = async (request, response) => {
+  const filters = request.validated.query;
+
+  const { products, pagination } = await getPublicProducts(filters);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Products retrieved successfully",
+
+    data: {
+      products: products.map((product) => {
+        return toPublicProductSummary(product);
+      }),
+
+      pagination,
+
+      filters: {
+        search: filters.search ?? null,
+
+        category: filters.category ?? null,
+
+        isFeatured: filters.isFeatured ?? null,
+
+        isNewArrival: filters.isNewArrival ?? null,
+
+        isBestSeller: filters.isBestSeller ?? null,
+
+        inStock: filters.inStock ?? null,
+
+        minPrice: filters.minPrice ?? null,
+
+        maxPrice: filters.maxPrice ?? null,
+
+        sort: filters.sort,
+      },
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Public Product by Slug
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/products/:slug
+|--------------------------------------------------------------------------
+*/
+
+export const getPublicProductController = async (request, response) => {
+  const { slug } = request.validated.params;
+
+  const product = await getPublicProductBySlug(slug);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product retrieved successfully",
+
+    data: {
+      product: toPublicProduct(product),
     },
   });
 };
