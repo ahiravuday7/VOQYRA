@@ -2,6 +2,7 @@ import {
   createProduct,
   getAdminProductById,
   getAdminProducts,
+  updateProduct,
 } from "./product.service.js";
 
 import { toAdminProduct } from "./product.mapper.js";
@@ -114,6 +115,46 @@ export const getAdminProductController = async (request, response) => {
     success: true,
 
     message: "Product retrieved successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Product
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/products/:productId
+|--------------------------------------------------------------------------
+*/
+
+export const updateProductController = async (request, response) => {
+  const { productId } = request.validated.params;
+
+  const updateData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await updateProduct(productId, updateData, actorUserId);
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      updatedFields: Object.keys(updateData),
+
+      actorUserId,
+    },
+    "Product updated",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product updated successfully",
 
     data: {
       product: toAdminProduct(product),

@@ -1120,10 +1120,20 @@ Controller
 The route will be registered in the next part.
 |--------------------------------------------------------------------------
 Part 53: Register Admin Product List Route
-
 Update only:
-
 src/modules/products/product.routes.js
+|--------------------------------------------------------------------------
+Part 54: Admin Product Update API
+New endpoint:
+PATCH /api/v1/admin/products/:productId
+Update these four files:
+src/modules/products/product.repository.js
+src/modules/products/product.service.js
+src/modules/products/product.controller.js
+src/modules/products/product.routes.js
+
+The existing updateProductRequestSchema already validates the request.
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

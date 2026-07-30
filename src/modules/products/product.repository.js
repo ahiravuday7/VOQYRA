@@ -117,6 +117,20 @@ export const createProductDocument = async (productData, options = {}) => {
 
 /*
 |--------------------------------------------------------------------------
+| Save Product Document
+|--------------------------------------------------------------------------
+*/
+
+export const saveProductDocument = async (product, options = {}) => {
+  const { session = null } = options;
+
+  return product.save({
+    session,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Escape Search Regular Expression
 |--------------------------------------------------------------------------
 |

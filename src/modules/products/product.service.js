@@ -15,6 +15,7 @@ import {
   findProductBySlug,
   findProductsByVariantSkus,
   listAdminProducts,
+  saveProductDocument,
 } from "./product.repository.js";
 
 /*
@@ -376,4 +377,145 @@ export const getAdminProducts = async (filters) => {
   const result = await listAdminProducts(filters);
 
   return result;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Product
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/products/:productId
+|--------------------------------------------------------------------------
+*/
+
+export const updateProduct = async (productId, updateData, actorUserId) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Find Existing Product
+    |--------------------------------------------------------------------------
+    |
+    | Deleted Products cannot be updated through the normal update endpoint.
+    |--------------------------------------------------------------------------
+    */
+
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Build Resulting Product State
+    |--------------------------------------------------------------------------
+    |
+    | PATCH updates only the fields provided by the administrator.
+    |
+    | Arrays such as variants and images are replaced completely when present.
+    |--------------------------------------------------------------------------
+    */
+
+  const currentProduct = product.toObject({
+    virtuals: false,
+  });
+
+  const resultingProductData = {
+    ...currentProduct,
+    ...updateData,
+
+    status: updateData.status ?? product.status,
+
+    category: updateData.category ?? product.category,
+
+    slug: updateData.slug ?? product.slug,
+
+    variants: updateData.variants ?? currentProduct.variants ?? [],
+
+    images: updateData.images ?? currentProduct.images ?? [],
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Slug
+    |--------------------------------------------------------------------------
+    */
+
+  await ensureProductSlugIsAvailable(resultingProductData.slug, {
+    excludeProductId: product._id,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Variant SKUs
+    |--------------------------------------------------------------------------
+    |
+    | The current Product is excluded so its existing SKUs do not conflict
+    | with itself.
+    |--------------------------------------------------------------------------
+    */
+
+  await ensureProductSkusAreAvailable(resultingProductData.variants, {
+    excludeProductId: product._id,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Category
+    |--------------------------------------------------------------------------
+    */
+
+  await validateProductCategory(
+    resultingProductData.category,
+    resultingProductData.status,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Active Product Requirements
+    |--------------------------------------------------------------------------
+    */
+
+  validateActiveProductRequirements(resultingProductData);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Manage Publication Date
+    |--------------------------------------------------------------------------
+    |
+    | Remaining active:
+    | Keep the existing publishedAt date.
+    |
+    | Becoming active:
+    | Set publishedAt to the current date.
+    |
+    | Becoming non-active:
+    | Clear publishedAt.
+    |--------------------------------------------------------------------------
+    */
+
+  let publishedAt = product.publishedAt;
+
+  if (resultingProductData.status === PRODUCT_STATUSES.ACTIVE) {
+    if (product.status !== PRODUCT_STATUSES.ACTIVE || !product.publishedAt) {
+      publishedAt = new Date();
+    }
+  } else {
+    publishedAt = null;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Apply Allowed Updates
+    |--------------------------------------------------------------------------
+    */
+
+  product.set({
+    ...updateData,
+
+    publishedAt,
+
+    updatedBy: actorUserId,
+  });
+
+  return saveProductDocument(product);
 };

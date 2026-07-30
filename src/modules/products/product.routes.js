@@ -10,12 +10,14 @@ import {
   createProductRequestSchema,
   productIdRequestSchema,
   adminProductListRequestSchema,
+  updateProductRequestSchema,
 } from "./product.validation.js";
 
 import {
   createProductController,
   getAdminProductController,
   getAdminProductsController,
+  updateProductController,
 } from "./product.controller.js";
 
 const router = Router();
@@ -68,6 +70,18 @@ router.get(
   "/:productId",
   validateRequest(productIdRequestSchema),
   getAdminProductController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Product
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/:productId",
+  validateRequest(updateProductRequestSchema),
+  updateProductController,
 );
 
 export default router;
