@@ -1214,6 +1214,21 @@ GET /api/v1/products
 GET /api/v1/products/:slug
 No authentication is required.
 |--------------------------------------------------------------------------
+Part 60: Product Integration Tests — Core Flow
+
+Create:
+
+tests/integration/product.integration.test.js
+
+This first Product test file covers:
+
+Unauthenticated admin access.
+Draft Product creation.
+Admin Product details.
+Draft Product hidden publicly.
+Product activation.
+Active Product visible publicly.
+Sensitive admin fields hidden from customers.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
