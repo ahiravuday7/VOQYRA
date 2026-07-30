@@ -1268,6 +1268,14 @@ Update:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 66: Public Product List and Validation Tests
+
+Update:
+
+tests/integration/product.integration.test.js
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

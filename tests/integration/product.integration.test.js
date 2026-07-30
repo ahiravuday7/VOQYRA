@@ -2880,4 +2880,616 @@ describe("Product integration", () => {
       ]),
     );
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Public Product Search, Category and Flag Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("filters public Products by search, category, and Product flags", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const topsResponse = await createCategoryRequest(agent, {
+      name: "Public Tops",
+
+      slug: "public-tops",
+
+      status: "active",
+    }).expect(201);
+
+    const bottomsResponse = await createCategoryRequest(agent, {
+      name: "Public Bottoms",
+
+      slug: "public-bottoms",
+
+      status: "active",
+    }).expect(201);
+
+    const topsCategory = topsResponse.body.data.category;
+
+    const bottomsCategory = bottomsResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Featured and New-Arrival Shirt
+    |--------------------------------------------------------------------------
+    */
+
+    const shirtResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Premium Cotton Shirt",
+
+        slug: "public-premium-cotton-shirt",
+
+        category: topsCategory.id,
+
+        tags: ["cotton", "shirt"],
+
+        status: "active",
+
+        isFeatured: true,
+        isNewArrival: true,
+        isBestSeller: false,
+
+        images: [
+          {
+            url: "https://example.com/public-premium-cotton-shirt.jpg",
+
+            altText: "Premium cotton shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "PUBLIC-COTTON-SHIRT-M",
+
+            size: "M",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 500,
+              sellingPrice: 999,
+              discountPrice: 799,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 1,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const shirtProduct = shirtResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Best-Seller Jeans
+    |--------------------------------------------------------------------------
+    */
+
+    const jeansResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Classic Denim Jeans",
+
+        slug: "public-classic-denim-jeans",
+
+        category: bottomsCategory.id,
+
+        tags: ["denim", "jeans"],
+
+        status: "active",
+
+        isFeatured: false,
+        isNewArrival: false,
+        isBestSeller: true,
+
+        images: [
+          {
+            url: "https://example.com/public-classic-denim-jeans.jpg",
+
+            altText: "Classic denim jeans",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "PUBLIC-DENIM-JEANS-32",
+
+            size: "32",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 800,
+              sellingPrice: 1599,
+            },
+
+            inventory: {
+              stock: 6,
+              reservedStock: 0,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const jeansProduct = jeansResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search by Product Name and Tag
+    |--------------------------------------------------------------------------
+    */
+
+    const cottonSearchResponse = await request(app)
+      .get(`${publicProductUrl}?search=cotton`)
+      .expect(200);
+
+    expect(cottonSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(cottonSearchResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search by Variant SKU
+    |--------------------------------------------------------------------------
+    */
+
+    const skuSearchResponse = await request(app)
+      .get(`${publicProductUrl}?search=PUBLIC-COTTON-SHIRT-M`)
+      .expect(200);
+
+    expect(skuSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(skuSearchResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Category Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await request(app)
+      .get(`${publicProductUrl}?category=${bottomsCategory.id}`)
+      .expect(200);
+
+    expect(categoryResponse.body.data.products).toHaveLength(1);
+
+    expect(categoryResponse.body.data.products[0].id).toBe(jeansProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Featured Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const featuredResponse = await request(app)
+      .get(`${publicProductUrl}?isFeatured=true`)
+      .expect(200);
+
+    expect(featuredResponse.body.data.products).toHaveLength(1);
+
+    expect(featuredResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | New-Arrival Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const newArrivalResponse = await request(app)
+      .get(`${publicProductUrl}?isNewArrival=true`)
+      .expect(200);
+
+    expect(newArrivalResponse.body.data.products).toHaveLength(1);
+
+    expect(newArrivalResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Best-Seller Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const bestSellerResponse = await request(app)
+      .get(`${publicProductUrl}?isBestSeller=true`)
+      .expect(200);
+
+    expect(bestSellerResponse.body.data.products).toHaveLength(1);
+
+    expect(bestSellerResponse.body.data.products[0].id).toBe(jeansProduct.id);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Public Product Price, Stock and Sorting
+|--------------------------------------------------------------------------
+*/
+
+  it("filters and sorts public Products by price and stock availability", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Public Price Products",
+
+      slug: "public-price-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Budget Product
+    |--------------------------------------------------------------------------
+    |
+    | Effective price: 499
+    | Available stock: 10
+    |--------------------------------------------------------------------------
+    */
+
+    const budgetResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Budget Cotton Top",
+
+        slug: "public-budget-cotton-top",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/public-budget-cotton-top.jpg",
+
+            altText: "Budget cotton top",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "PUBLIC-BUDGET-TOP-M",
+
+            size: "M",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 200,
+              sellingPrice: 599,
+              discountPrice: 499,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const budgetProduct = budgetResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Premium Low-Stock Product
+    |--------------------------------------------------------------------------
+    |
+    | Effective price: 1299
+    | Available stock: 2
+    | Low-stock threshold: 3
+    |--------------------------------------------------------------------------
+    */
+
+    const premiumResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Premium Designer Top",
+
+        slug: "public-premium-designer-top",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/public-premium-designer-top.jpg",
+
+            altText: "Premium designer top",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "PUBLIC-PREMIUM-TOP-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1499,
+              discountPrice: 1299,
+            },
+
+            inventory: {
+              stock: 3,
+              reservedStock: 1,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const premiumProduct = premiumResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Out-of-Stock Product
+    |--------------------------------------------------------------------------
+    |
+    | Effective price: 799
+    | Available stock: 0
+    |--------------------------------------------------------------------------
+    */
+
+    const soldOutResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Sold Out Casual Top",
+
+        slug: "public-sold-out-casual-top",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/public-sold-out-casual-top.jpg",
+
+            altText: "Sold out casual top",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "PUBLIC-SOLD-OUT-TOP-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 899,
+              discountPrice: 799,
+            },
+
+            inventory: {
+              stock: 5,
+              reservedStock: 5,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const soldOutProduct = soldOutResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | In-Stock Products Sorted by Lowest Price
+    |--------------------------------------------------------------------------
+    */
+
+    const inStockResponse = await request(app)
+      .get(`${publicProductUrl}?inStock=true&sort=price-low-to-high`)
+      .expect(200);
+
+    expect(
+      inStockResponse.body.data.products.map((product) => product.id),
+    ).toEqual([budgetProduct.id, premiumProduct.id]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Low-Stock Public Summary
+    |--------------------------------------------------------------------------
+    */
+
+    const premiumSummary = inStockResponse.body.data.products.find(
+      (product) => {
+        return product.id === premiumProduct.id;
+      },
+    );
+
+    expect(premiumSummary.availability).toEqual({
+      availableStock: 2,
+      isInStock: true,
+      isLowStock: true,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Out-of-Stock Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const outOfStockResponse = await request(app)
+      .get(`${publicProductUrl}?inStock=false`)
+      .expect(200);
+
+    expect(outOfStockResponse.body.data.products).toHaveLength(1);
+
+    expect(outOfStockResponse.body.data.products[0].id).toBe(soldOutProduct.id);
+
+    expect(outOfStockResponse.body.data.products[0].availability).toEqual({
+      availableStock: 0,
+      isInStock: false,
+      isLowStock: false,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Price Range Filter
+    |--------------------------------------------------------------------------
+    |
+    | Only the Product priced at 799 should match.
+    |--------------------------------------------------------------------------
+    */
+
+    const priceRangeResponse = await request(app)
+      .get(`${publicProductUrl}?minPrice=700&maxPrice=900`)
+      .expect(200);
+
+    expect(priceRangeResponse.body.data.products).toHaveLength(1);
+
+    expect(priceRangeResponse.body.data.products[0].id).toBe(soldOutProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Highest-to-Lowest Price Sorting
+    |--------------------------------------------------------------------------
+    */
+
+    const descendingPriceResponse = await request(app)
+      .get(`${publicProductUrl}?sort=price-high-to-low`)
+      .expect(200);
+
+    expect(
+      descendingPriceResponse.body.data.products.map((product) => product.id),
+    ).toEqual([premiumProduct.id, soldOutProduct.id, budgetProduct.id]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Name Sorting
+    |--------------------------------------------------------------------------
+    */
+
+    const nameSortResponse = await request(app)
+      .get(`${publicProductUrl}?sort=name-asc`)
+      .expect(200);
+
+    expect(
+      nameSortResponse.body.data.products.map((product) => product.name),
+    ).toEqual([
+      "Budget Cotton Top",
+      "Premium Designer Top",
+      "Sold Out Casual Top",
+    ]);
+  });
+  /*
+|--------------------------------------------------------------------------
+| Public Product Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid and admin-only public Product query parameters", async () => {
+    const invalidRequests = [
+      `${publicProductUrl}?page=0`,
+
+      `${publicProductUrl}?page=abc`,
+
+      `${publicProductUrl}?limit=51`,
+
+      `${publicProductUrl}?inStock=yes`,
+
+      `${publicProductUrl}?minPrice=-1`,
+
+      `${publicProductUrl}?minPrice=1000&maxPrice=500`,
+
+      `${publicProductUrl}?sort=price`,
+
+      /*
+       * Admin-only filters.
+       */
+      `${publicProductUrl}?status=draft`,
+
+      `${publicProductUrl}?deleted=include`,
+
+      `${publicProductUrl}?stockStatus=low-stock`,
+
+      `${publicProductUrl}?sortBy=name`,
+
+      /*
+       * Unknown query field.
+       */
+      `${publicProductUrl}?unknown=value`,
+    ];
+
+    for (const requestUrl of invalidRequests) {
+      const response = await request(app).get(requestUrl).expect(400);
+
+      expect(response.body.success).toBe(false);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Details Must Not Accept Query Parameters
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsQueryResponse = await request(app)
+      .get(`${publicProductUrl}/valid-product-slug?includeDeleted=true`)
+      .expect(400);
+
+    expect(detailsQueryResponse.body.success).toBe(false);
+  });
 });
