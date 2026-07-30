@@ -14,6 +14,7 @@ import {
   findProductById,
   findProductBySlug,
   findProductsByVariantSkus,
+  listAdminProducts,
 } from "./product.repository.js";
 
 /*
@@ -351,4 +352,28 @@ export const getAdminProductById = async (productId) => {
   }
 
   return product;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Products
+|--------------------------------------------------------------------------
+|
+| Supports:
+|
+| - Pagination
+| - Search
+| - Category
+| - Product status
+| - Product flags
+| - Stock status
+| - Deleted state
+| - Sorting
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminProducts = async (filters) => {
+  const result = await listAdminProducts(filters);
+
+  return result;
 };

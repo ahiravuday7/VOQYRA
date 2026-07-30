@@ -1,4 +1,8 @@
-import { createProduct, getAdminProductById } from "./product.service.js";
+import {
+  createProduct,
+  getAdminProductById,
+  getAdminProducts,
+} from "./product.service.js";
 
 import { toAdminProduct } from "./product.mapper.js";
 
@@ -42,6 +46,56 @@ export const createProductController = async (request, response) => {
   });
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Admin Products
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/products
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminProductsController = async (request, response) => {
+  const filters = request.validated.query;
+
+  const { products, pagination } = await getAdminProducts(filters);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Products retrieved successfully",
+
+    data: {
+      products: products.map((product) => {
+        return toAdminProduct(product);
+      }),
+
+      pagination,
+
+      filters: {
+        search: filters.search ?? null,
+
+        category: filters.category ?? null,
+
+        status: filters.status ?? null,
+
+        isFeatured: filters.isFeatured ?? null,
+
+        isNewArrival: filters.isNewArrival ?? null,
+
+        isBestSeller: filters.isBestSeller ?? null,
+
+        stockStatus: filters.stockStatus ?? null,
+
+        deleted: filters.deleted,
+
+        sortBy: filters.sortBy,
+
+        sortDirection: filters.sortDirection,
+      },
+    },
+  });
+};
 /*
 |--------------------------------------------------------------------------
 | Get Admin Product by ID

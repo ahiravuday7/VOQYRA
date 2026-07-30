@@ -1101,6 +1101,25 @@ Sorting
 Total result count
 The API route will still return ROUTE_NOT_FOUND until we add the service, controller, and route in the next parts.
 |--------------------------------------------------------------------------
+Part 52: Admin Product List Service and Controller
+
+Update exactly two files:
+
+1. src/modules/products/product.service.js
+2. src/modules/products/product.controller.js
+
+This part connects:
+
+Controller
+→ Service
+→ Product repository
+→ MongoDB aggregation
+→ Product mapper
+→ Pagination response
+
+The route will be registered in the next part.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
