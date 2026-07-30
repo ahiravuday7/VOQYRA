@@ -1041,6 +1041,30 @@ POST /api/v1/admin/products
 It requires an authenticated admin account.
 
 |--------------------------------------------------------------------------
+Part 49: Admin Product Details API
+
+New endpoint:
+GET /api/v1/admin/products/:productId
+It will:
+Require admin authentication.
+Validate the Product ID.
+Return active, draft, inactive, archived, or deleted products.
+Return 404 PRODUCT_NOT_FOUND when the Product does not exist.
+Update these three files:
+src/modules/products/product.service.js
+src/modules/products/product.controller.js
+src/modules/products/product.routes.js
+Request flow:
+GET /api/v1/admin/products/:productId
+→ authenticate
+→ authorizeRoles("admin")
+→ validate Product ID
+→ controller
+→ service
+→ repository
+→ MongoDB
+→ admin Product mapper
+→ HTTP response
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

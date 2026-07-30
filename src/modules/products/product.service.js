@@ -11,6 +11,7 @@ import {
 
 import {
   createProductDocument,
+  findProductById,
   findProductBySlug,
   findProductsByVariantSkus,
 } from "./product.repository.js";
@@ -30,6 +31,12 @@ const createProductCategoryNotFoundError = () => {
 const createProductSlugConflictError = () => {
   return new AppError("A product with this slug already exists", 409, {
     errorCode: "PRODUCT_SLUG_ALREADY_EXISTS",
+  });
+};
+
+const createProductNotFoundError = () => {
+  return new AppError("Product was not found", 404, {
+    errorCode: "PRODUCT_NOT_FOUND",
   });
 };
 
@@ -321,6 +328,27 @@ export const createProduct = async (productData, actorUserId) => {
 
     updatedBy: actorUserId,
   });
+
+  return product;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Product by ID
+|--------------------------------------------------------------------------
+|
+| Administrators can inspect deleted products as well.
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminProductById = async (productId) => {
+  const product = await findProductById(productId, {
+    includeDeleted: true,
+  });
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
 
   return product;
 };

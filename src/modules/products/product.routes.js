@@ -6,9 +6,15 @@ import validateRequest from "../../middlewares/validate-request.middleware.js";
 
 import { USER_ROLES } from "../../shared/constants/user.constants.js";
 
-import { createProductRequestSchema } from "./product.validation.js";
+import {
+  createProductRequestSchema,
+  productIdRequestSchema,
+} from "./product.validation.js";
 
-import { createProductController } from "./product.controller.js";
+import {
+  createProductController,
+  getAdminProductController,
+} from "./product.controller.js";
 
 const router = Router();
 
@@ -33,6 +39,21 @@ router.post(
   "/",
   validateRequest(createProductRequestSchema),
   createProductController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Product by ID
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/products/:productId
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:productId",
+  validateRequest(productIdRequestSchema),
+  getAdminProductController,
 );
 
 export default router;
