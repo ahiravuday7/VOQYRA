@@ -1203,6 +1203,16 @@ Public controller
 → Customer-safe response
 Public routes will be registered in the next part.
 |--------------------------------------------------------------------------
+Part 59: Register Public Product Routes
+Create and update:
+Create:
+src/modules/products/product.public.routes.js
+Update:
+src/app.js
+New public endpoints:
+GET /api/v1/products
+GET /api/v1/products/:slug
+No authentication is required.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

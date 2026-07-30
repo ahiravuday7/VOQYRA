@@ -17,6 +17,7 @@ import categoryRoutes from "./modules/categories/category.routes.js";
 import publicCategoryRoutes from "./modules/categories/category.public.routes.js";
 
 import productRoutes from "./modules/products/product.routes.js";
+import publicProductRoutes from "./modules/products/product.public.routes.js";
 
 // This creates the Express application instance.
 const app = express();
@@ -101,9 +102,21 @@ app.get("/", (request, response) => {
   });
 });
 
+/*
+|--------------------------------------------------------------------------
+| Public API Routes
+|--------------------------------------------------------------------------
+*/
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/categories", publicCategoryRoutes);
+app.use("/api/v1/products", publicProductRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| Admin API Routes
+|--------------------------------------------------------------------------
+*/
 app.use("/api/v1/admin/categories", categoryRoutes);
 app.use("/api/v1/admin/products", productRoutes);
 
