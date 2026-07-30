@@ -2213,4 +2213,671 @@ describe("Product integration", () => {
 
     await request(app).get(`${publicProductUrl}/${product.slug}`).expect(404);
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Admin Product Pagination, Search and Sorting
+|--------------------------------------------------------------------------
+*/
+
+  it("supports admin Product pagination, search, and sorting", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Admin List Shirts",
+
+      slug: "admin-list-shirts",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Three Products
+    |--------------------------------------------------------------------------
+    */
+
+    const products = [
+      {
+        name: "Gamma Denim Shirt",
+
+        slug: "gamma-denim-shirt",
+
+        sku: "GAMMA-DENIM-M",
+      },
+      {
+        name: "Alpha Linen Shirt",
+
+        slug: "alpha-linen-shirt",
+
+        sku: "ALPHA-LINEN-M",
+      },
+      {
+        name: "Beta Cotton Shirt",
+
+        slug: "beta-cotton-shirt",
+
+        sku: "BETA-COTTON-M",
+      },
+    ];
+
+    for (const productData of products) {
+      await createProductRequest(
+        agent,
+        createProductPayload({
+          name: productData.name,
+
+          slug: productData.slug,
+
+          category: category.id,
+
+          variants: [
+            {
+              sku: productData.sku,
+
+              size: "M",
+
+              color: {
+                name: "Black",
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 400,
+                sellingPrice: 899,
+              },
+
+              inventory: {
+                stock: 10,
+                reservedStock: 0,
+                lowStockThreshold: 3,
+              },
+            },
+          ],
+        }),
+      ).expect(201);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Page Sorted by Name
+    |--------------------------------------------------------------------------
+    */
+
+    const firstPageResponse = await agent
+      .get(`${adminProductUrl}?page=1&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    expect(
+      firstPageResponse.body.data.products.map((product) => product.name),
+    ).toEqual(["Alpha Linen Shirt", "Beta Cotton Shirt"]);
+
+    expect(firstPageResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 2,
+      totalItems: 3,
+      totalPages: 2,
+      hasPreviousPage: false,
+      hasNextPage: true,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Page
+    |--------------------------------------------------------------------------
+    */
+
+    const secondPageResponse = await agent
+      .get(`${adminProductUrl}?page=2&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    expect(
+      secondPageResponse.body.data.products.map((product) => product.name),
+    ).toEqual(["Gamma Denim Shirt"]);
+
+    expect(secondPageResponse.body.data.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      totalItems: 3,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search by Product Name
+    |--------------------------------------------------------------------------
+    */
+
+    const nameSearchResponse = await agent
+      .get(`${adminProductUrl}?search=denim`)
+      .expect(200);
+
+    expect(nameSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(nameSearchResponse.body.data.products[0].slug).toBe(
+      "gamma-denim-shirt",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Search by Variant SKU
+    |--------------------------------------------------------------------------
+    */
+
+    const skuSearchResponse = await agent
+      .get(`${adminProductUrl}?search=BETA-COTTON-M`)
+      .expect(200);
+
+    expect(skuSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(skuSearchResponse.body.data.products[0].slug).toBe(
+      "beta-cotton-shirt",
+    );
+  });
+  /*
+|--------------------------------------------------------------------------
+| Admin Product Category, Status and Flag Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("filters admin Products by category, status, and Product flags", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Categories
+    |--------------------------------------------------------------------------
+    */
+
+    const shirtsResponse = await createCategoryRequest(agent, {
+      name: "Filter Shirts",
+
+      slug: "filter-shirts",
+
+      status: "active",
+    }).expect(201);
+
+    const trousersResponse = await createCategoryRequest(agent, {
+      name: "Filter Trousers",
+
+      slug: "filter-trousers",
+
+      status: "active",
+    }).expect(201);
+
+    const shirtsCategory = shirtsResponse.body.data.category;
+
+    const trousersCategory = trousersResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Featured and New-Arrival Draft Product
+    |--------------------------------------------------------------------------
+    */
+
+    const shirtResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Featured Cotton Shirt",
+
+        slug: "featured-cotton-shirt",
+
+        category: shirtsCategory.id,
+
+        status: "draft",
+
+        isFeatured: true,
+        isNewArrival: true,
+        isBestSeller: false,
+
+        variants: [
+          {
+            sku: "FEATURED-SHIRT-M",
+
+            size: "M",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 500,
+              sellingPrice: 1099,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const shirtProduct = shirtResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Best-Seller Inactive Product
+    |--------------------------------------------------------------------------
+    */
+
+    const trouserResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Best Seller Trousers",
+
+        slug: "best-seller-trousers",
+
+        category: trousersCategory.id,
+
+        status: "inactive",
+
+        isFeatured: false,
+        isNewArrival: false,
+        isBestSeller: true,
+
+        variants: [
+          {
+            sku: "BEST-TROUSER-32",
+
+            size: "32",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1499,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const trouserProduct = trouserResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Category Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryFilterResponse = await agent
+      .get(`${adminProductUrl}?category=${shirtsCategory.id}`)
+      .expect(200);
+
+    expect(categoryFilterResponse.body.data.products).toHaveLength(1);
+
+    expect(categoryFilterResponse.body.data.products[0].id).toBe(
+      shirtProduct.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Status Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const statusFilterResponse = await agent
+      .get(`${adminProductUrl}?status=inactive`)
+      .expect(200);
+
+    expect(statusFilterResponse.body.data.products).toHaveLength(1);
+
+    expect(statusFilterResponse.body.data.products[0].id).toBe(
+      trouserProduct.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Featured Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const featuredResponse = await agent
+      .get(`${adminProductUrl}?isFeatured=true`)
+      .expect(200);
+
+    expect(featuredResponse.body.data.products).toHaveLength(1);
+
+    expect(featuredResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | New-Arrival Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const newArrivalResponse = await agent
+      .get(`${adminProductUrl}?isNewArrival=true`)
+      .expect(200);
+
+    expect(newArrivalResponse.body.data.products).toHaveLength(1);
+
+    expect(newArrivalResponse.body.data.products[0].id).toBe(shirtProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Best-Seller Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const bestSellerResponse = await agent
+      .get(`${adminProductUrl}?isBestSeller=true`)
+      .expect(200);
+
+    expect(bestSellerResponse.body.data.products).toHaveLength(1);
+
+    expect(bestSellerResponse.body.data.products[0].id).toBe(trouserProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Combined Filters
+    |--------------------------------------------------------------------------
+    */
+
+    const combinedResponse = await agent
+      .get(
+        `${adminProductUrl}?category=${shirtsCategory.id}&status=draft&isFeatured=true&isNewArrival=true`,
+      )
+      .expect(200);
+
+    expect(combinedResponse.body.data.products).toHaveLength(1);
+
+    expect(combinedResponse.body.data.products[0].id).toBe(shirtProduct.id);
+  });
+  /*
+|--------------------------------------------------------------------------
+| Admin Product Stock and Deleted Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("filters admin Products by stock and deletion state", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Stock Filter Products",
+
+      slug: "stock-filter-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Regular In-Stock Product
+    |--------------------------------------------------------------------------
+    |
+    | Available stock:
+    | 10 - 2 = 8
+    |
+    | Low-stock threshold:
+    | 3
+    |--------------------------------------------------------------------------
+    */
+
+    const inStockResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Regular Stock Product",
+
+        slug: "regular-stock-product",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "REGULAR-STOCK-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const inStockProduct = inStockResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Low-Stock Product
+    |--------------------------------------------------------------------------
+    |
+    | Available stock:
+    | 5 - 2 = 3
+    |
+    | Low-stock threshold:
+    | 3
+    |--------------------------------------------------------------------------
+    */
+
+    const lowStockResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Low Stock Product",
+
+        slug: "low-stock-product",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "LOW-STOCK-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 899,
+            },
+
+            inventory: {
+              stock: 5,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const lowStockProduct = lowStockResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Out-of-Stock Product
+    |--------------------------------------------------------------------------
+    |
+    | Available stock:
+    | 4 - 4 = 0
+    |--------------------------------------------------------------------------
+    */
+
+    const outOfStockResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Out Of Stock Product",
+
+        slug: "out-of-stock-product",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "OUT-STOCK-M",
+
+            size: "M",
+
+            color: {
+              name: "Red",
+              code: "#FF0000",
+            },
+
+            pricing: {
+              buyingPrice: 500,
+              sellingPrice: 999,
+            },
+
+            inventory: {
+              stock: 4,
+              reservedStock: 4,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const outOfStockProduct = outOfStockResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | In-Stock Filter
+    |--------------------------------------------------------------------------
+    |
+    | Both regular and low-stock Products are in stock.
+    |--------------------------------------------------------------------------
+    */
+
+    const inStockListResponse = await agent
+      .get(
+        `${adminProductUrl}?stockStatus=in-stock&sortBy=name&sortDirection=asc`,
+      )
+      .expect(200);
+
+    expect(
+      inStockListResponse.body.data.products.map((product) => product.slug),
+    ).toEqual(["low-stock-product", "regular-stock-product"]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Low-Stock Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const lowStockListResponse = await agent
+      .get(`${adminProductUrl}?stockStatus=low-stock`)
+      .expect(200);
+
+    expect(lowStockListResponse.body.data.products).toHaveLength(1);
+
+    expect(lowStockListResponse.body.data.products[0].id).toBe(
+      lowStockProduct.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Out-of-Stock Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const outOfStockListResponse = await agent
+      .get(`${adminProductUrl}?stockStatus=out-of-stock`)
+      .expect(200);
+
+    expect(outOfStockListResponse.body.data.products).toHaveLength(1);
+
+    expect(outOfStockListResponse.body.data.products[0].id).toBe(
+      outOfStockProduct.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Low-Stock Product
+    |--------------------------------------------------------------------------
+    */
+
+    await agent.delete(`${adminProductUrl}/${lowStockProduct.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default List Excludes Deleted Product
+    |--------------------------------------------------------------------------
+    */
+
+    const defaultListResponse = await agent.get(adminProductUrl).expect(200);
+
+    expect(
+      defaultListResponse.body.data.products.map((product) => product.id),
+    ).toEqual(
+      expect.arrayContaining([inStockProduct.id, outOfStockProduct.id]),
+    );
+
+    expect(
+      defaultListResponse.body.data.products.map((product) => product.id),
+    ).not.toContain(lowStockProduct.id);
+
+    expect(defaultListResponse.body.data.pagination.totalItems).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted-Only List
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedOnlyResponse = await agent
+      .get(`${adminProductUrl}?deleted=only`)
+      .expect(200);
+
+    expect(deletedOnlyResponse.body.data.products).toHaveLength(1);
+
+    expect(deletedOnlyResponse.body.data.products[0].id).toBe(
+      lowStockProduct.id,
+    );
+
+    expect(deletedOnlyResponse.body.data.products[0].isDeleted).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Include Deleted List
+    |--------------------------------------------------------------------------
+    */
+
+    const includeDeletedResponse = await agent
+      .get(`${adminProductUrl}?deleted=include`)
+      .expect(200);
+
+    expect(includeDeletedResponse.body.data.pagination.totalItems).toBe(3);
+
+    expect(
+      includeDeletedResponse.body.data.products.map((product) => product.id),
+    ).toEqual(
+      expect.arrayContaining([
+        inStockProduct.id,
+        lowStockProduct.id,
+        outOfStockProduct.id,
+      ]),
+    );
+  });
 });

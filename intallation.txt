@@ -1262,6 +1262,11 @@ Update:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 65: Admin Product List Integration Tests
+
+Update:
+
+tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
