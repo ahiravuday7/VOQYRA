@@ -1066,6 +1066,25 @@ GET /api/v1/admin/products/:productId
 → admin Product mapper
 → HTTP response
 |--------------------------------------------------------------------------
+Part 50: Admin Product List Query Validation
+
+Update only:
+src/modules/products/product.validation.js
+This part prepares validation for:
+GET /api/v1/admin/products
+Supported query parameters:
+page
+limit
+search
+category
+status
+isFeatured
+isNewArrival
+isBestSeller
+stockStatus
+deleted
+sortBy
+sortDirection
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -29,6 +29,135 @@ const objectIdSchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Admin Product List Values
+|--------------------------------------------------------------------------
+*/
+
+const PRODUCT_STOCK_STATUS_VALUES = Object.freeze([
+  "in-stock",
+  "low-stock",
+  "out-of-stock",
+]);
+
+const PRODUCT_DELETED_FILTER_VALUES = Object.freeze([
+  "exclude",
+  "include",
+  "only",
+]);
+
+const PRODUCT_SORT_FIELD_VALUES = Object.freeze([
+  "createdAt",
+  "updatedAt",
+  "name",
+  "brand",
+  "status",
+  "publishedAt",
+]);
+
+const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
+
+/*
+|--------------------------------------------------------------------------
+| Query Integer
+|--------------------------------------------------------------------------
+|
+| Express query values arrive as strings.
+|
+| Examples:
+|
+| "1"  → 1
+| "20" → 20
+|--------------------------------------------------------------------------
+*/
+
+const createQueryIntegerSchema = ({ fieldName, minimum, maximum }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (!/^\d+$/.test(normalizedValue)) {
+        return Number.NaN;
+      }
+
+      return Number(normalizedValue);
+    },
+
+    z
+      .number({
+        error: `${fieldName} must be a number`,
+      })
+      .int({
+        error: `${fieldName} must be a whole number`,
+      })
+      .min(minimum, {
+        error: `${fieldName} must be at least ${minimum}`,
+      })
+      .max(maximum, {
+        error: `${fieldName} cannot exceed ${maximum}`,
+      }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Query Boolean
+|--------------------------------------------------------------------------
+|
+| Only the strings "true" and "false" are accepted.
+|--------------------------------------------------------------------------
+*/
+
+const queryBooleanSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const normalizedValue = value.trim().toLowerCase();
+
+    if (normalizedValue === "true") {
+      return true;
+    }
+
+    if (normalizedValue === "false") {
+      return false;
+    }
+
+    return value;
+  },
+
+  z.boolean({
+    error: "Value must be true or false",
+  }),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Normalized Query Enum
+|--------------------------------------------------------------------------
+*/
+
+const createQueryEnumSchema = (values, errorMessage) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      return value.trim().toLowerCase();
+    },
+
+    z.enum(values, {
+      error: errorMessage,
+    }),
+  );
+};
+/*
+|--------------------------------------------------------------------------
 | Product Name
 |--------------------------------------------------------------------------
 */
@@ -794,4 +923,153 @@ export const productIdRequestSchema = z.strictObject({
   params: productIdParamsSchema,
 
   query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Product List Query
+|--------------------------------------------------------------------------
+*/
+
+const adminProductListQuerySchema = z.strictObject({
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+  page: createQueryIntegerSchema({
+    fieldName: "Page",
+    minimum: 1,
+    maximum: 100000,
+  })
+    .optional()
+    .default(1),
+
+  limit: createQueryIntegerSchema({
+    fieldName: "Limit",
+    minimum: 1,
+    maximum: 100,
+  })
+    .optional()
+    .default(20),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    |
+    | Later this will search:
+    |
+    | - Product name
+    | - Slug
+    | - Brand
+    | - Tags
+    | - Variant SKU
+    |--------------------------------------------------------------------------
+    */
+
+  search: z
+    .string({
+      error: "Product search must be a string",
+    })
+    .trim()
+    .min(1, {
+      error: "Product search cannot be empty",
+    })
+    .max(100, {
+      error: "Product search cannot exceed 100 characters",
+    })
+    .optional(),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Category
+    |--------------------------------------------------------------------------
+    */
+
+  category: objectIdSchema.optional(),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Product Status
+    |--------------------------------------------------------------------------
+    */
+
+  status: createQueryEnumSchema(
+    PRODUCT_STATUS_VALUES,
+    "Invalid product status",
+  ).optional(),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Product Flags
+    |--------------------------------------------------------------------------
+    */
+
+  isFeatured: queryBooleanSchema.optional(),
+
+  isNewArrival: queryBooleanSchema.optional(),
+
+  isBestSeller: queryBooleanSchema.optional(),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Stock Status
+    |--------------------------------------------------------------------------
+    */
+
+  stockStatus: createQueryEnumSchema(
+    PRODUCT_STOCK_STATUS_VALUES,
+    "Invalid product stock status",
+  ).optional(),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Deleted State
+    |--------------------------------------------------------------------------
+    */
+
+  deleted: createQueryEnumSchema(
+    PRODUCT_DELETED_FILTER_VALUES,
+    "Invalid deleted Product filter",
+  )
+    .optional()
+    .default("exclude"),
+
+  /*
+    |--------------------------------------------------------------------------
+    | Sorting
+    |--------------------------------------------------------------------------
+    */
+
+  sortBy: createQueryEnumSchema(
+    PRODUCT_SORT_FIELD_VALUES,
+    "Invalid Product sorting field",
+  )
+    .optional()
+    .default("createdAt"),
+
+  sortDirection: createQueryEnumSchema(
+    SORT_DIRECTION_VALUES,
+    "Invalid sorting direction",
+  )
+    .optional()
+    .default("desc"),
+});
+/*
+|--------------------------------------------------------------------------
+| Admin Product List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/products
+|--------------------------------------------------------------------------
+*/
+
+export const adminProductListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminProductListQuerySchema,
 });
