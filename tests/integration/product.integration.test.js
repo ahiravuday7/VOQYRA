@@ -3963,4 +3963,462 @@ describe("Product integration", () => {
 
     expect(unknownPublicResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Image Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid Product images and multiple primary images", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Image Validation Products",
+
+      slug: "image-validation-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Image URL
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidUrlResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Invalid Image Product",
+
+        slug: "invalid-image-product",
+
+        category: category.id,
+
+        images: [
+          {
+            url: "not-a-valid-url",
+
+            altText: "Invalid Product image",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "INVALID-IMAGE-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(invalidUrlResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Multiple Primary Images
+    |--------------------------------------------------------------------------
+    */
+
+    const multiplePrimaryResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Multiple Primary Images Product",
+
+        slug: "multiple-primary-images-product",
+
+        category: category.id,
+
+        images: [
+          {
+            url: "https://example.com/product-front.jpg",
+
+            altText: "Product front image",
+
+            sortOrder: 1,
+
+            isPrimary: true,
+          },
+
+          {
+            url: "https://example.com/product-back.jpg",
+
+            altText: "Product back image",
+
+            sortOrder: 2,
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "MULTI-PRIMARY-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 899,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(multiplePrimaryResponse.body.success).toBe(false);
+  });
+  /*
+|--------------------------------------------------------------------------
+| Product Update Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects empty and backend-controlled Product updates", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Update Validation Products",
+
+      slug: "update-validation-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Update Validation Product",
+
+        slug: "update-validation-product",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "UPDATE-VALIDATION-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Empty PATCH
+    |--------------------------------------------------------------------------
+    */
+
+    const emptyUpdateResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({})
+      .expect(400);
+
+    expect(emptyUpdateResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Backend-Controlled Field
+    |--------------------------------------------------------------------------
+    */
+
+    const protectedFieldResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        deletedBy: String(user._id),
+      })
+      .expect(400);
+
+    expect(protectedFieldResponse.body.success).toBe(false);
+
+    /*
+     * Failed requests must not modify the Product.
+     */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.name).toBe(
+      "Update Validation Product",
+    );
+
+    expect(detailsResponse.body.data.product.isDeleted).toBe(false);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Admin Product List Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid admin Product list query parameters", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const invalidRequests = [
+      `${adminProductUrl}?page=0`,
+
+      `${adminProductUrl}?page=abc`,
+
+      `${adminProductUrl}?limit=0`,
+
+      `${adminProductUrl}?limit=101`,
+
+      `${adminProductUrl}?isFeatured=yes`,
+
+      `${adminProductUrl}?isNewArrival=1`,
+
+      `${adminProductUrl}?isBestSeller=no`,
+
+      `${adminProductUrl}?status=published`,
+
+      `${adminProductUrl}?stockStatus=available`,
+
+      `${adminProductUrl}?deleted=true`,
+
+      `${adminProductUrl}?sortBy=price`,
+
+      `${adminProductUrl}?sortDirection=ascending`,
+
+      `${adminProductUrl}?category=invalid-id`,
+
+      `${adminProductUrl}?unknown=value`,
+    ];
+
+    for (const requestUrl of invalidRequests) {
+      const response = await agent.get(requestUrl).expect(400);
+
+      expect(response.body.success).toBe(false);
+    }
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Public Inactive Variant Filtering
+|--------------------------------------------------------------------------
+*/
+
+  it("excludes inactive variants from public Product responses", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Variant Visibility Products",
+
+      slug: "variant-visibility-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Variant Visibility T-Shirt",
+
+        slug: "variant-visibility-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/variant-visibility-tshirt.jpg",
+
+            altText: "Variant visibility T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          /*
+            |--------------------------------------------------------------------------
+            | Active Variant
+            |--------------------------------------------------------------------------
+            */
+
+          {
+            sku: "VISIBLE-VARIANT-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+              discountPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+
+          /*
+            |--------------------------------------------------------------------------
+            | Inactive Variant
+            |--------------------------------------------------------------------------
+            |
+            | Its cheaper price and large inventory must not affect
+            | the public Product price or availability summary.
+            |--------------------------------------------------------------------------
+            */
+
+          {
+            sku: "HIDDEN-VARIANT-L",
+
+            size: "L",
+
+            color: {
+              name: "Red",
+              code: "#FF0000",
+            },
+
+            pricing: {
+              buyingPrice: 100,
+              sellingPrice: 299,
+              discountPrice: 199,
+            },
+
+            inventory: {
+              stock: 100,
+              reservedStock: 0,
+              lowStockThreshold: 5,
+            },
+
+            isActive: false,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Response Includes Both Variants
+    |--------------------------------------------------------------------------
+    */
+
+    expect(product.variants).toHaveLength(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Details Include Only Active Variant
+    |--------------------------------------------------------------------------
+    */
+
+    const publicDetailsResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(200);
+
+    const publicProduct = publicDetailsResponse.body.data.product;
+
+    expect(publicProduct.variants).toHaveLength(1);
+
+    expect(publicProduct.variants[0].sku).toBe("VISIBLE-VARIANT-M");
+
+    expect(publicProduct.variants.map((variant) => variant.sku)).not.toContain(
+      "HIDDEN-VARIANT-L",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Price Uses Only Active Variant
+    |--------------------------------------------------------------------------
+    */
+
+    expect(publicProduct.priceRange).toEqual({
+      minimum: 699,
+      maximum: 699,
+      currency: "INR",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Availability Uses Only Active Variant
+    |--------------------------------------------------------------------------
+    |
+    | 10 stock - 2 reserved = 8 available.
+    |--------------------------------------------------------------------------
+    */
+
+    expect(publicProduct.availability).toEqual({
+      availableStock: 8,
+      isInStock: true,
+      isLowStock: false,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public List Summary Also Ignores Inactive Variant
+    |--------------------------------------------------------------------------
+    */
+
+    const publicListResponse = await request(app)
+      .get(`${publicProductUrl}?search=variant-visibility-tshirt`)
+      .expect(200);
+
+    expect(publicListResponse.body.data.products).toHaveLength(1);
+
+    const publicSummary = publicListResponse.body.data.products[0];
+
+    expect(publicSummary.priceRange).toEqual({
+      minimum: 699,
+      maximum: 699,
+      currency: "INR",
+    });
+
+    expect(publicSummary.availability).toEqual({
+      availableStock: 8,
+      isInStock: true,
+      isLowStock: false,
+    });
+  });
 });
