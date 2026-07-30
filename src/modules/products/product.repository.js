@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
+import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
 import Product from "./product.model.js";
 
 /*
@@ -596,4 +598,727 @@ export const listAdminProducts = async (filters) => {
       hasNextPage: page < totalPages,
     },
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Public Product Match Filter
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicProductMatchFilter = (filters = {}) => {
+  const match = {
+    status: PRODUCT_STATUSES.ACTIVE,
+
+    deletedAt: null,
+
+    /*
+     * Future publication dates are not publicly visible.
+     */
+    publishedAt: {
+      $lte: new Date(),
+    },
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | Exact Category Filter
+    |--------------------------------------------------------------------------
+    */
+
+  if (filters.category) {
+    match.category = new mongoose.Types.ObjectId(filters.category);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Product Flags
+    |--------------------------------------------------------------------------
+    */
+
+  if (filters.isFeatured !== undefined) {
+    match.isFeatured = filters.isFeatured;
+  }
+
+  if (filters.isNewArrival !== undefined) {
+    match.isNewArrival = filters.isNewArrival;
+  }
+
+  if (filters.isBestSeller !== undefined) {
+    match.isBestSeller = filters.isBestSeller;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Public Search
+    |--------------------------------------------------------------------------
+    |
+    | Searches:
+    |
+    | - Product name
+    | - Product slug
+    | - Brand
+    | - Tags
+    | - Variant SKU
+    |--------------------------------------------------------------------------
+    */
+
+  if (filters.search) {
+    const escapedSearch = escapeRegularExpression(filters.search);
+
+    const searchExpression = new RegExp(escapedSearch, "i");
+
+    match.$or = [
+      {
+        name: searchExpression,
+      },
+      {
+        slug: searchExpression,
+      },
+      {
+        brand: searchExpression,
+      },
+      {
+        tags: searchExpression,
+      },
+      {
+        "variants.sku": searchExpression,
+      },
+    ];
+  }
+
+  return match;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Category Visibility Stages
+|--------------------------------------------------------------------------
+|
+| A Product is publicly visible only when:
+|
+| - Its selected Category exists.
+| - Its Category is active.
+| - Its Category is not deleted.
+| - Every Category ancestor exists.
+| - Every Category ancestor is active.
+| - Every Category ancestor is not deleted.
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicCategoryVisibilityStages = () => {
+  return [
+    /*
+      |--------------------------------------------------------------------------
+      | Load Product Category
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: "categories",
+
+        let: {
+          categoryId: "$category",
+        },
+
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $eq: ["$_id", "$$categoryId"],
+              },
+            },
+          },
+
+          {
+            $match: {
+              status: CATEGORY_STATUSES.ACTIVE,
+
+              deletedAt: null,
+            },
+          },
+
+          {
+            $project: {
+              _id: 1,
+              name: 1,
+              slug: 1,
+
+              ancestors: {
+                $ifNull: ["$ancestors", []],
+              },
+            },
+          },
+        ],
+
+        as: "__publicCategory",
+      },
+    },
+
+    /*
+     * Removes Products whose selected Category
+     * is missing, inactive, or deleted.
+     */
+    {
+      $unwind: "$__publicCategory",
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Load Available Category Ancestors
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: "categories",
+
+        let: {
+          ancestorIds: "$__publicCategory.ancestors",
+        },
+
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $in: ["$_id", "$$ancestorIds"],
+              },
+            },
+          },
+
+          {
+            $match: {
+              status: CATEGORY_STATUSES.ACTIVE,
+
+              deletedAt: null,
+            },
+          },
+
+          {
+            $project: {
+              _id: 1,
+            },
+          },
+        ],
+
+        as: "__publicCategoryAncestors",
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Verify Complete Ancestor Path
+      |--------------------------------------------------------------------------
+      |
+      | If the Category stores three ancestor IDs,
+      | exactly three available ancestors must be found.
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $match: {
+        $expr: {
+          $eq: [
+            {
+              $size: "$__publicCategoryAncestors",
+            },
+
+            {
+              $size: "$__publicCategory.ancestors",
+            },
+          ],
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Populate Public Category Information
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $set: {
+        category: {
+          _id: "$__publicCategory._id",
+
+          name: "$__publicCategory.name",
+
+          slug: "$__publicCategory.slug",
+        },
+      },
+    },
+  ];
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Variant Calculation Stages
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicVariantCalculationStages = () => {
+  return [
+    /*
+      |--------------------------------------------------------------------------
+      | Select Active Variants
+      |--------------------------------------------------------------------------
+      |
+      | A missing isActive value is treated as active
+      | for compatibility with older Product documents.
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $set: {
+        __activeVariants: {
+          $filter: {
+            input: {
+              $ifNull: ["$variants", []],
+            },
+
+            as: "variant",
+
+            cond: {
+              $ne: ["$$variant.isActive", false],
+            },
+          },
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Calculate Variant Availability and Price
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $set: {
+        __publicVariantMetrics: {
+          $map: {
+            input: "$__activeVariants",
+
+            as: "variant",
+
+            in: {
+              availableStock: {
+                $max: [
+                  {
+                    $subtract: [
+                      {
+                        $ifNull: ["$$variant.inventory.stock", 0],
+                      },
+
+                      {
+                        $ifNull: ["$$variant.inventory.reservedStock", 0],
+                      },
+                    ],
+                  },
+
+                  0,
+                ],
+              },
+
+              lowStockThreshold: {
+                $ifNull: ["$$variant.inventory.lowStockThreshold", 0],
+              },
+
+              effectivePrice: {
+                $ifNull: [
+                  "$$variant.pricing.discountPrice",
+                  "$$variant.pricing.sellingPrice",
+                ],
+              },
+
+              currency: {
+                $ifNull: ["$$variant.pricing.currency", "INR"],
+              },
+            },
+          },
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Product-Level Availability and Price
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $set: {
+        __availableStock: {
+          $sum: "$__publicVariantMetrics.availableStock",
+        },
+
+        __minimumPrice: {
+          $cond: [
+            {
+              $gt: [
+                {
+                  $size: "$__publicVariantMetrics",
+                },
+                0,
+              ],
+            },
+
+            {
+              $min: "$__publicVariantMetrics.effectivePrice",
+            },
+
+            null,
+          ],
+        },
+
+        __maximumPrice: {
+          $cond: [
+            {
+              $gt: [
+                {
+                  $size: "$__publicVariantMetrics",
+                },
+                0,
+              ],
+            },
+
+            {
+              $max: "$__publicVariantMetrics.effectivePrice",
+            },
+
+            null,
+          ],
+        },
+      },
+    },
+  ];
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Stock Filter Stage
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicStockFilterStage = (inStock) => {
+  if (inStock === undefined) {
+    return null;
+  }
+
+  if (inStock) {
+    return {
+      $match: {
+        __availableStock: {
+          $gt: 0,
+        },
+      },
+    };
+  }
+
+  return {
+    $match: {
+      __availableStock: 0,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Price Filter Stage
+|--------------------------------------------------------------------------
+|
+| A Product matches when at least one active variant
+| has an effective price inside the requested range.
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicPriceFilterStage = (minPrice, maxPrice) => {
+  if (minPrice === undefined && maxPrice === undefined) {
+    return null;
+  }
+
+  const priceConditions = [];
+
+  if (minPrice !== undefined) {
+    priceConditions.push({
+      $gte: ["$$variantMetric.effectivePrice", minPrice],
+    });
+  }
+
+  if (maxPrice !== undefined) {
+    priceConditions.push({
+      $lte: ["$$variantMetric.effectivePrice", maxPrice],
+    });
+  }
+
+  return {
+    $match: {
+      $expr: {
+        $gt: [
+          {
+            $size: {
+              $filter: {
+                input: "$__publicVariantMetrics",
+
+                as: "variantMetric",
+
+                cond:
+                  priceConditions.length === 1
+                    ? priceConditions[0]
+                    : {
+                        $and: priceConditions,
+                      },
+              },
+            },
+          },
+
+          0,
+        ],
+      },
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Sorting
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicProductSort = (sort) => {
+  switch (sort) {
+    case "oldest":
+      return {
+        publishedAt: 1,
+        _id: 1,
+      };
+
+    case "price-low-to-high":
+      return {
+        __minimumPrice: 1,
+        name: 1,
+        _id: 1,
+      };
+
+    case "price-high-to-low":
+      return {
+        __minimumPrice: -1,
+        name: 1,
+        _id: -1,
+      };
+
+    case "name-asc":
+      return {
+        name: 1,
+        _id: 1,
+      };
+
+    case "name-desc":
+      return {
+        name: -1,
+        _id: -1,
+      };
+
+    case "newest":
+    default:
+      return {
+        publishedAt: -1,
+        _id: -1,
+      };
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Remove Internal Aggregation Fields
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicProductCleanupStage = () => {
+  return {
+    $unset: [
+      "__publicCategory",
+      "__publicCategoryAncestors",
+      "__activeVariants",
+      "__publicVariantMetrics",
+      "__availableStock",
+      "__minimumPrice",
+      "__maximumPrice",
+    ],
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Public Products
+|--------------------------------------------------------------------------
+*/
+
+export const listPublicProducts = async (filters) => {
+  const {
+    page = 1,
+    limit = 20,
+    inStock,
+    minPrice,
+    maxPrice,
+    sort = "newest",
+  } = filters;
+
+  const skip = (page - 1) * limit;
+
+  const pipeline = [
+    /*
+      |--------------------------------------------------------------------------
+      | Active and Published Products
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $match: buildPublicProductMatchFilter(filters),
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Category Visibility
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicCategoryVisibilityStages(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Variant Availability and Prices
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicVariantCalculationStages(),
+  ];
+
+  /*
+    |--------------------------------------------------------------------------
+    | Availability Filter
+    |--------------------------------------------------------------------------
+    */
+
+  const stockFilterStage = buildPublicStockFilterStage(inStock);
+
+  if (stockFilterStage) {
+    pipeline.push(stockFilterStage);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Price Filter
+    |--------------------------------------------------------------------------
+    */
+
+  const priceFilterStage = buildPublicPriceFilterStage(minPrice, maxPrice);
+
+  if (priceFilterStage) {
+    pipeline.push(priceFilterStage);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+  pipeline.push({
+    $facet: {
+      products: [
+        {
+          $sort: buildPublicProductSort(sort),
+        },
+
+        {
+          $skip: skip,
+        },
+
+        {
+          $limit: limit,
+        },
+
+        buildPublicProductCleanupStage(),
+      ],
+
+      metadata: [
+        {
+          $count: "totalItems",
+        },
+      ],
+    },
+  });
+
+  const [result] = await Product.aggregate(pipeline);
+
+  const products = result?.products ?? [];
+
+  const totalItems = result?.metadata?.[0]?.totalItems ?? 0;
+
+  const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+
+  return {
+    products,
+
+    pagination: {
+      page,
+      limit,
+      totalItems,
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Public Product by Slug
+|--------------------------------------------------------------------------
+*/
+
+export const findPublicProductBySlug = async (slug) => {
+  const pipeline = [
+    /*
+      |--------------------------------------------------------------------------
+      | Active, Published and Non-Deleted Product
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $match: {
+        ...buildPublicProductMatchFilter(),
+
+        slug,
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Validate and Populate Category Path
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicCategoryVisibilityStages(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Only One Product
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $limit: 1,
+    },
+
+    buildPublicProductCleanupStage(),
+  ];
+
+  const [product] = await Product.aggregate(pipeline);
+
+  return product ?? null;
 };

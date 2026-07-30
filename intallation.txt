@@ -1164,14 +1164,10 @@ It does not have exactly one primary image
 |--------------------------------------------------------------------------
 Part 56: Public Product Mapper and Request Validation
 Update exactly two files:
-
 1. src/modules/products/product.mapper.js
 2. src/modules/products/product.validation.js
-
 This part prepares the customer-facing Product API.
-
 The public response will not expose:
-
 buyingPrice
 reservedStock
 createdBy
@@ -1180,8 +1176,23 @@ deletedAt
 deletedBy
 barcode
 inactive variants
-
 No public route is registered yet.
+|--------------------------------------------------------------------------
+Part 57: Public Product Repository
+Update only:
+src/modules/products/product.repository.js
+This repository will support:
+GET /api/v1/products
+GET /api/v1/products/:slug
+It will return only Products that are:
+Active.
+Not deleted.
+Published.
+Assigned to an active, non-deleted category.
+Assigned to a category whose complete ancestor path is available.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
