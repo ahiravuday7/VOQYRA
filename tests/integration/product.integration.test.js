@@ -714,4 +714,491 @@ describe("Product integration", () => {
 
     expect(response.body.errorCode).toBe("PRODUCT_CATEGORY_NOT_FOUND");
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Active Product Requires an Image
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects an active Product without an image", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Activewear",
+      slug: "activewear",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const response = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Active Sports T-Shirt",
+
+        slug: "active-sports-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        /*
+         * Active Products require at least
+         * one image.
+         */
+        images: [],
+
+        variants: [
+          {
+            sku: "SPORT-TSHIRT-BLK-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 350,
+              sellingPrice: 799,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(409);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_REQUIRED");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Active Product Requires an Active Variant
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects an active Product without an active variant", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Formal Shirts",
+      slug: "formal-shirts",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const response = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Formal White Shirt",
+
+        slug: "formal-white-shirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/formal-white-shirt.jpg",
+
+            altText: "Formal white shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "FORMAL-SHIRT-WHT-M",
+
+            size: "M",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 600,
+              sellingPrice: 1299,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: false,
+          },
+        ],
+      }),
+    ).expect(409);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("PRODUCT_ACTIVE_VARIANT_REQUIRED");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Category Status
+|--------------------------------------------------------------------------
+*/
+
+  it("allows a draft Product under an inactive category but rejects an active Product", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Seasonal Collection",
+      slug: "seasonal-collection",
+      status: "inactive",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Draft Product Is Allowed
+    |--------------------------------------------------------------------------
+    */
+
+    const draftResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Seasonal Draft Product",
+
+        slug: "seasonal-draft-product",
+
+        category: category.id,
+
+        status: "draft",
+
+        variants: [
+          {
+            sku: "SEASONAL-DRAFT-S",
+
+            size: "S",
+
+            color: {
+              name: "Red",
+              code: "#FF0000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    expect(draftResponse.body.data.product.status).toBe("draft");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active Product Is Rejected
+    |--------------------------------------------------------------------------
+    */
+
+    const activeResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Seasonal Active Product",
+
+        slug: "seasonal-active-product",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/seasonal-product.jpg",
+
+            altText: "Seasonal Product",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "SEASONAL-ACTIVE-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 350,
+              sellingPrice: 799,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(409);
+
+    expect(activeResponse.body.success).toBe(false);
+
+    expect(activeResponse.body.errorCode).toBe("PRODUCT_CATEGORY_INACTIVE");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Duplicate Variants Inside One Product
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects duplicate SKUs and duplicate size-colour combinations inside one Product", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Kurtas",
+      slug: "kurtas",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Duplicate SKU
+    |--------------------------------------------------------------------------
+    */
+
+    const duplicateSkuResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Cotton Kurta",
+
+        slug: "cotton-kurta",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "KURTA-BLU-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 500,
+              sellingPrice: 1199,
+            },
+          },
+          {
+            /*
+             * Same SKU as the first variant.
+             */
+            sku: "KURTA-BLU-M",
+
+            size: "L",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 500,
+              sellingPrice: 1199,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(duplicateSkuResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Duplicate Size and Colour Combination
+    |--------------------------------------------------------------------------
+    */
+
+    const duplicateCombinationResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Premium Cotton Kurta",
+
+        slug: "premium-cotton-kurta",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "PREMIUM-KURTA-1",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 600,
+              sellingPrice: 1399,
+            },
+          },
+          {
+            /*
+             * Different SKU but the same
+             * size and colour combination.
+             */
+            sku: "PREMIUM-KURTA-2",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 600,
+              sellingPrice: 1399,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(duplicateCombinationResponse.body.success).toBe(false);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Pricing and Inventory Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid discount pricing and reserved inventory", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Dresses",
+      slug: "dresses",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discount Price Exceeds Selling Price
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidPriceResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Floral Dress",
+
+        slug: "floral-dress",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "DRESS-FLR-M",
+
+            size: "M",
+
+            color: {
+              name: "Pink",
+              code: "#FFC0CB",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1499,
+
+              /*
+               * Invalid because it exceeds
+               * the selling price.
+               */
+              discountPrice: 1699,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(invalidPriceResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserved Stock Exceeds Total Stock
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidInventoryResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Evening Dress",
+
+        slug: "evening-dress",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "DRESS-EVE-L",
+
+            size: "L",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 900,
+              sellingPrice: 1999,
+            },
+
+            inventory: {
+              stock: 5,
+
+              /*
+               * Invalid because reservedStock
+               * cannot exceed stock.
+               */
+              reservedStock: 8,
+
+              lowStockThreshold: 2,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(invalidInventoryResponse.body.success).toBe(false);
+  });
 });
