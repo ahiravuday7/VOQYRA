@@ -1791,4 +1791,426 @@ describe("Product integration", () => {
 
     expect(unchangedProduct.variants[0].sku).toBe("WALLET-BLK-STD");
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Soft Delete and Restore
+|--------------------------------------------------------------------------
+*/
+
+  it("soft deletes and restores an active Product safely", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Jackets",
+      slug: "jackets",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Classic Denim Jacket",
+
+        slug: "classic-denim-jacket",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/classic-denim-jacket.jpg",
+
+            altText: "Classic denim jacket",
+
+            sortOrder: 1,
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "JACKET-DENIM-BLU-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 900,
+              sellingPrice: 2199,
+              discountPrice: 1899,
+              currency: "INR",
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.status).toBe("active");
+
+    expect(product.publishedAt).not.toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Is Initially Public
+    |--------------------------------------------------------------------------
+    */
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Delete
+    |--------------------------------------------------------------------------
+    */
+
+    const firstDeleteResponse = await agent
+      .delete(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    const deletedProduct = firstDeleteResponse.body.data.product;
+
+    expect(deletedProduct.isDeleted).toBe(true);
+
+    expect(deletedProduct.deletedAt).not.toBeNull();
+
+    expect(deletedProduct.deletedBy).toBe(String(user._id));
+
+    expect(deletedProduct.updatedBy).toBe(String(user._id));
+
+    /*
+     * Product publication information is preserved.
+     */
+    expect(deletedProduct.status).toBe("active");
+
+    expect(deletedProduct.publishedAt).toBe(product.publishedAt);
+
+    const originalDeletedAt = deletedProduct.deletedAt;
+
+    const originalDeletedBy = deletedProduct.deletedBy;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted Product Is Hidden Publicly
+    |--------------------------------------------------------------------------
+    */
+
+    const publicDetailsResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(404);
+
+    expect(publicDetailsResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Admin List Excludes Deleted Product
+    |--------------------------------------------------------------------------
+    */
+
+    const defaultListResponse = await agent.get(adminProductUrl).expect(200);
+
+    expect(defaultListResponse.body.data.products).toHaveLength(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted-Only Admin List Includes Product
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedListResponse = await agent
+      .get(`${adminProductUrl}?deleted=only`)
+      .expect(200);
+
+    expect(deletedListResponse.body.data.products).toHaveLength(1);
+
+    expect(deletedListResponse.body.data.products[0].id).toBe(product.id);
+
+    expect(deletedListResponse.body.data.products[0].isDeleted).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Details Can Retrieve Deleted Product
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedDetailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(deletedDetailsResponse.body.data.product.isDeleted).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Normal Update Is Blocked
+    |--------------------------------------------------------------------------
+    */
+
+    const updateResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        name: "Updated Deleted Jacket",
+      })
+      .expect(404);
+
+    expect(updateResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Repeated Delete Is Idempotent
+    |--------------------------------------------------------------------------
+    */
+
+    const secondDeleteResponse = await agent
+      .delete(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    const repeatedlyDeletedProduct = secondDeleteResponse.body.data.product;
+
+    expect(repeatedlyDeletedProduct.deletedAt).toBe(originalDeletedAt);
+
+    expect(repeatedlyDeletedProduct.deletedBy).toBe(originalDeletedBy);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Product
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}/restore`)
+      .expect(200);
+
+    const restoredProduct = restoreResponse.body.data.product;
+
+    expect(restoredProduct.isDeleted).toBe(false);
+
+    expect(restoredProduct.deletedAt).toBeNull();
+
+    expect(restoredProduct.deletedBy).toBeNull();
+
+    expect(restoredProduct.updatedBy).toBe(String(user._id));
+
+    expect(restoredProduct.status).toBe("active");
+
+    expect(restoredProduct.publishedAt).toBe(product.publishedAt);
+
+    const restoredUpdatedAt = restoredProduct.updatedAt;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Repeated Restore Is Idempotent
+    |--------------------------------------------------------------------------
+    */
+
+    const secondRestoreResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}/restore`)
+      .expect(200);
+
+    expect(secondRestoreResponse.body.data.product.isDeleted).toBe(false);
+
+    expect(secondRestoreResponse.body.data.product.updatedAt).toBe(
+      restoredUpdatedAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restored Active Product Is Public Again
+    |--------------------------------------------------------------------------
+    */
+
+    const restoredPublicResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(200);
+
+    expect(restoredPublicResponse.body.data.product.id).toBe(product.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Default Admin List Includes Restored Product
+    |--------------------------------------------------------------------------
+    */
+
+    const restoredListResponse = await agent.get(adminProductUrl).expect(200);
+
+    expect(restoredListResponse.body.data.products).toHaveLength(1);
+
+    expect(restoredListResponse.body.data.products[0].id).toBe(product.id);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Restore Category Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects restoring an active Product when its category becomes inactive", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Sweatshirts",
+      slug: "sweatshirts",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Premium Hooded Sweatshirt",
+
+        slug: "premium-hooded-sweatshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/premium-hooded-sweatshirt.jpg",
+
+            altText: "Premium hooded sweatshirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "SWEATSHIRT-GRY-L",
+
+            size: "L",
+
+            color: {
+              name: "Grey",
+              code: "#808080",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1599,
+              discountPrice: 1399,
+            },
+
+            inventory: {
+              stock: 8,
+              reservedStock: 1,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await agent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Make Category Unavailable
+    |--------------------------------------------------------------------------
+    |
+    | Direct update simulates the category changing
+    | while the Product remains deleted.
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: category.id,
+      },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Must Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await agent
+      .patch(`${adminProductUrl}/${product.id}/restore`)
+      .expect(409);
+
+    expect(restoreResponse.body.success).toBe(false);
+
+    expect(restoreResponse.body.errorCode).toBe("PRODUCT_CATEGORY_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Deleted
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.isDeleted).toBe(true);
+
+    expect(detailsResponse.body.data.product.deletedAt).not.toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Hidden Publicly
+    |--------------------------------------------------------------------------
+    */
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(404);
+  });
 });

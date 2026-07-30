@@ -1256,6 +1256,11 @@ publishedAt lifecycle
 Duplicate slug during update
 Duplicate SKU during update
 |--------------------------------------------------------------------------
+Part 64: Product Delete and Restore Integration Tests
+
+Update:
+
+tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
