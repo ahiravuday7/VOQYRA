@@ -519,3 +519,119 @@ export const updateProduct = async (productId, updateData, actorUserId) => {
 
   return saveProductDocument(product);
 };
+
+/*
+|--------------------------------------------------------------------------
+| Soft Delete Product
+|--------------------------------------------------------------------------
+|
+| DELETE /api/v1/admin/products/:productId
+|
+| The operation is idempotent:
+|
+| - First delete sets deletion fields.
+| - Repeated delete returns the already deleted Product.
+|--------------------------------------------------------------------------
+*/
+
+export const deleteProduct = async (productId, actorUserId) => {
+  const product = await findProductById(productId, {
+    includeDeleted: true,
+  });
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+   * Product is already deleted.
+   *
+   * Do not replace the original deletedAt
+   * or deletedBy audit information.
+   */
+  if (product.deletedAt) {
+    return product;
+  }
+
+  product.set({
+    deletedAt: new Date(),
+
+    deletedBy: actorUserId,
+
+    updatedBy: actorUserId,
+  });
+
+  return saveProductDocument(product);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Restore Product
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/products/:productId/restore
+|
+| The operation is idempotent:
+|
+| - First restore clears deletion fields.
+| - Repeated restore returns the active document unchanged.
+|--------------------------------------------------------------------------
+*/
+
+export const restoreProduct = async (productId, actorUserId) => {
+  const product = await findProductById(productId, {
+    includeDeleted: true,
+  });
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+   * Product is already available.
+   */
+  if (!product.deletedAt) {
+    return product;
+  }
+
+  const productData = product.toObject({
+    virtuals: false,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Revalidate Category
+    |--------------------------------------------------------------------------
+    |
+    | The category may have changed while the Product
+    | was deleted.
+    |--------------------------------------------------------------------------
+    */
+
+  await validateProductCategory(product.category, product.status);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Revalidate Active Product Requirements
+    |--------------------------------------------------------------------------
+    |
+    | An active Product still requires:
+    |
+    | - An active category path
+    | - At least one active variant
+    | - At least one image
+    | - Exactly one primary image
+    |--------------------------------------------------------------------------
+    */
+
+  validateActiveProductRequirements(productData);
+
+  product.set({
+    deletedAt: null,
+    deletedBy: null,
+
+    updatedBy: actorUserId,
+  });
+
+  return saveProductDocument(product);
+};

@@ -3,6 +3,8 @@ import {
   getAdminProductById,
   getAdminProducts,
   updateProduct,
+  deleteProduct,
+  restoreProduct,
 } from "./product.service.js";
 
 import { toAdminProduct } from "./product.mapper.js";
@@ -155,6 +157,78 @@ export const updateProductController = async (request, response) => {
     success: true,
 
     message: "Product updated successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Delete Product
+|--------------------------------------------------------------------------
+|
+| DELETE /api/v1/admin/products/:productId
+|--------------------------------------------------------------------------
+*/
+
+export const deleteProductController = async (request, response) => {
+  const { productId } = request.validated.params;
+
+  const actorUserId = request.user._id;
+
+  const product = await deleteProduct(productId, actorUserId);
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      actorUserId,
+    },
+    "Product deleted",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product deleted successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Restore Product
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/products/:productId/restore
+|--------------------------------------------------------------------------
+*/
+
+export const restoreProductController = async (request, response) => {
+  const { productId } = request.validated.params;
+
+  const actorUserId = request.user._id;
+
+  const product = await restoreProduct(productId, actorUserId);
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      actorUserId,
+    },
+    "Product restored",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product restored successfully",
 
     data: {
       product: toAdminProduct(product),

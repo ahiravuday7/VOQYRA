@@ -18,6 +18,8 @@ import {
   getAdminProductController,
   getAdminProductsController,
   updateProductController,
+  deleteProductController,
+  restoreProductController,
 } from "./product.controller.js";
 
 const router = Router();
@@ -74,6 +76,18 @@ router.get(
 
 /*
 |--------------------------------------------------------------------------
+| Restore Product
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/:productId/restore",
+  validateRequest(productIdRequestSchema),
+  restoreProductController,
+);
+
+/*
+|--------------------------------------------------------------------------
 | Update Product
 |--------------------------------------------------------------------------
 */
@@ -82,6 +96,18 @@ router.patch(
   "/:productId",
   validateRequest(updateProductRequestSchema),
   updateProductController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Soft Delete Product
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/:productId",
+  validateRequest(productIdRequestSchema),
+  deleteProductController,
 );
 
 export default router;

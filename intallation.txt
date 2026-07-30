@@ -1134,6 +1134,33 @@ src/modules/products/product.routes.js
 
 The existing updateProductRequestSchema already validates the request.
 |--------------------------------------------------------------------------
+Part 55: Product Soft Delete and Restore APIs
+
+New endpoints:
+DELETE /api/v1/admin/products/:productId
+PATCH  /api/v1/admin/products/:productId/restore
+Update exactly three files:
+src/modules/products/product.service.js
+src/modules/products/product.controller.js
+src/modules/products/product.routes.js
+The existing productIdRequestSchema and saveProductDocument() can be reused.
+
+Active Product restoration rules
+
+Suppose a deleted Product still has:
+
+{
+  "status": "active"
+}
+
+Restoration is rejected when:
+
+Its category was deleted
+Its category became inactive
+A category ancestor became unavailable
+It has no active variants
+It has no Product image
+It does not have exactly one primary image
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
