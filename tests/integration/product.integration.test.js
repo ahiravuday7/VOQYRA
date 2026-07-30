@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import app from "../../src/app.js";
 
 import { createAuthenticatedAgent } from "../helpers/auth-test.helper.js";
+import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 
@@ -416,5 +417,301 @@ describe("Product integration", () => {
     expect(publicProduct).not.toHaveProperty("deletedAt");
 
     expect(publicProduct).not.toHaveProperty("deletedBy");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Customer Authorization
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects customer access to admin Product APIs", async () => {
+    const { agent } = await createAuthenticatedAgent({
+      role: USER_ROLES.CUSTOMER,
+    });
+
+    const response = await agent
+      .post(adminProductUrl)
+      .send({
+        name: "Customer Product",
+      })
+      .expect(403);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("ACCESS_FORBIDDEN");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Protected Product Fields
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects backend-controlled Product fields", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Jeans",
+      slug: "jeans",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const response = await createProductRequest(agent, {
+      ...createProductPayload({
+        name: "Regular Fit Jeans",
+
+        slug: "regular-fit-jeans",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "JEANS-BLU-32",
+
+            size: "32",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1499,
+            },
+          },
+        ],
+      }),
+
+      createdBy: String(user._id),
+
+      deletedAt: new Date().toISOString(),
+
+      totalStock: 100,
+    }).expect(400);
+
+    expect(response.body.success).toBe(false);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Duplicate Product Slug
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects a duplicate Product slug", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Footwear",
+      slug: "footwear",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Casual Sneakers",
+
+        slug: "casual-sneakers",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "SNEAKER-WHT-8",
+
+            size: "8",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 900,
+              sellingPrice: 1999,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    /*
+     * Use a different SKU so this request tests
+     * only the duplicate slug rule.
+     */
+    const duplicateResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Different Sneakers",
+
+        slug: "casual-sneakers",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "SNEAKER-BLK-9",
+
+            size: "9",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 950,
+              sellingPrice: 2099,
+            },
+          },
+        ],
+      }),
+    ).expect(409);
+
+    expect(duplicateResponse.body.success).toBe(false);
+
+    expect(duplicateResponse.body.errorCode).toBe(
+      "PRODUCT_SLUG_ALREADY_EXISTS",
+    );
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Duplicate Variant SKU
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects a variant SKU already used by another Product", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Accessories",
+      slug: "accessories",
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Leather Belt",
+
+        slug: "leather-belt",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "BELT-BRN-M",
+
+            size: "M",
+
+            color: {
+              name: "Brown",
+              code: "#964B00",
+            },
+
+            pricing: {
+              buyingPrice: 250,
+              sellingPrice: 699,
+            },
+          },
+        ],
+      }),
+    ).expect(201);
+
+    /*
+     * Use a different Product slug but repeat
+     * the existing Product SKU.
+     */
+    const duplicateResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Formal Leather Belt",
+
+        slug: "formal-leather-belt",
+
+        category: category.id,
+
+        variants: [
+          {
+            sku: "BELT-BRN-M",
+
+            size: "L",
+
+            color: {
+              name: "Dark Brown",
+              code: "#654321",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+          },
+        ],
+      }),
+    ).expect(409);
+
+    expect(duplicateResponse.body.success).toBe(false);
+
+    expect(duplicateResponse.body.errorCode).toBe("PRODUCT_SKU_ALREADY_EXISTS");
+
+    expect(duplicateResponse.body.details.conflictingSkus).toContain(
+      "BELT-BRN-M",
+    );
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Missing Product Category
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects Product creation when the category does not exist", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const unknownCategoryId = "507f1f77bcf86cd799439011";
+
+    const response = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Unknown Category Product",
+
+        slug: "unknown-category-product",
+
+        category: unknownCategoryId,
+
+        variants: [
+          {
+            sku: "UNKNOWN-PRODUCT-S",
+
+            size: "S",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 100,
+              sellingPrice: 299,
+            },
+          },
+        ],
+      }),
+    ).expect(400);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("PRODUCT_CATEGORY_NOT_FOUND");
   });
 });
