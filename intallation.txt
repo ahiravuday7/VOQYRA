@@ -1086,6 +1086,20 @@ deleted
 sortBy
 sortDirection
 |--------------------------------------------------------------------------
+Part 51: Admin Product List Repository
+Update only:
+src/modules/products/product.repository.js
+This repository method will support:
+Pagination
+Search
+Category filter
+Status filter
+Product flags
+Stock-state filtering
+Deleted-state filtering
+Sorting
+Total result count
+The API route will still return ROUTE_NOT_FOUND until we add the service, controller, and route in the next parts.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
