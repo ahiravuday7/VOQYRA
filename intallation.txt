@@ -1274,6 +1274,11 @@ Update:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 67: Product Visibility and Not-Found Tests
+
+Update:
+
+tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

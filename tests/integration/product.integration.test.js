@@ -3492,4 +3492,475 @@ describe("Product integration", () => {
 
     expect(detailsQueryResponse.body.success).toBe(false);
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Direct Category Public Visibility
+|--------------------------------------------------------------------------
+*/
+
+  it("hides an active Product when its category becomes inactive or deleted", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Visibility Dresses",
+
+      slug: "visibility-dresses",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Visibility Floral Dress",
+
+        slug: "visibility-floral-dress",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/visibility-floral-dress.jpg",
+
+            altText: "Visibility floral dress",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "VISIBILITY-DRESS-M",
+
+            size: "M",
+
+            color: {
+              name: "Pink",
+              code: "#FFC0CB",
+            },
+
+            pricing: {
+              buyingPrice: 700,
+              sellingPrice: 1499,
+              discountPrice: 1299,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 1,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initially Public
+    |--------------------------------------------------------------------------
+    */
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactivate Category Directly
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: category.id,
+      },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    const inactiveDetailsResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(404);
+
+    expect(inactiveDetailsResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    const inactiveListResponse = await request(app)
+      .get(publicProductUrl)
+      .expect(200);
+
+    expect(inactiveListResponse.body.data.products).toHaveLength(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reactivate Category
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: category.id,
+      },
+      {
+        $set: {
+          status: "active",
+        },
+      },
+    );
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Soft Delete Category Directly
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: category.id,
+      },
+      {
+        $set: {
+          deletedAt: new Date(),
+
+          deletedBy: user._id,
+        },
+      },
+    );
+
+    const deletedCategoryResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(404);
+
+    expect(deletedCategoryResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    const deletedCategoryListResponse = await request(app)
+      .get(publicProductUrl)
+      .expect(200);
+
+    expect(deletedCategoryListResponse.body.data.products).toHaveLength(0);
+
+    /*
+     * Admin Product details remain available.
+     */
+    const adminDetailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(adminDetailsResponse.body.data.product.id).toBe(product.id);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Category Ancestor Public Visibility
+|--------------------------------------------------------------------------
+*/
+
+  it("hides an active Product when a category ancestor becomes unavailable", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Category Hierarchy
+    |--------------------------------------------------------------------------
+    |
+    | Women
+    | └── Tops
+    |--------------------------------------------------------------------------
+    */
+
+    const womenResponse = await createCategoryRequest(agent, {
+      name: "Visibility Women",
+
+      slug: "visibility-women",
+
+      status: "active",
+    }).expect(201);
+
+    const womenCategory = womenResponse.body.data.category;
+
+    const topsResponse = await createCategoryRequest(agent, {
+      name: "Visibility Women Tops",
+
+      slug: "visibility-women-tops",
+
+      parent: womenCategory.id,
+
+      status: "active",
+    }).expect(201);
+
+    const topsCategory = topsResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product Under Child Category
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Visibility Women Top",
+
+        slug: "visibility-women-top",
+
+        category: topsCategory.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/visibility-women-top.jpg",
+
+            altText: "Visibility women top",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "VISIBILITY-WOMEN-TOP-M",
+
+            size: "M",
+
+            color: {
+              name: "White",
+              code: "#FFFFFF",
+            },
+
+            pricing: {
+              buyingPrice: 400,
+              sellingPrice: 899,
+              discountPrice: 799,
+            },
+
+            inventory: {
+              stock: 8,
+              reservedStock: 0,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initially Public
+    |--------------------------------------------------------------------------
+    */
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactivate Parent Category
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: womenCategory.id,
+      },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    const inactiveAncestorDetailsResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(404);
+
+    expect(inactiveAncestorDetailsResponse.body.errorCode).toBe(
+      "PRODUCT_NOT_FOUND",
+    );
+
+    const inactiveAncestorListResponse = await request(app)
+      .get(publicProductUrl)
+      .expect(200);
+
+    expect(inactiveAncestorListResponse.body.data.products).toHaveLength(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reactivate Parent
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: womenCategory.id,
+      },
+      {
+        $set: {
+          status: "active",
+        },
+      },
+    );
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Parent Category
+    |--------------------------------------------------------------------------
+    */
+
+    await Category.updateOne(
+      {
+        _id: womenCategory.id,
+      },
+      {
+        $set: {
+          deletedAt: new Date(),
+
+          deletedBy: user._id,
+        },
+      },
+    );
+
+    await request(app).get(`${publicProductUrl}/${product.slug}`).expect(404);
+
+    const deletedAncestorListResponse = await request(app)
+      .get(publicProductUrl)
+      .expect(200);
+
+    expect(deletedAncestorListResponse.body.data.products).toHaveLength(0);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Identifier Validation and Not Found
+|--------------------------------------------------------------------------
+*/
+
+  it("handles invalid and unknown Product IDs and slugs", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Admin Product ID
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidAdminIdResponse = await agent
+      .get(`${adminProductUrl}/invalid-id`)
+      .expect(400);
+
+    expect(invalidAdminIdResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Valid Admin Product ID
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownProductId = "507f1f77bcf86cd799439011";
+
+    const unknownAdminResponse = await agent
+      .get(`${adminProductUrl}/${unknownProductId}`)
+      .expect(404);
+
+    expect(unknownAdminResponse.body.success).toBe(false);
+
+    expect(unknownAdminResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Product Update
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownUpdateResponse = await agent
+      .patch(`${adminProductUrl}/${unknownProductId}`)
+      .send({
+        name: "Unknown Updated Product",
+      })
+      .expect(404);
+
+    expect(unknownUpdateResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Product Delete
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownDeleteResponse = await agent
+      .delete(`${adminProductUrl}/${unknownProductId}`)
+      .expect(404);
+
+    expect(unknownDeleteResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Product Restore
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownRestoreResponse = await agent
+      .patch(`${adminProductUrl}/${unknownProductId}/restore`)
+      .expect(404);
+
+    expect(unknownRestoreResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Public Product Slug
+    |--------------------------------------------------------------------------
+    |
+    | Product slug requires at least three characters.
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidPublicSlugResponse = await request(app)
+      .get(`${publicProductUrl}/ab`)
+      .expect(400);
+
+    expect(invalidPublicSlugResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Valid Public Product Slug
+    |--------------------------------------------------------------------------
+    */
+
+    const unknownPublicResponse = await request(app)
+      .get(`${publicProductUrl}/unknown-valid-product`)
+      .expect(404);
+
+    expect(unknownPublicResponse.body.success).toBe(false);
+
+    expect(unknownPublicResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+  });
 });
