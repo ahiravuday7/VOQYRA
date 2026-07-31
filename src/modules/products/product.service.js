@@ -18,6 +18,11 @@ import {
   saveProductDocument,
   findPublicProductBySlug,
   listPublicProducts,
+  adjustVariantStockAtomically,
+  commitVariantStockAtomically,
+  findProductVariantInventorySnapshot,
+  releaseVariantStockAtomically,
+  reserveVariantStockAtomically,
 } from "./product.repository.js";
 
 /*
@@ -42,6 +47,154 @@ const createProductNotFoundError = () => {
   return new AppError("Product was not found", 404, {
     errorCode: "PRODUCT_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Inventory Errors
+|--------------------------------------------------------------------------
+*/
+
+const createProductVariantNotFoundError = () => {
+  return new AppError("Product variant was not found", 404, {
+    errorCode: "PRODUCT_VARIANT_NOT_FOUND",
+  });
+};
+
+const createInactiveProductInventoryError = () => {
+  return new AppError("Stock cannot be reserved for an inactive Product", 409, {
+    errorCode: "PRODUCT_INACTIVE",
+  });
+};
+
+const createInactiveVariantInventoryError = () => {
+  return new AppError(
+    "Stock cannot be reserved for an inactive Product variant",
+    409,
+    {
+      errorCode: "PRODUCT_VARIANT_INACTIVE",
+    },
+  );
+};
+
+const createInsufficientAvailableStockError = ({
+  requestedQuantity,
+  stock,
+  reservedStock,
+  availableStock,
+}) => {
+  return new AppError("Insufficient available stock", 409, {
+    errorCode: "PRODUCT_INSUFFICIENT_AVAILABLE_STOCK",
+
+    details: {
+      requestedQuantity,
+      stock,
+      reservedStock,
+      availableStock,
+    },
+  });
+};
+
+const createInsufficientReservedStockError = ({
+  requestedQuantity,
+  stock,
+  reservedStock,
+  availableStock,
+}) => {
+  return new AppError("Insufficient reserved stock", 409, {
+    errorCode: "PRODUCT_INSUFFICIENT_RESERVED_STOCK",
+
+    details: {
+      requestedQuantity,
+      stock,
+      reservedStock,
+      availableStock,
+    },
+  });
+};
+
+const createUnsafeStockAdjustmentError = ({
+  quantityDelta,
+  stock,
+  reservedStock,
+  resultingStock,
+}) => {
+  return new AppError(
+    "Inventory adjustment would reduce physical stock below reserved stock",
+    409,
+    {
+      errorCode: "PRODUCT_STOCK_ADJUSTMENT_CONFLICT",
+
+      details: {
+        quantityDelta,
+        stock,
+        reservedStock,
+        resultingStock,
+      },
+    },
+  );
+};
+
+const createInventoryInconsistentError = ({
+  requestedQuantity,
+  stock,
+  reservedStock,
+}) => {
+  return new AppError("Product inventory is inconsistent", 409, {
+    errorCode: "PRODUCT_INVENTORY_INCONSISTENT",
+
+    details: {
+      requestedQuantity,
+      stock,
+      reservedStock,
+    },
+  });
+};
+
+const createInventoryConflictError = () => {
+  return new AppError(
+    "Product inventory changed while the operation was being processed",
+    409,
+    {
+      errorCode: "PRODUCT_INVENTORY_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Product Variant Inventory Snapshot
+|--------------------------------------------------------------------------
+|
+| This helper is called after an atomic operation returns null.
+|
+| It determines whether:
+|
+| - The Product does not exist.
+| - The Product is deleted.
+| - The variant does not exist.
+| - The inventory condition failed.
+|--------------------------------------------------------------------------
+*/
+
+const getProductVariantInventorySnapshot = async (productId, variantId) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+  );
+
+  /*
+   * Deleted Products are treated as unavailable.
+   */
+  if (!snapshot || snapshot.isDeleted) {
+    throw createProductNotFoundError();
+  }
+
+  if (!snapshot.variant) {
+    throw createProductVariantNotFoundError();
+  }
+
+  return snapshot;
 };
 
 /*
@@ -669,4 +822,270 @@ export const restoreProduct = async (productId, actorUserId) => {
   });
 
   return saveProductDocument(product);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Adjust Product Variant Stock
+|--------------------------------------------------------------------------
+|
+| stock = stock + quantityDelta
+|
+| Positive quantity:
+| Adds physical units.
+|
+| Negative quantity:
+| Removes physical units.
+|--------------------------------------------------------------------------
+*/
+
+export const adjustProductVariantInventory = async (
+  productId,
+  variantId,
+  adjustmentData,
+  actorUserId,
+) => {
+  const { quantityDelta } = adjustmentData;
+
+  const product = await adjustVariantStockAtomically({
+    productId,
+    variantId,
+    quantityDelta,
+    actorUserId,
+  });
+
+  if (product) {
+    return product;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Diagnose Failed Atomic Adjustment
+    |--------------------------------------------------------------------------
+    */
+
+  const snapshot = await getProductVariantInventorySnapshot(
+    productId,
+    variantId,
+  );
+
+  const { stock, reservedStock } = snapshot.variant;
+
+  const resultingStock = stock + quantityDelta;
+
+  if (resultingStock < reservedStock) {
+    throw createUnsafeStockAdjustmentError({
+      quantityDelta,
+      stock,
+      reservedStock,
+      resultingStock,
+    });
+  }
+
+  /*
+   * The inventory may have changed between the failed
+   * atomic request and the diagnostic read.
+   */
+  throw createInventoryConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Product Variant Stock
+|--------------------------------------------------------------------------
+|
+| reservedStock = reservedStock + quantity
+|
+| New reservations require:
+|
+| - Active Product
+| - Active variant
+| - Sufficient available stock
+|--------------------------------------------------------------------------
+*/
+
+export const reserveProductVariantInventory = async (
+  productId,
+  variantId,
+  reservationData,
+  actorUserId,
+) => {
+  const { quantity } = reservationData;
+
+  const product = await reserveVariantStockAtomically({
+    productId,
+    variantId,
+    quantity,
+    actorUserId,
+  });
+
+  if (product) {
+    return product;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Diagnose Failed Atomic Reservation
+    |--------------------------------------------------------------------------
+    */
+
+  const snapshot = await getProductVariantInventorySnapshot(
+    productId,
+    variantId,
+  );
+
+  if (snapshot.status !== PRODUCT_STATUSES.ACTIVE) {
+    throw createInactiveProductInventoryError();
+  }
+
+  if (!snapshot.variant.isActive) {
+    throw createInactiveVariantInventoryError();
+  }
+
+  const { stock, reservedStock, availableStock } = snapshot.variant;
+
+  if (availableStock < quantity) {
+    throw createInsufficientAvailableStockError({
+      requestedQuantity: quantity,
+
+      stock,
+      reservedStock,
+      availableStock,
+    });
+  }
+
+  /*
+   * Another concurrent request may have modified
+   * inventory after the atomic request failed.
+   */
+  throw createInventoryConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Release Product Variant Reservation
+|--------------------------------------------------------------------------
+|
+| reservedStock = reservedStock - quantity
+|
+| Release is allowed even when the Product or variant
+| has become inactive.
+|--------------------------------------------------------------------------
+*/
+
+export const releaseProductVariantInventory = async (
+  productId,
+  variantId,
+  releaseData,
+  actorUserId,
+) => {
+  const { quantity } = releaseData;
+
+  const product = await releaseVariantStockAtomically({
+    productId,
+    variantId,
+    quantity,
+    actorUserId,
+  });
+
+  if (product) {
+    return product;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Diagnose Failed Reservation Release
+    |--------------------------------------------------------------------------
+    */
+
+  const snapshot = await getProductVariantInventorySnapshot(
+    productId,
+    variantId,
+  );
+
+  const { stock, reservedStock, availableStock } = snapshot.variant;
+
+  if (reservedStock < quantity) {
+    throw createInsufficientReservedStockError({
+      requestedQuantity: quantity,
+
+      stock,
+      reservedStock,
+      availableStock,
+    });
+  }
+
+  throw createInventoryConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Commit Product Variant Reservation
+|--------------------------------------------------------------------------
+|
+| Used after order completion:
+|
+| stock         = stock - quantity
+| reservedStock = reservedStock - quantity
+|--------------------------------------------------------------------------
+*/
+
+export const commitProductVariantInventory = async (
+  productId,
+  variantId,
+  commitData,
+  actorUserId,
+) => {
+  const { quantity } = commitData;
+
+  const product = await commitVariantStockAtomically({
+    productId,
+    variantId,
+    quantity,
+    actorUserId,
+  });
+
+  if (product) {
+    return product;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Diagnose Failed Inventory Commit
+    |--------------------------------------------------------------------------
+    */
+
+  const snapshot = await getProductVariantInventorySnapshot(
+    productId,
+    variantId,
+  );
+
+  const { stock, reservedStock, availableStock } = snapshot.variant;
+
+  if (reservedStock < quantity) {
+    throw createInsufficientReservedStockError({
+      requestedQuantity: quantity,
+
+      stock,
+      reservedStock,
+      availableStock,
+    });
+  }
+
+  /*
+   * Normally reservedStock can never exceed stock.
+   *
+   * This protects against inconsistent legacy data
+   * or direct database modifications.
+   */
+  if (stock < quantity) {
+    throw createInventoryInconsistentError({
+      requestedQuantity: quantity,
+
+      stock,
+      reservedStock,
+    });
+  }
+
+  throw createInventoryConflictError();
 };

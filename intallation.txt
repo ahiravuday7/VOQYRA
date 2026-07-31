@@ -1316,6 +1316,25 @@ Commit reserved stock after purchase
 
 No service, controller, or routes are added yet.
 |--------------------------------------------------------------------------
+Part 71: Product Inventory Service
+
+Update only:
+
+src/modules/products/product.service.js
+
+This service will convert failed atomic repository updates into clear errors such as:
+
+PRODUCT_NOT_FOUND
+PRODUCT_VARIANT_NOT_FOUND
+PRODUCT_INACTIVE
+PRODUCT_VARIANT_INACTIVE
+PRODUCT_INSUFFICIENT_AVAILABLE_STOCK
+PRODUCT_INSUFFICIENT_RESERVED_STOCK
+PRODUCT_STOCK_ADJUSTMENT_CONFLICT
+PRODUCT_INVENTORY_INCONSISTENT
+PRODUCT_INVENTORY_CONFLICT
+
+No controller or routes are added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
