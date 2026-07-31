@@ -1366,6 +1366,17 @@ router.use(
   )
 );
 |--------------------------------------------------------------------------
+Part 74: Product Inventory Core Integration Tests
+
+Update only:
+
+tests/integration/product.integration.test.js
+
+This part adds three tests:
+
+Complete inventory lifecycle.
+Inventory request validation.
+Atomic stock-safety conflicts.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

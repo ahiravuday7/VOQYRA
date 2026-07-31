@@ -35,6 +35,19 @@ const createProductRequest = (agent, productData) => {
 
 /*
 |--------------------------------------------------------------------------
+| Product Inventory URL Helper
+|--------------------------------------------------------------------------
+*/
+
+const createInventoryUrl = (productId, variantId, operation = null) => {
+  const baseUrl =
+    `${adminProductUrl}/${productId}` + `/variants/${variantId}/inventory`;
+
+  return operation ? `${baseUrl}/${operation}` : baseUrl;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Product Payload Factory
 |--------------------------------------------------------------------------
 */
@@ -4419,6 +4432,570 @@ describe("Product integration", () => {
       availableStock: 8,
       isInStock: true,
       isLowStock: false,
+    });
+  });
+
+  // Product Inventory Core Integration Tests
+
+  /*
+|--------------------------------------------------------------------------
+| Product Inventory Lifecycle
+|--------------------------------------------------------------------------
+*/
+
+  it("adjusts, reserves, releases, and commits Product inventory", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Inventory Lifecycle Products",
+
+      slug: "inventory-lifecycle-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    |
+    | Initial inventory:
+    |
+    | stock         = 10
+    | reservedStock = 2
+    | available     = 8
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Inventory Lifecycle T-Shirt",
+
+        slug: "inventory-lifecycle-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/inventory-lifecycle-tshirt.jpg",
+
+            altText: "Inventory lifecycle T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "INVENTORY-LIFECYCLE-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+              discountPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    const inventoryUrl = createInventoryUrl(product.id, variant.id);
+
+    expect(variant.inventory).toEqual({
+      stock: 10,
+      reservedStock: 2,
+      availableStock: 8,
+      lowStockThreshold: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Add Physical Stock
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 10 + 5 = 15
+    | reservedStock = 2
+    | available     = 13
+    |--------------------------------------------------------------------------
+    */
+
+    const adjustmentResponse = await agent
+      .patch(inventoryUrl)
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+        note: "Supplier delivery received",
+      })
+      .expect(200);
+
+    expect(adjustmentResponse.body.success).toBe(true);
+
+    expect(adjustmentResponse.body.data.variant.inventory).toEqual({
+      stock: 15,
+      reservedStock: 2,
+      availableStock: 13,
+      lowStockThreshold: 3,
+    });
+
+    expect(adjustmentResponse.body.data.inventorySummary).toEqual({
+      totalStock: 15,
+      reservedStock: 2,
+      availableStock: 13,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserve Four Units
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 15
+    | reservedStock = 2 + 4 = 6
+    | available     = 9
+    |--------------------------------------------------------------------------
+    */
+
+    const reserveResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 4,
+        referenceId: "ORDER-INVENTORY-001",
+      })
+      .expect(200);
+
+    expect(reserveResponse.body.data.variant.inventory).toEqual({
+      stock: 15,
+      reservedStock: 6,
+      availableStock: 9,
+      lowStockThreshold: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Release Two Reserved Units
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 15
+    | reservedStock = 6 - 2 = 4
+    | available     = 11
+    |--------------------------------------------------------------------------
+    */
+
+    const releaseResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 2,
+        referenceId: "ORDER-INVENTORY-001",
+      })
+      .expect(200);
+
+    expect(releaseResponse.body.data.variant.inventory).toEqual({
+      stock: 15,
+      reservedStock: 4,
+      availableStock: 11,
+      lowStockThreshold: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Commit Three Reserved Units
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 15 - 3 = 12
+    | reservedStock = 4 - 3 = 1
+    | available     = 11
+    |--------------------------------------------------------------------------
+    */
+
+    const commitResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-INVENTORY-001",
+      })
+      .expect(200);
+
+    expect(commitResponse.body.data.variant.inventory).toEqual({
+      stock: 12,
+      reservedStock: 1,
+      availableStock: 11,
+      lowStockThreshold: 3,
+    });
+
+    expect(commitResponse.body.data.inventorySummary).toEqual({
+      totalStock: 12,
+      reservedStock: 1,
+      availableStock: 11,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Persisted Admin Inventory
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 12,
+      reservedStock: 1,
+      availableStock: 11,
+      lowStockThreshold: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Public Availability
+    |--------------------------------------------------------------------------
+    |
+    | Reserved stock is not exposed publicly.
+    |--------------------------------------------------------------------------
+    */
+
+    const publicResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(200);
+
+    const publicVariant = publicResponse.body.data.product.variants[0];
+
+    expect(publicVariant.availability).toEqual({
+      availableStock: 11,
+      isInStock: true,
+      isLowStock: false,
+    });
+
+    expect(publicVariant.availability).not.toHaveProperty("reservedStock");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Inventory Request Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid Product inventory requests", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+     * Valid ObjectId values are sufficient because
+     * validation fails before the service is called.
+     */
+    const productId = "507f1f77bcf86cd799439011";
+
+    const variantId = "507f1f77bcf86cd799439012";
+
+    const inventoryUrl = createInventoryUrl(productId, variantId);
+
+    const invalidAdjustments = [
+      {
+        quantityDelta: 0,
+        reason: "restock",
+      },
+
+      {
+        quantityDelta: 1.5,
+        reason: "restock",
+      },
+
+      {
+        quantityDelta: 2,
+        reason: "unknown",
+      },
+
+      {
+        quantityDelta: 2,
+        reason: "restock",
+        updatedBy: "507f1f77bcf86cd799439013",
+      },
+    ];
+
+    for (const body of invalidAdjustments) {
+      const response = await agent.patch(inventoryUrl).send(body).expect(400);
+
+      expect(response.body.success).toBe(false);
+    }
+
+    const quantityOperations = ["reserve", "release", "commit"];
+
+    const invalidQuantities = [0, -1, 1.5, 1_000_001];
+
+    for (const operation of quantityOperations) {
+      for (const quantity of invalidQuantities) {
+        const response = await agent
+          .post(createInventoryUrl(productId, variantId, operation))
+          .send({
+            quantity,
+          })
+          .expect(400);
+
+        expect(response.body.success).toBe(false);
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unknown Body Property
+    |--------------------------------------------------------------------------
+    */
+
+    const protectedFieldResponse = await agent
+      .post(createInventoryUrl(productId, variantId, "reserve"))
+      .send({
+        quantity: 1,
+        reservedStock: 100,
+      })
+      .expect(400);
+
+    expect(protectedFieldResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Product and Variant IDs
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl("invalid-product-id", variantId))
+      .send({
+        quantityDelta: 1,
+        reason: "restock",
+      })
+      .expect(400);
+
+    await agent
+      .patch(createInventoryUrl(productId, "invalid-variant-id"))
+      .send({
+        quantityDelta: 1,
+        reason: "restock",
+      })
+      .expect(400);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Product Inventory Safety Conflicts
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects unsafe inventory adjustments and insufficient stock operations", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Inventory Conflict Products",
+
+      slug: "inventory-conflict-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initial Inventory
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 10
+    | reservedStock = 4
+    | available     = 6
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Inventory Conflict T-Shirt",
+
+        slug: "inventory-conflict-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/inventory-conflict-tshirt.jpg",
+
+            altText: "Inventory conflict T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "INVENTORY-CONFLICT-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 4,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    const inventoryUrl = createInventoryUrl(product.id, variant.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stock Cannot Fall Below Reserved Stock
+    |--------------------------------------------------------------------------
+    |
+    | 10 - 7 = 3
+    | Reserved stock is 4.
+    |--------------------------------------------------------------------------
+    */
+
+    const unsafeAdjustmentResponse = await agent
+      .patch(inventoryUrl)
+      .send({
+        quantityDelta: -7,
+        reason: "damage",
+        note: "Attempt unsafe reduction",
+      })
+      .expect(409);
+
+    expect(unsafeAdjustmentResponse.body.errorCode).toBe(
+      "PRODUCT_STOCK_ADJUSTMENT_CONFLICT",
+    );
+
+    expect(unsafeAdjustmentResponse.body.details).toEqual({
+      quantityDelta: -7,
+      stock: 10,
+      reservedStock: 4,
+      resultingStock: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cannot Reserve More Than Available
+    |--------------------------------------------------------------------------
+    |
+    | Available stock is 6.
+    |--------------------------------------------------------------------------
+    */
+
+    const insufficientAvailableResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 7,
+        referenceId: "ORDER-CONFLICT-001",
+      })
+      .expect(409);
+
+    expect(insufficientAvailableResponse.body.errorCode).toBe(
+      "PRODUCT_INSUFFICIENT_AVAILABLE_STOCK",
+    );
+
+    expect(insufficientAvailableResponse.body.details).toEqual({
+      requestedQuantity: 7,
+      stock: 10,
+      reservedStock: 4,
+      availableStock: 6,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cannot Release More Than Reserved
+    |--------------------------------------------------------------------------
+    */
+
+    const insufficientReleaseResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 5,
+        referenceId: "ORDER-CONFLICT-001",
+      })
+      .expect(409);
+
+    expect(insufficientReleaseResponse.body.errorCode).toBe(
+      "PRODUCT_INSUFFICIENT_RESERVED_STOCK",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cannot Commit More Than Reserved
+    |--------------------------------------------------------------------------
+    */
+
+    const insufficientCommitResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 5,
+        referenceId: "ORDER-CONFLICT-001",
+      })
+      .expect(409);
+
+    expect(insufficientCommitResponse.body.errorCode).toBe(
+      "PRODUCT_INSUFFICIENT_RESERVED_STOCK",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failed Operations Must Not Change Inventory
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 10,
+      reservedStock: 4,
+      availableStock: 6,
+      lowStockThreshold: 3,
     });
   });
 });
