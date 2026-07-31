@@ -6,7 +6,10 @@ import {
   PRODUCT_STATUS_VALUES,
 } from "../../shared/constants/product.constants.js";
 
-import { PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES } from "../../shared/constants/product-inventory.constants.js";
+import {
+  PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES,
+  PRODUCT_INVENTORY_OPERATION_VALUES,
+} from "../../shared/constants/product-inventory.constants.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -219,6 +222,65 @@ const createQueryEnumSchema = (values, errorMessage) => {
 
     z.enum(values, {
       error: errorMessage,
+    }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Query Date
+|--------------------------------------------------------------------------
+|
+| Accepted formats:
+|
+| 2026-07-01
+| 2026-07-01T10:30:00Z
+| 2026-07-01T16:00:00+05:30
+|
+| Date-only "from" values use the start of the UTC day.
+| Date-only "to" values use the end of the UTC day.
+|--------------------------------------------------------------------------
+*/
+
+const ISO_DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const createQueryDateSchema = ({ fieldName, endOfDay = false }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (ISO_DATE_ONLY_PATTERN.test(normalizedValue)) {
+        const timeSuffix = endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z";
+
+        const parsedDate = new Date(`${normalizedValue}${timeSuffix}`);
+
+        /*
+         * Reject impossible dates such as:
+         * 2026-02-30
+         */
+        if (parsedDate.toISOString().slice(0, 10) !== normalizedValue) {
+          return new Date(Number.NaN);
+        }
+
+        return parsedDate;
+      }
+
+      if (!ISO_DATE_TIME_PATTERN.test(normalizedValue)) {
+        return new Date(Number.NaN);
+      }
+
+      return new Date(normalizedValue);
+    },
+
+    z.date({
+      error: `${fieldName} must be a valid ISO date or date-time`,
     }),
   );
 };
@@ -1196,6 +1258,127 @@ const adminProductListQuerySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Product Inventory Ledger Query
+|--------------------------------------------------------------------------
+*/
+
+const adminProductInventoryLedgerListQuerySchema = z
+  .strictObject({
+    /*
+      |--------------------------------------------------------------------------
+      | Pagination
+      |--------------------------------------------------------------------------
+      */
+
+    page: createQueryIntegerSchema({
+      fieldName: "Page",
+      minimum: 1,
+      maximum: 100000,
+    })
+      .optional()
+      .default(1),
+
+    limit: createQueryIntegerSchema({
+      fieldName: "Limit",
+      minimum: 1,
+      maximum: 100,
+    })
+      .optional()
+      .default(20),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Product and Variant
+      |--------------------------------------------------------------------------
+      */
+
+    product: objectIdSchema.optional(),
+
+    variantId: objectIdSchema.optional(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory Operation
+      |--------------------------------------------------------------------------
+      */
+
+    operation: createQueryEnumSchema(
+      PRODUCT_INVENTORY_OPERATION_VALUES,
+      "Invalid inventory operation",
+    ).optional(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Order or Business Reference
+      |--------------------------------------------------------------------------
+      */
+
+    referenceId: z
+      .string({
+        error: "Inventory reference ID must be a string",
+      })
+      .trim()
+      .min(1, {
+        error: "Inventory reference ID cannot be empty",
+      })
+      .max(120, {
+        error: "Inventory reference ID cannot exceed 120 characters",
+      })
+      .optional(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Actor
+      |--------------------------------------------------------------------------
+      */
+
+    actor: objectIdSchema.optional(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Date Range
+      |--------------------------------------------------------------------------
+      */
+
+    from: createQueryDateSchema({
+      fieldName: "Inventory ledger from date",
+    }).optional(),
+
+    to: createQueryDateSchema({
+      fieldName: "Inventory ledger to date",
+
+      endOfDay: true,
+    }).optional(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Sorting
+      |--------------------------------------------------------------------------
+      */
+
+    sortDirection: createQueryEnumSchema(
+      SORT_DIRECTION_VALUES,
+      "Inventory ledger sort direction must be asc or desc",
+    )
+      .optional()
+      .default("desc"),
+  })
+  .refine(
+    (query) => {
+      if (!query.from || !query.to) {
+        return true;
+      }
+
+      return query.from.getTime() <= query.to.getTime();
+    },
+    {
+      error: "Inventory ledger from date cannot be later than the to date",
+
+      path: ["to"],
+    },
+  );
+/*
+|--------------------------------------------------------------------------
 | Public Product List Query
 |--------------------------------------------------------------------------
 |
@@ -1443,4 +1626,22 @@ export const commitProductInventoryRequestSchema = z.strictObject({
   params: productVariantParamsSchema,
 
   query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Product Inventory Ledger List Request
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/products/inventory-ledger
+|--------------------------------------------------------------------------
+*/
+
+export const adminProductInventoryLedgerListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminProductInventoryLedgerListQuerySchema,
 });

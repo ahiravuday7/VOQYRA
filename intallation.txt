@@ -1470,6 +1470,55 @@ Every successful inventory operation creates the correct ledger entry.
 Failed inventory operations create no ledger records.
 A ledger-write failure rolls back the Product inventory update.
 |--------------------------------------------------------------------------
+Part 79: Inventory Ledger Query Validation and Repository
+
+Update:
+
+src/modules/products/product.validation.js
+src/modules/products/product-inventory-ledger.repository.js
+
+This step prepares a protected ledger-list endpoint:
+
+GET /api/v1/admin/products/inventory-ledger
+
+Supported filters:
+
+Product
+Variant
+Operation
+Reference ID
+Actor
+Date range
+Pagination
+Sort direction
+
+No service, controller, or route is added yet.
+
+Planned query examples
+All ledger entries
+GET /api/v1/admin/products/inventory-ledger
+Entries for one Product
+GET /api/v1/admin/products/inventory-ledger?product=PRODUCT_ID
+Entries for one variant
+GET /api/v1/admin/products/inventory-ledger?variantId=VARIANT_ID
+Reservation entries
+GET /api/v1/admin/products/inventory-ledger?operation=reserve
+Entries for an order
+GET /api/v1/admin/products/inventory-ledger?referenceId=ORDER-2026-00001
+Entries created by one admin or system actor
+GET /api/v1/admin/products/inventory-ledger?actor=USER_ID
+Date range
+GET /api/v1/admin/products/inventory-ledger?from=2026-07-01&to=2026-07-31
+
+The date-only range becomes:
+
+From: 2026-07-01T00:00:00.000Z
+To:   2026-07-31T23:59:59.999Z
+Combined query
+GET /api/v1/admin/products/inventory-ledger?product=PRODUCT_ID&operation=commit&from=2026-07-01&to=2026-07-31&page=1&limit=20&sortDirection=desc
+
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
