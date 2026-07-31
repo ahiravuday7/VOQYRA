@@ -1414,6 +1414,53 @@ Inventory Ledger model           ✅
 Atomic ledger integration        ❌
 Ledger query APIs                ❌
 |--------------------------------------------------------------------------
+Part 77: Atomic Inventory Ledger Integration
+
+Create/update:
+
+src/modules/products/product-inventory-ledger.repository.js
+src/modules/products/product.repository.js
+src/modules/products/product.service.js
+
+After this step, each inventory operation becomes one transaction:
+
+Update Product inventory
+        +
+Create Inventory Ledger entry
+        ↓
+Both succeed or both roll back
+
+Transaction behavior
+Successful operation
+1. MongoDB transaction starts
+2. Product inventory is updated atomically
+3. Ledger entry is validated
+4. Ledger entry is inserted
+5. Transaction commits
+
+Both records become visible together.
+
+Ledger creation failure
+
+Suppose the Product update succeeds internally but the ledger entry fails validation:
+
+1. Product inventory is updated inside transaction
+2. Ledger validation fails
+3. Transaction aborts
+4. Product inventory update is rolled back
+
+The database will not contain an untracked inventory change.
+
+Inventory update failure
+
+Suppose available stock is insufficient:
+
+1. Transaction starts
+2. Atomic Product update returns null
+3. Service diagnoses the failure
+4. PRODUCT_INSUFFICIENT_AVAILABLE_STOCK is thrown
+5. Transaction aborts
+6. No ledger entry is created
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

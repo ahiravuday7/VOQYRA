@@ -1,8 +1,14 @@
+import mongoose from "mongoose";
+
 import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
 import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
 
 import AppError from "../../shared/errors/app-error.js";
+
+import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
+
+import { createProductInventoryLedgerEntry } from "./product-inventory-ledger.repository.js";
 
 import {
   findCategoriesByIds,
@@ -177,15 +183,19 @@ const createInventoryConflictError = () => {
 |--------------------------------------------------------------------------
 */
 
-const getProductVariantInventorySnapshot = async (productId, variantId) => {
+const getProductVariantInventorySnapshot = async (
+  productId,
+  variantId,
+  session,
+) => {
   const snapshot = await findProductVariantInventorySnapshot(
     productId,
     variantId,
+    {
+      session,
+    },
   );
 
-  /*
-   * Deleted Products are treated as unavailable.
-   */
   if (!snapshot || snapshot.isDeleted) {
     throw createProductNotFoundError();
   }
@@ -195,6 +205,143 @@ const getProductVariantInventorySnapshot = async (productId, variantId) => {
   }
 
   return snapshot;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Product Inventory Transaction
+|--------------------------------------------------------------------------
+|
+| The callback may be retried automatically by MongoDB
+| when a transient transaction conflict occurs.
+|--------------------------------------------------------------------------
+*/
+
+const executeProductInventoryTransaction = async (operation) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let operationResult;
+
+    await session.withTransaction(async () => {
+      operationResult = await operation(session);
+    });
+
+    return operationResult;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Inventory State
+|--------------------------------------------------------------------------
+*/
+
+const buildInventoryState = (stock, reservedStock) => {
+  return {
+    stock,
+
+    reservedStock,
+
+    availableStock: stock - reservedStock,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Product Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedProductVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((item) => {
+    return String(item._id) === String(variantId);
+  });
+
+  if (!variant) {
+    /*
+     * This should never occur after a successful
+     * atomic update, but remains a defensive check.
+     */
+    throw createProductVariantNotFoundError();
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Inventory Ledger for Updated Product
+|--------------------------------------------------------------------------
+|
+| The atomic Product update returns the after-state.
+|
+| The before-state can safely be reconstructed:
+|
+| before stock =
+| after stock - stockDelta
+|
+| before reserved =
+| after reserved - reservedStockDelta
+|--------------------------------------------------------------------------
+*/
+
+const createInventoryLedgerForUpdatedProduct = async ({
+  product,
+  variantId,
+  operation,
+  quantity,
+  stockDelta,
+  reservedStockDelta,
+  reason,
+  note,
+  referenceId,
+  actorUserId,
+  session,
+}) => {
+  const variant = findUpdatedProductVariant(product, variantId);
+
+  const afterStock = variant.inventory?.stock ?? 0;
+
+  const afterReservedStock = variant.inventory?.reservedStock ?? 0;
+
+  const beforeStock = afterStock - stockDelta;
+
+  const beforeReservedStock = afterReservedStock - reservedStockDelta;
+
+  return createProductInventoryLedgerEntry(
+    {
+      product: product._id,
+
+      variantId: variant._id,
+
+      sku: variant.sku,
+
+      operation,
+
+      quantity,
+
+      stockDelta,
+
+      reservedStockDelta,
+
+      before: buildInventoryState(beforeStock, beforeReservedStock),
+
+      after: buildInventoryState(afterStock, afterReservedStock),
+
+      reason: reason ?? undefined,
+
+      note: note ?? undefined,
+
+      referenceId: referenceId ?? undefined,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
 };
 
 /*
@@ -845,48 +992,60 @@ export const adjustProductVariantInventory = async (
   adjustmentData,
   actorUserId,
 ) => {
-  const { quantityDelta } = adjustmentData;
+  const { quantityDelta, reason, note } = adjustmentData;
 
-  const product = await adjustVariantStockAtomically({
-    productId,
-    variantId,
-    quantityDelta,
-    actorUserId,
-  });
-
-  if (product) {
-    return product;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Diagnose Failed Atomic Adjustment
-    |--------------------------------------------------------------------------
-    */
-
-  const snapshot = await getProductVariantInventorySnapshot(
-    productId,
-    variantId,
-  );
-
-  const { stock, reservedStock } = snapshot.variant;
-
-  const resultingStock = stock + quantityDelta;
-
-  if (resultingStock < reservedStock) {
-    throw createUnsafeStockAdjustmentError({
+  return executeProductInventoryTransaction(async (session) => {
+    const product = await adjustVariantStockAtomically({
+      productId,
+      variantId,
       quantityDelta,
-      stock,
-      reservedStock,
-      resultingStock,
+      actorUserId,
+      session,
     });
-  }
 
-  /*
-   * The inventory may have changed between the failed
-   * atomic request and the diagnostic read.
-   */
-  throw createInventoryConflictError();
+    if (!product) {
+      const snapshot = await getProductVariantInventorySnapshot(
+        productId,
+        variantId,
+        session,
+      );
+
+      const { stock, reservedStock } = snapshot.variant;
+
+      const resultingStock = stock + quantityDelta;
+
+      if (resultingStock < reservedStock) {
+        throw createUnsafeStockAdjustmentError({
+          quantityDelta,
+          stock,
+          reservedStock,
+          resultingStock,
+        });
+      }
+
+      throw createInventoryConflictError();
+    }
+
+    await createInventoryLedgerForUpdatedProduct({
+      product,
+      variantId,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.ADJUST,
+
+      quantity: Math.abs(quantityDelta),
+
+      stockDelta: quantityDelta,
+
+      reservedStockDelta: 0,
+
+      reason,
+      note,
+      actorUserId,
+      session,
+    });
+
+    return product;
+  });
 };
 
 /*
@@ -910,55 +1069,66 @@ export const reserveProductVariantInventory = async (
   reservationData,
   actorUserId,
 ) => {
-  const { quantity } = reservationData;
+  const { quantity, referenceId } = reservationData;
 
-  const product = await reserveVariantStockAtomically({
-    productId,
-    variantId,
-    quantity,
-    actorUserId,
-  });
-
-  if (product) {
-    return product;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Diagnose Failed Atomic Reservation
-    |--------------------------------------------------------------------------
-    */
-
-  const snapshot = await getProductVariantInventorySnapshot(
-    productId,
-    variantId,
-  );
-
-  if (snapshot.status !== PRODUCT_STATUSES.ACTIVE) {
-    throw createInactiveProductInventoryError();
-  }
-
-  if (!snapshot.variant.isActive) {
-    throw createInactiveVariantInventoryError();
-  }
-
-  const { stock, reservedStock, availableStock } = snapshot.variant;
-
-  if (availableStock < quantity) {
-    throw createInsufficientAvailableStockError({
-      requestedQuantity: quantity,
-
-      stock,
-      reservedStock,
-      availableStock,
+  return executeProductInventoryTransaction(async (session) => {
+    const product = await reserveVariantStockAtomically({
+      productId,
+      variantId,
+      quantity,
+      actorUserId,
+      session,
     });
-  }
 
-  /*
-   * Another concurrent request may have modified
-   * inventory after the atomic request failed.
-   */
-  throw createInventoryConflictError();
+    if (!product) {
+      const snapshot = await getProductVariantInventorySnapshot(
+        productId,
+        variantId,
+        session,
+      );
+
+      if (snapshot.status !== PRODUCT_STATUSES.ACTIVE) {
+        throw createInactiveProductInventoryError();
+      }
+
+      if (!snapshot.variant.isActive) {
+        throw createInactiveVariantInventoryError();
+      }
+
+      const { stock, reservedStock, availableStock } = snapshot.variant;
+
+      if (availableStock < quantity) {
+        throw createInsufficientAvailableStockError({
+          requestedQuantity: quantity,
+
+          stock,
+          reservedStock,
+          availableStock,
+        });
+      }
+
+      throw createInventoryConflictError();
+    }
+
+    await createInventoryLedgerForUpdatedProduct({
+      product,
+      variantId,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RESERVE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: quantity,
+
+      referenceId,
+      actorUserId,
+      session,
+    });
+
+    return product;
+  });
 };
 
 /*
@@ -979,43 +1149,58 @@ export const releaseProductVariantInventory = async (
   releaseData,
   actorUserId,
 ) => {
-  const { quantity } = releaseData;
+  const { quantity, referenceId } = releaseData;
 
-  const product = await releaseVariantStockAtomically({
-    productId,
-    variantId,
-    quantity,
-    actorUserId,
-  });
-
-  if (product) {
-    return product;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Diagnose Failed Reservation Release
-    |--------------------------------------------------------------------------
-    */
-
-  const snapshot = await getProductVariantInventorySnapshot(
-    productId,
-    variantId,
-  );
-
-  const { stock, reservedStock, availableStock } = snapshot.variant;
-
-  if (reservedStock < quantity) {
-    throw createInsufficientReservedStockError({
-      requestedQuantity: quantity,
-
-      stock,
-      reservedStock,
-      availableStock,
+  return executeProductInventoryTransaction(async (session) => {
+    const product = await releaseVariantStockAtomically({
+      productId,
+      variantId,
+      quantity,
+      actorUserId,
+      session,
     });
-  }
 
-  throw createInventoryConflictError();
+    if (!product) {
+      const snapshot = await getProductVariantInventorySnapshot(
+        productId,
+        variantId,
+        session,
+      );
+
+      const { stock, reservedStock, availableStock } = snapshot.variant;
+
+      if (reservedStock < quantity) {
+        throw createInsufficientReservedStockError({
+          requestedQuantity: quantity,
+
+          stock,
+          reservedStock,
+          availableStock,
+        });
+      }
+
+      throw createInventoryConflictError();
+    }
+
+    await createInventoryLedgerForUpdatedProduct({
+      product,
+      variantId,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RELEASE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: -quantity,
+
+      referenceId,
+      actorUserId,
+      session,
+    });
+
+    return product;
+  });
 };
 
 /*
@@ -1036,56 +1221,65 @@ export const commitProductVariantInventory = async (
   commitData,
   actorUserId,
 ) => {
-  const { quantity } = commitData;
+  const { quantity, referenceId } = commitData;
 
-  const product = await commitVariantStockAtomically({
-    productId,
-    variantId,
-    quantity,
-    actorUserId,
-  });
+  return executeProductInventoryTransaction(async (session) => {
+    const product = await commitVariantStockAtomically({
+      productId,
+      variantId,
+      quantity,
+      actorUserId,
+      session,
+    });
 
-  if (product) {
+    if (!product) {
+      const snapshot = await getProductVariantInventorySnapshot(
+        productId,
+        variantId,
+        session,
+      );
+
+      const { stock, reservedStock, availableStock } = snapshot.variant;
+
+      if (reservedStock < quantity) {
+        throw createInsufficientReservedStockError({
+          requestedQuantity: quantity,
+
+          stock,
+          reservedStock,
+          availableStock,
+        });
+      }
+
+      if (stock < quantity) {
+        throw createInventoryInconsistentError({
+          requestedQuantity: quantity,
+
+          stock,
+          reservedStock,
+        });
+      }
+
+      throw createInventoryConflictError();
+    }
+
+    await createInventoryLedgerForUpdatedProduct({
+      product,
+      variantId,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.COMMIT,
+
+      quantity,
+
+      stockDelta: -quantity,
+
+      reservedStockDelta: -quantity,
+
+      referenceId,
+      actorUserId,
+      session,
+    });
+
     return product;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Diagnose Failed Inventory Commit
-    |--------------------------------------------------------------------------
-    */
-
-  const snapshot = await getProductVariantInventorySnapshot(
-    productId,
-    variantId,
-  );
-
-  const { stock, reservedStock, availableStock } = snapshot.variant;
-
-  if (reservedStock < quantity) {
-    throw createInsufficientReservedStockError({
-      requestedQuantity: quantity,
-
-      stock,
-      reservedStock,
-      availableStock,
-    });
-  }
-
-  /*
-   * Normally reservedStock can never exceed stock.
-   *
-   * This protects against inconsistent legacy data
-   * or direct database modifications.
-   */
-  if (stock < quantity) {
-    throw createInventoryInconsistentError({
-      requestedQuantity: quantity,
-
-      stock,
-      reservedStock,
-    });
-  }
-
-  throw createInventoryConflictError();
+  });
 };

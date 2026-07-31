@@ -1411,6 +1411,7 @@ const updateVariantInventoryAtomically = async ({
   productFilter = {},
   variantConditions,
   inventoryIncrement,
+  session,
 }) => {
   const productObjectId = normalizeInventoryObjectId(productId);
 
@@ -1464,6 +1465,12 @@ const updateVariantInventoryAtomically = async ({
        * Mongoose update validators.
        */
       runValidators: false,
+
+      /*
+       * Allows Product mutation and ledger creation
+       * to participate in the same transaction.
+       */
+      session,
     },
   );
 };
@@ -1477,21 +1484,29 @@ const updateVariantInventoryAtomically = async ({
 export const findProductVariantInventorySnapshot = async (
   productId,
   variantId,
+  { session } = {},
 ) => {
   const productObjectId = normalizeInventoryObjectId(productId);
 
   const variantObjectId = normalizeInventoryObjectId(variantId);
 
-  const product = await Product.findById(productObjectId)
+  const productQuery = Product.findById(productObjectId)
     .select({
       status: 1,
       deletedAt: 1,
 
       "variants._id": 1,
+      "variants.sku": 1,
       "variants.isActive": 1,
       "variants.inventory": 1,
     })
     .lean();
+
+  if (session) {
+    productQuery.session(session);
+  }
+
+  const product = await productQuery;
 
   if (!product) {
     return null;
@@ -1557,11 +1572,13 @@ export const adjustVariantStockAtomically = async ({
   variantId,
   quantityDelta,
   actorUserId,
+  session,
 }) => {
   return updateVariantInventoryAtomically({
     productId,
     variantId,
     actorUserId,
+    session,
 
     variantConditions: [
       {
@@ -1613,11 +1630,13 @@ export const reserveVariantStockAtomically = async ({
   variantId,
   quantity,
   actorUserId,
+  session,
 }) => {
   return updateVariantInventoryAtomically({
     productId,
     variantId,
     actorUserId,
+    session,
 
     productFilter: {
       status: PRODUCT_STATUSES.ACTIVE,
@@ -1664,11 +1683,13 @@ export const releaseVariantStockAtomically = async ({
   variantId,
   quantity,
   actorUserId,
+  session,
 }) => {
   return updateVariantInventoryAtomically({
     productId,
     variantId,
     actorUserId,
+    session,
 
     variantConditions: [
       /*
@@ -1709,11 +1730,13 @@ export const commitVariantStockAtomically = async ({
   variantId,
   quantity,
   actorUserId,
+  session,
 }) => {
   return updateVariantInventoryAtomically({
     productId,
     variantId,
     actorUserId,
+    session,
 
     variantConditions: [
       /*

@@ -296,171 +296,163 @@ const productInventoryLedgerSchema = new mongoose.Schema(
 |--------------------------------------------------------------------------
 */
 
-productInventoryLedgerSchema.pre(
-  "validate",
-  function validateLedgerEntry(next) {
-    const before = this.before;
+productInventoryLedgerSchema.pre("validate", function validateLedgerEntry() {
+  const before = this.before;
 
-    const after = this.after;
+  const after = this.after;
 
-    if (!before || !after) {
-      return next();
-    }
+  if (!before || !after) {
+    return;
+  }
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Validate Available Stock Snapshots
     |--------------------------------------------------------------------------
     */
 
-    const expectedBeforeAvailable = before.stock - before.reservedStock;
+  const expectedBeforeAvailable = before.stock - before.reservedStock;
 
-    const expectedAfterAvailable = after.stock - after.reservedStock;
+  const expectedAfterAvailable = after.stock - after.reservedStock;
 
-    if (before.reservedStock > before.stock) {
-      this.invalidate(
-        "before.reservedStock",
-        "Before reserved stock cannot exceed physical stock",
-      );
-    }
+  if (before.reservedStock > before.stock) {
+    this.invalidate(
+      "before.reservedStock",
+      "Before reserved stock cannot exceed physical stock",
+    );
+  }
 
-    if (after.reservedStock > after.stock) {
-      this.invalidate(
-        "after.reservedStock",
-        "After reserved stock cannot exceed physical stock",
-      );
-    }
+  if (after.reservedStock > after.stock) {
+    this.invalidate(
+      "after.reservedStock",
+      "After reserved stock cannot exceed physical stock",
+    );
+  }
 
-    if (before.availableStock !== expectedBeforeAvailable) {
-      this.invalidate(
-        "before.availableStock",
-        "Before available stock must equal stock minus reserved stock",
-      );
-    }
+  if (before.availableStock !== expectedBeforeAvailable) {
+    this.invalidate(
+      "before.availableStock",
+      "Before available stock must equal stock minus reserved stock",
+    );
+  }
 
-    if (after.availableStock !== expectedAfterAvailable) {
-      this.invalidate(
-        "after.availableStock",
-        "After available stock must equal stock minus reserved stock",
-      );
-    }
+  if (after.availableStock !== expectedAfterAvailable) {
+    this.invalidate(
+      "after.availableStock",
+      "After available stock must equal stock minus reserved stock",
+    );
+  }
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Validate Generic Delta Mathematics
     |--------------------------------------------------------------------------
     */
 
-    if (after.stock !== before.stock + this.stockDelta) {
-      this.invalidate(
-        "stockDelta",
-        "Stock delta does not match the before and after stock values",
-      );
-    }
+  if (after.stock !== before.stock + this.stockDelta) {
+    this.invalidate(
+      "stockDelta",
+      "Stock delta does not match the before and after stock values",
+    );
+  }
 
-    if (
-      after.reservedStock !==
-      before.reservedStock + this.reservedStockDelta
-    ) {
-      this.invalidate(
-        "reservedStockDelta",
-        "Reserved stock delta does not match the before and after values",
-      );
-    }
+  if (after.reservedStock !== before.reservedStock + this.reservedStockDelta) {
+    this.invalidate(
+      "reservedStockDelta",
+      "Reserved stock delta does not match the before and after values",
+    );
+  }
 
-    /*
+  /*
     |--------------------------------------------------------------------------
     | Validate Operation-Specific Rules
     |--------------------------------------------------------------------------
     */
 
-    switch (this.operation) {
-      case PRODUCT_INVENTORY_OPERATIONS.ADJUST: {
-        if (this.stockDelta === 0) {
-          this.invalidate(
-            "stockDelta",
-            "Inventory adjustment stock delta cannot be zero",
-          );
-        }
-
-        if (this.quantity !== Math.abs(this.stockDelta)) {
-          this.invalidate(
-            "quantity",
-            "Adjustment quantity must equal the absolute stock delta",
-          );
-        }
-
-        if (this.reservedStockDelta !== 0) {
-          this.invalidate(
-            "reservedStockDelta",
-            "Physical stock adjustment cannot change reserved stock",
-          );
-        }
-
-        break;
+  switch (this.operation) {
+    case PRODUCT_INVENTORY_OPERATIONS.ADJUST: {
+      if (this.stockDelta === 0) {
+        this.invalidate(
+          "stockDelta",
+          "Inventory adjustment stock delta cannot be zero",
+        );
       }
 
-      case PRODUCT_INVENTORY_OPERATIONS.RESERVE: {
-        if (this.stockDelta !== 0) {
-          this.invalidate(
-            "stockDelta",
-            "Stock reservation cannot change physical stock",
-          );
-        }
-
-        if (this.reservedStockDelta !== this.quantity) {
-          this.invalidate(
-            "reservedStockDelta",
-            "Reservation must increase reserved stock by the requested quantity",
-          );
-        }
-
-        break;
+      if (this.quantity !== Math.abs(this.stockDelta)) {
+        this.invalidate(
+          "quantity",
+          "Adjustment quantity must equal the absolute stock delta",
+        );
       }
 
-      case PRODUCT_INVENTORY_OPERATIONS.RELEASE: {
-        if (this.stockDelta !== 0) {
-          this.invalidate(
-            "stockDelta",
-            "Reservation release cannot change physical stock",
-          );
-        }
-
-        if (this.reservedStockDelta !== -this.quantity) {
-          this.invalidate(
-            "reservedStockDelta",
-            "Reservation release must reduce reserved stock by the requested quantity",
-          );
-        }
-
-        break;
+      if (this.reservedStockDelta !== 0) {
+        this.invalidate(
+          "reservedStockDelta",
+          "Physical stock adjustment cannot change reserved stock",
+        );
       }
 
-      case PRODUCT_INVENTORY_OPERATIONS.COMMIT: {
-        if (this.stockDelta !== -this.quantity) {
-          this.invalidate(
-            "stockDelta",
-            "Inventory commit must reduce physical stock by the committed quantity",
-          );
-        }
-
-        if (this.reservedStockDelta !== -this.quantity) {
-          this.invalidate(
-            "reservedStockDelta",
-            "Inventory commit must reduce reserved stock by the committed quantity",
-          );
-        }
-
-        break;
-      }
-
-      default:
-        break;
+      break;
     }
 
-    return next();
-  },
-);
+    case PRODUCT_INVENTORY_OPERATIONS.RESERVE: {
+      if (this.stockDelta !== 0) {
+        this.invalidate(
+          "stockDelta",
+          "Stock reservation cannot change physical stock",
+        );
+      }
+
+      if (this.reservedStockDelta !== this.quantity) {
+        this.invalidate(
+          "reservedStockDelta",
+          "Reservation must increase reserved stock by the requested quantity",
+        );
+      }
+
+      break;
+    }
+
+    case PRODUCT_INVENTORY_OPERATIONS.RELEASE: {
+      if (this.stockDelta !== 0) {
+        this.invalidate(
+          "stockDelta",
+          "Reservation release cannot change physical stock",
+        );
+      }
+
+      if (this.reservedStockDelta !== -this.quantity) {
+        this.invalidate(
+          "reservedStockDelta",
+          "Reservation release must reduce reserved stock by the requested quantity",
+        );
+      }
+
+      break;
+    }
+
+    case PRODUCT_INVENTORY_OPERATIONS.COMMIT: {
+      if (this.stockDelta !== -this.quantity) {
+        this.invalidate(
+          "stockDelta",
+          "Inventory commit must reduce physical stock by the committed quantity",
+        );
+      }
+
+      if (this.reservedStockDelta !== -this.quantity) {
+        this.invalidate(
+          "reservedStockDelta",
+          "Inventory commit must reduce reserved stock by the committed quantity",
+        );
+      }
+
+      break;
+    }
+
+    default:
+      break;
+  }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -475,18 +467,11 @@ productInventoryLedgerSchema.pre(
 |--------------------------------------------------------------------------
 */
 
-productInventoryLedgerSchema.pre(
-  "save",
-  function preventLedgerSaveUpdate(next) {
-    if (!this.isNew) {
-      return next(
-        new Error("Product inventory ledger entries cannot be modified"),
-      );
-    }
-
-    return next();
-  },
-);
+productInventoryLedgerSchema.pre("save", function preventLedgerSaveUpdate() {
+  if (!this.isNew) {
+    throw new Error("Product inventory ledger entries cannot be modified");
+  }
+});
 
 const blockedUpdateOperations = [
   "updateOne",
@@ -496,14 +481,9 @@ const blockedUpdateOperations = [
 ];
 
 for (const operation of blockedUpdateOperations) {
-  productInventoryLedgerSchema.pre(
-    operation,
-    function preventLedgerUpdate(next) {
-      return next(
-        new Error("Product inventory ledger entries cannot be modified"),
-      );
-    },
-  );
+  productInventoryLedgerSchema.pre(operation, function preventLedgerUpdate() {
+    throw new Error("Product inventory ledger entries cannot be modified");
+  });
 }
 
 /*
