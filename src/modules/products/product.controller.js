@@ -7,6 +7,10 @@ import {
   restoreProduct,
   getPublicProductBySlug,
   getPublicProducts,
+  adjustProductVariantInventory,
+  commitProductVariantInventory,
+  releaseProductVariantInventory,
+  reserveProductVariantInventory,
 } from "./product.service.js";
 
 import {
@@ -14,6 +18,45 @@ import {
   toPublicProduct,
   toPublicProductSummary,
 } from "./product.mapper.js";
+
+/*
+|--------------------------------------------------------------------------
+| Map Product Inventory Operation Result
+|--------------------------------------------------------------------------
+|
+| Inventory repository operations return the complete
+| updated Product document.
+|
+| The response includes:
+|
+| - Complete admin Product response
+| - Updated target variant
+| - Product-level inventory totals
+|--------------------------------------------------------------------------
+*/
+
+const mapProductInventoryResult = (product, variantId) => {
+  const mappedProduct = toAdminProduct(product);
+
+  const updatedVariant =
+    mappedProduct.variants.find((variant) => {
+      return variant.id === String(variantId);
+    }) ?? null;
+
+  return {
+    product: mappedProduct,
+
+    variant: updatedVariant,
+
+    inventorySummary: {
+      totalStock: mappedProduct.totalStock,
+
+      reservedStock: mappedProduct.reservedStock,
+
+      availableStock: mappedProduct.availableStock,
+    },
+  };
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -313,5 +356,198 @@ export const getPublicProductController = async (request, response) => {
     data: {
       product: toPublicProduct(product),
     },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Adjust Product Variant Inventory
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/variants/:variantId/inventory
+|--------------------------------------------------------------------------
+*/
+
+export const adjustProductInventoryController = async (request, response) => {
+  const { productId, variantId } = request.validated.params;
+
+  const adjustmentData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await adjustProductVariantInventory(
+    productId,
+    variantId,
+    adjustmentData,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId,
+      variantId,
+
+      quantityDelta: adjustmentData.quantityDelta,
+
+      reason: adjustmentData.reason,
+
+      note: adjustmentData.note ?? null,
+
+      actorUserId,
+    },
+    "Product inventory adjusted",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product inventory adjusted successfully",
+
+    data: mapProductInventoryResult(product, variantId),
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Product Variant Inventory
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/variants/:variantId/inventory/reserve
+|--------------------------------------------------------------------------
+*/
+
+export const reserveProductInventoryController = async (request, response) => {
+  const { productId, variantId } = request.validated.params;
+
+  const reservationData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await reserveProductVariantInventory(
+    productId,
+    variantId,
+    reservationData,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId,
+      variantId,
+
+      quantity: reservationData.quantity,
+
+      referenceId: reservationData.referenceId ?? null,
+
+      actorUserId,
+    },
+    "Product inventory reserved",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product inventory reserved successfully",
+
+    data: mapProductInventoryResult(product, variantId),
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Release Product Variant Reservation
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/variants/:variantId/inventory/release
+|--------------------------------------------------------------------------
+*/
+
+export const releaseProductInventoryController = async (request, response) => {
+  const { productId, variantId } = request.validated.params;
+
+  const releaseData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await releaseProductVariantInventory(
+    productId,
+    variantId,
+    releaseData,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId,
+      variantId,
+
+      quantity: releaseData.quantity,
+
+      referenceId: releaseData.referenceId ?? null,
+
+      actorUserId,
+    },
+    "Product inventory reservation released",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product inventory reservation released successfully",
+
+    data: mapProductInventoryResult(product, variantId),
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Commit Product Variant Reservation
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/variants/:variantId/inventory/commit
+|--------------------------------------------------------------------------
+|
+| Used when reserved units have been purchased.
+|--------------------------------------------------------------------------
+*/
+
+export const commitProductInventoryController = async (request, response) => {
+  const { productId, variantId } = request.validated.params;
+
+  const commitData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await commitProductVariantInventory(
+    productId,
+    variantId,
+    commitData,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId,
+      variantId,
+
+      quantity: commitData.quantity,
+
+      referenceId: commitData.referenceId ?? null,
+
+      actorUserId,
+    },
+    "Product reserved inventory committed",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product reserved inventory committed successfully",
+
+    data: mapProductInventoryResult(product, variantId),
   });
 };

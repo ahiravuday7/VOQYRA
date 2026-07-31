@@ -1336,6 +1336,20 @@ PRODUCT_INVENTORY_CONFLICT
 
 No controller or routes are added yet.
 |--------------------------------------------------------------------------
+Part 72: Product Inventory Controllers
+
+Update only:
+
+src/modules/products/product.controller.js
+
+This step adds controllers for:
+
+Adjust physical stock
+Reserve stock
+Release reserved stock
+Commit reserved stock
+
+No routes are added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
