@@ -1351,6 +1351,23 @@ Commit reserved stock
 
 No routes are added yet.
 |--------------------------------------------------------------------------
+Part 73: Register Product Inventory Routes
+
+Update only:
+
+src/modules/products/product.routes.js
+
+All inventory endpoints will automatically require admin authentication because the Product router already uses:
+
+router.use(
+  authenticate,
+  authorizeRoles(
+    USER_ROLES.ADMIN
+  )
+);
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
