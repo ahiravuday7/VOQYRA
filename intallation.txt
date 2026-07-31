@@ -1301,6 +1301,20 @@ Commit reserved stock after purchase
 
 No routes are added yet.
 |--------------------------------------------------------------------------
+Part 70: Atomic Product Inventory Repository Operations
+
+Update only:
+
+src/modules/products/product.repository.js
+
+This part adds atomic repository functions for:
+
+Adjust physical stock
+Reserve available stock
+Release reserved stock
+Commit reserved stock after purchase
+
+No service, controller, or routes are added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

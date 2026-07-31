@@ -1322,3 +1322,432 @@ export const findPublicProductBySlug = async (slug) => {
 
   return product ?? null;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Inventory Object ID Normalizer
+|--------------------------------------------------------------------------
+*/
+
+const normalizeInventoryObjectId = (value) => {
+  if (value instanceof mongoose.Types.ObjectId) {
+    return value;
+  }
+
+  return new mongoose.Types.ObjectId(value);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Variant Available Stock Expression
+|--------------------------------------------------------------------------
+|
+| availableStock = stock - reservedStock
+|--------------------------------------------------------------------------
+*/
+
+const buildVariantAvailableStockExpression = () => {
+  return {
+    $subtract: [
+      {
+        $ifNull: ["$$variant.inventory.stock", 0],
+      },
+
+      {
+        $ifNull: ["$$variant.inventory.reservedStock", 0],
+      },
+    ],
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Matching Variant Expression
+|--------------------------------------------------------------------------
+|
+| Finds the requested variant and applies additional
+| inventory conditions to that same array element.
+|--------------------------------------------------------------------------
+*/
+
+const buildMatchingVariantExpression = (variantObjectId, conditions) => {
+  return {
+    $anyElementTrue: {
+      $map: {
+        input: {
+          $ifNull: ["$variants", []],
+        },
+
+        as: "variant",
+
+        in: {
+          $and: [
+            {
+              $eq: ["$$variant._id", variantObjectId],
+            },
+
+            ...conditions,
+          ],
+        },
+      },
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Atomic Variant Inventory Update
+|--------------------------------------------------------------------------
+|
+| The inventory condition and inventory mutation happen
+| inside one MongoDB findOneAndUpdate operation.
+|--------------------------------------------------------------------------
+*/
+
+const updateVariantInventoryAtomically = async ({
+  productId,
+  variantId,
+  actorUserId,
+  productFilter = {},
+  variantConditions,
+  inventoryIncrement,
+}) => {
+  const productObjectId = normalizeInventoryObjectId(productId);
+
+  const variantObjectId = normalizeInventoryObjectId(variantId);
+
+  const updatedAt = new Date();
+
+  return Product.findOneAndUpdate(
+    {
+      _id: productObjectId,
+
+      deletedAt: null,
+
+      /*
+       * Helps MongoDB quickly reject Products
+       * that do not contain the requested variant.
+       */
+      "variants._id": variantObjectId,
+
+      ...productFilter,
+
+      /*
+       * Ensures the stock condition is evaluated
+       * against the requested variant.
+       */
+      $expr: buildMatchingVariantExpression(variantObjectId, variantConditions),
+    },
+
+    {
+      $inc: inventoryIncrement,
+
+      $set: {
+        updatedBy: actorUserId,
+
+        updatedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      arrayFilters: [
+        {
+          "variant._id": variantObjectId,
+        },
+      ],
+
+      /*
+       * Cross-field inventory safety is enforced by
+       * the atomic query conditions rather than normal
+       * Mongoose update validators.
+       */
+      runValidators: false,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Product Variant Inventory Snapshot
+|--------------------------------------------------------------------------
+*/
+
+export const findProductVariantInventorySnapshot = async (
+  productId,
+  variantId,
+) => {
+  const productObjectId = normalizeInventoryObjectId(productId);
+
+  const variantObjectId = normalizeInventoryObjectId(variantId);
+
+  const product = await Product.findById(productObjectId)
+    .select({
+      status: 1,
+      deletedAt: 1,
+
+      "variants._id": 1,
+      "variants.isActive": 1,
+      "variants.inventory": 1,
+    })
+    .lean();
+
+  if (!product) {
+    return null;
+  }
+
+  const variant = (product.variants ?? []).find((item) => {
+    return String(item._id) === String(variantObjectId);
+  });
+
+  if (!variant) {
+    return {
+      productId: String(product._id),
+
+      status: product.status,
+
+      isDeleted: Boolean(product.deletedAt),
+
+      variant: null,
+    };
+  }
+
+  const stock = variant.inventory?.stock ?? 0;
+
+  const reservedStock = variant.inventory?.reservedStock ?? 0;
+
+  return {
+    productId: String(product._id),
+
+    status: product.status,
+
+    isDeleted: Boolean(product.deletedAt),
+
+    variant: {
+      id: String(variant._id),
+
+      isActive: variant.isActive !== false,
+
+      stock,
+
+      reservedStock,
+
+      availableStock: Math.max(stock - reservedStock, 0),
+
+      lowStockThreshold: variant.inventory?.lowStockThreshold ?? 0,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Adjust Variant Physical Stock Atomically
+|--------------------------------------------------------------------------
+|
+| stock = stock + quantityDelta
+|
+| The resulting physical stock must remain greater
+| than or equal to reservedStock.
+|--------------------------------------------------------------------------
+*/
+
+export const adjustVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantityDelta,
+  actorUserId,
+}) => {
+  return updateVariantInventoryAtomically({
+    productId,
+    variantId,
+    actorUserId,
+
+    variantConditions: [
+      {
+        $gte: [
+          /*
+           * Resulting physical stock.
+           */
+          {
+            $add: [
+              {
+                $ifNull: ["$$variant.inventory.stock", 0],
+              },
+
+              quantityDelta,
+            ],
+          },
+
+          /*
+           * Existing reserved units must
+           * remain physically available.
+           */
+          {
+            $ifNull: ["$$variant.inventory.reservedStock", 0],
+          },
+        ],
+      },
+    ],
+
+    inventoryIncrement: {
+      "variants.$[variant].inventory.stock": quantityDelta,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Variant Stock Atomically
+|--------------------------------------------------------------------------
+|
+| reservedStock = reservedStock + quantity
+|
+| Only an active Product and active variant can accept
+| a new reservation.
+|--------------------------------------------------------------------------
+*/
+
+export const reserveVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+}) => {
+  return updateVariantInventoryAtomically({
+    productId,
+    variantId,
+    actorUserId,
+
+    productFilter: {
+      status: PRODUCT_STATUSES.ACTIVE,
+    },
+
+    variantConditions: [
+      /*
+       * Missing isActive is treated as active
+       * for compatibility with older documents.
+       */
+      {
+        $ne: ["$$variant.isActive", false],
+      },
+
+      /*
+       * availableStock >= requested quantity
+       */
+      {
+        $gte: [buildVariantAvailableStockExpression(), quantity],
+      },
+    ],
+
+    inventoryIncrement: {
+      "variants.$[variant].inventory.reservedStock": quantity,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Release Variant Reservation Atomically
+|--------------------------------------------------------------------------
+|
+| reservedStock = reservedStock - quantity
+|
+| Release does not require the Product or variant to
+| remain active because an existing order may need to
+| release stock after catalogue status changes.
+|--------------------------------------------------------------------------
+*/
+
+export const releaseVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+}) => {
+  return updateVariantInventoryAtomically({
+    productId,
+    variantId,
+    actorUserId,
+
+    variantConditions: [
+      /*
+       * Cannot release more than the
+       * currently reserved quantity.
+       */
+      {
+        $gte: [
+          {
+            $ifNull: ["$$variant.inventory.reservedStock", 0],
+          },
+
+          quantity,
+        ],
+      },
+    ],
+
+    inventoryIncrement: {
+      "variants.$[variant].inventory.reservedStock": -quantity,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Commit Reserved Variant Stock Atomically
+|--------------------------------------------------------------------------
+|
+| Used after a purchase is completed.
+|
+| stock         = stock - quantity
+| reservedStock = reservedStock - quantity
+|--------------------------------------------------------------------------
+*/
+
+export const commitVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+}) => {
+  return updateVariantInventoryAtomically({
+    productId,
+    variantId,
+    actorUserId,
+
+    variantConditions: [
+      /*
+       * The requested quantity must still
+       * exist in reserved stock.
+       */
+      {
+        $gte: [
+          {
+            $ifNull: ["$$variant.inventory.reservedStock", 0],
+          },
+
+          quantity,
+        ],
+      },
+
+      /*
+       * Defensive physical-stock check.
+       */
+      {
+        $gte: [
+          {
+            $ifNull: ["$$variant.inventory.stock", 0],
+          },
+
+          quantity,
+        ],
+      },
+    ],
+
+    inventoryIncrement: {
+      "variants.$[variant].inventory.stock": -quantity,
+
+      "variants.$[variant].inventory.reservedStock": -quantity,
+    },
+  });
+};
