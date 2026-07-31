@@ -7,6 +7,11 @@ import { createAuthenticatedAgent } from "../helpers/auth-test.helper.js";
 import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 import Category from "../../src/modules/categories/category.model.js";
 
+import ProductInventoryLedger from "../../src/modules/products/product-inventory-ledger.model.js";
+import Product from "../../src/modules/products/product.model.js";
+
+import { PRODUCT_INVENTORY_OPERATIONS } from "../../src/shared/constants/product-inventory.constants.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 
 const adminProductUrl = "/api/v1/admin/products";
@@ -434,10 +439,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Customer Authorization
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Customer Authorization
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects customer access to admin Product APIs", async () => {
     const { agent } = await createAuthenticatedAgent({
@@ -457,10 +462,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Protected Product Fields
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Protected Product Fields
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects backend-controlled Product fields", async () => {
     const { agent, user } = await createAuthenticatedAgent();
@@ -511,10 +516,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Duplicate Product Slug
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Duplicate Product Slug
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects a duplicate Product slug", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -597,10 +602,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Duplicate Variant SKU
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Duplicate Variant SKU
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects a variant SKU already used by another Product", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -685,10 +690,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Missing Product Category
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Missing Product Category
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects Product creation when the category does not exist", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -730,10 +735,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Active Product Requires an Image
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Active Product Requires an Image
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects an active Product without an image", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -797,10 +802,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Active Product Requires an Active Variant
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Active Product Requires an Active Variant
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects an active Product without an active variant", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -868,10 +873,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Category Status
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Category Status
+  |--------------------------------------------------------------------------
+  */
 
   it("allows a draft Product under an inactive category but rejects an active Product", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -978,10 +983,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Duplicate Variants Inside One Product
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Duplicate Variants Inside One Product
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects duplicate SKUs and duplicate size-colour combinations inside one Product", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1107,10 +1112,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Pricing and Inventory Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Pricing and Inventory Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects invalid discount pricing and reserved inventory", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1217,10 +1222,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Category Ancestor Availability
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Category Ancestor Availability
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects Product activation when a category ancestor is inactive", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1364,10 +1369,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product PATCH Field Preservation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product PATCH Field Preservation
+  |--------------------------------------------------------------------------
+  */
 
   it("updates only provided Product fields and preserves existing values", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1479,10 +1484,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Publication Date
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Publication Date
+  |--------------------------------------------------------------------------
+  */
 
   it("manages publishedAt when Product status changes", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1639,10 +1644,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Update Conflicts
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Update Conflicts
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects duplicate Product slug and SKU updates", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -1806,10 +1811,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Soft Delete and Restore
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Soft Delete and Restore
+  |--------------------------------------------------------------------------
+  */
 
   it("soft deletes and restores an active Product safely", async () => {
     const { agent, user } = await createAuthenticatedAgent();
@@ -2081,10 +2086,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Restore Category Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Restore Category Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects restoring an active Product when its category becomes inactive", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -2228,10 +2233,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Admin Product Pagination, Search and Sorting
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Admin Product Pagination, Search and Sorting
+  |--------------------------------------------------------------------------
+  */
 
   it("supports admin Product pagination, search, and sorting", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -2392,10 +2397,10 @@ describe("Product integration", () => {
     );
   });
   /*
-|--------------------------------------------------------------------------
-| Admin Product Category, Status and Flag Filters
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Admin Product Category, Status and Flag Filters
+  |--------------------------------------------------------------------------
+  */
 
   it("filters admin Products by category, status, and Product flags", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -2603,10 +2608,10 @@ describe("Product integration", () => {
     expect(combinedResponse.body.data.products[0].id).toBe(shirtProduct.id);
   });
   /*
-|--------------------------------------------------------------------------
-| Admin Product Stock and Deleted Filters
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Admin Product Stock and Deleted Filters
+  |--------------------------------------------------------------------------
+  */
 
   it("filters admin Products by stock and deletion state", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -2895,10 +2900,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Public Product Search, Category and Flag Filters
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Public Product Search, Category and Flag Filters
+  |--------------------------------------------------------------------------
+  */
 
   it("filters public Products by search, category, and Product flags", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -3142,10 +3147,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Public Product Price, Stock and Sorting
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Public Product Price, Stock and Sorting
+  |--------------------------------------------------------------------------
+  */
 
   it("filters and sorts public Products by price and stock availability", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -3449,10 +3454,10 @@ describe("Product integration", () => {
     ]);
   });
   /*
-|--------------------------------------------------------------------------
-| Public Product Query Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Public Product Query Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects invalid and admin-only public Product query parameters", async () => {
     const invalidRequests = [
@@ -3507,10 +3512,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Direct Category Public Visibility
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Direct Category Public Visibility
+  |--------------------------------------------------------------------------
+  */
 
   it("hides an active Product when its category becomes inactive or deleted", async () => {
     const { agent, user } = await createAuthenticatedAgent();
@@ -3687,10 +3692,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Category Ancestor Public Visibility
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Category Ancestor Public Visibility
+  |--------------------------------------------------------------------------
+  */
 
   it("hides an active Product when a category ancestor becomes unavailable", async () => {
     const { agent, user } = await createAuthenticatedAgent();
@@ -3872,10 +3877,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Identifier Validation and Not Found
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Identifier Validation and Not Found
+  |--------------------------------------------------------------------------
+  */
 
   it("handles invalid and unknown Product IDs and slugs", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -3978,10 +3983,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Image Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Image Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects invalid Product images and multiple primary images", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -4103,10 +4108,10 @@ describe("Product integration", () => {
     expect(multiplePrimaryResponse.body.success).toBe(false);
   });
   /*
-|--------------------------------------------------------------------------
-| Product Update Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Update Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects empty and backend-controlled Product updates", async () => {
     const { agent, user } = await createAuthenticatedAgent();
@@ -4196,10 +4201,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Admin Product List Query Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Admin Product List Query Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects invalid admin Product list query parameters", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -4242,10 +4247,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Public Inactive Variant Filtering
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Public Inactive Variant Filtering
+  |--------------------------------------------------------------------------
+  */
 
   it("excludes inactive variants from public Product responses", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -4438,10 +4443,10 @@ describe("Product integration", () => {
   // Product Inventory Core Integration Tests
 
   /*
-|--------------------------------------------------------------------------
-| Product Inventory Lifecycle
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Inventory Lifecycle
+  |--------------------------------------------------------------------------
+  */
 
   it("adjusts, reserves, releases, and commits Product inventory", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -4699,10 +4704,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Inventory Request Validation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Inventory Request Validation
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects invalid Product inventory requests", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -4803,10 +4808,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Product Inventory Safety Conflicts
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Product Inventory Safety Conflicts
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects unsafe inventory adjustments and insufficient stock operations", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -5000,10 +5005,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Missing Product and Variant Inventory
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Missing Product and Variant Inventory
+  |--------------------------------------------------------------------------
+  */
 
   it("returns not-found errors for missing Products and variants", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -5135,10 +5140,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Inactive Inventory Reservation Rules
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Inactive Inventory Reservation Rules
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects reservations for inactive Products and inactive variants", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -5349,10 +5354,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Deleted Product Inventory
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Deleted Product Inventory
+  |--------------------------------------------------------------------------
+  */
 
   it("rejects every inventory operation for a soft-deleted Product", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -5508,10 +5513,10 @@ describe("Product integration", () => {
   });
 
   /*
-|--------------------------------------------------------------------------
-| Concurrent Product Inventory Reservation
-|--------------------------------------------------------------------------
-*/
+  |--------------------------------------------------------------------------
+  | Concurrent Product Inventory Reservation
+  |--------------------------------------------------------------------------
+  */
 
   it("prevents concurrent requests from reserving the same available stock", async () => {
     const { agent } = await createAuthenticatedAgent();
@@ -5688,5 +5693,654 @@ describe("Product integration", () => {
       isInStock: false,
       isLowStock: false,
     });
+  });
+
+  // Inventory Ledger Integration Tests
+
+  /*
+  |--------------------------------------------------------------------------
+  | Inventory Ledger Lifecycle
+  |--------------------------------------------------------------------------
+  */
+
+  it("creates an exact Inventory Ledger entry for every successful operation", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    const actorId = String(user._id ?? user.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Category
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Inventory Ledger Products",
+
+      slug: "inventory-ledger-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    |
+    | Initial inventory:
+    |
+    | stock         = 10
+    | reservedStock = 2
+    | available     = 8
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Inventory Ledger T-Shirt",
+
+        slug: "inventory-ledger-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/inventory-ledger-tshirt.jpg",
+
+            altText: "Inventory ledger T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "INVENTORY-LEDGER-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+              discountPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Adjustment
+    |--------------------------------------------------------------------------
+    |
+    | 10 / 2 / 8
+    |       ↓
+    | 15 / 2 / 13
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl(product.id, variant.id))
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+        note: "Ledger supplier delivery",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reservation
+    |--------------------------------------------------------------------------
+    |
+    | 15 / 2 / 13
+    |       ↓
+    | 15 / 6 / 9
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 4,
+        referenceId: "ORDER-LEDGER-001",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Release
+    |--------------------------------------------------------------------------
+    |
+    | 15 / 6 / 9
+    |       ↓
+    | 15 / 4 / 11
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 2,
+        referenceId: "ORDER-LEDGER-001",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Commit
+    |--------------------------------------------------------------------------
+    |
+    | 15 / 4 / 11
+    |       ↓
+    | 12 / 1 / 11
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-LEDGER-001",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Read Ledger Entries
+    |--------------------------------------------------------------------------
+    */
+
+    const entries = await ProductInventoryLedger.find({
+      product: product.id,
+    })
+      .sort({
+        createdAt: 1,
+        _id: 1,
+      })
+      .lean();
+
+    expect(entries).toHaveLength(4);
+
+    const [adjustmentEntry, reservationEntry, releaseEntry, commitEntry] =
+      entries;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Common Ledger Fields
+    |--------------------------------------------------------------------------
+    */
+
+    for (const entry of entries) {
+      expect(String(entry.product)).toBe(product.id);
+
+      expect(String(entry.variantId)).toBe(variant.id);
+
+      expect(entry.sku).toBe("INVENTORY-LEDGER-M");
+
+      expect(String(entry.actor)).toBe(actorId);
+
+      expect(entry.createdAt).toBeInstanceOf(Date);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Adjustment Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(adjustmentEntry.operation).toBe(PRODUCT_INVENTORY_OPERATIONS.ADJUST);
+
+    expect(adjustmentEntry.quantity).toBe(5);
+
+    expect(adjustmentEntry.stockDelta).toBe(5);
+
+    expect(adjustmentEntry.reservedStockDelta).toBe(0);
+
+    expect(adjustmentEntry.reason).toBe("restock");
+
+    expect(adjustmentEntry.note).toBe("Ledger supplier delivery");
+
+    expect(adjustmentEntry.referenceId).toBeUndefined();
+
+    expect(adjustmentEntry.before).toEqual({
+      stock: 10,
+      reservedStock: 2,
+      availableStock: 8,
+    });
+
+    expect(adjustmentEntry.after).toEqual({
+      stock: 15,
+      reservedStock: 2,
+      availableStock: 13,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reservation Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(reservationEntry.operation).toBe(
+      PRODUCT_INVENTORY_OPERATIONS.RESERVE,
+    );
+
+    expect(reservationEntry.quantity).toBe(4);
+
+    expect(reservationEntry.stockDelta).toBe(0);
+
+    expect(reservationEntry.reservedStockDelta).toBe(4);
+
+    expect(reservationEntry.referenceId).toBe("ORDER-LEDGER-001");
+
+    expect(reservationEntry.before).toEqual({
+      stock: 15,
+      reservedStock: 2,
+      availableStock: 13,
+    });
+
+    expect(reservationEntry.after).toEqual({
+      stock: 15,
+      reservedStock: 6,
+      availableStock: 9,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Release Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(releaseEntry.operation).toBe(PRODUCT_INVENTORY_OPERATIONS.RELEASE);
+
+    expect(releaseEntry.quantity).toBe(2);
+
+    expect(releaseEntry.stockDelta).toBe(0);
+
+    expect(releaseEntry.reservedStockDelta).toBe(-2);
+
+    expect(releaseEntry.referenceId).toBe("ORDER-LEDGER-001");
+
+    expect(releaseEntry.before).toEqual({
+      stock: 15,
+      reservedStock: 6,
+      availableStock: 9,
+    });
+
+    expect(releaseEntry.after).toEqual({
+      stock: 15,
+      reservedStock: 4,
+      availableStock: 11,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Commit Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(commitEntry.operation).toBe(PRODUCT_INVENTORY_OPERATIONS.COMMIT);
+
+    expect(commitEntry.quantity).toBe(3);
+
+    expect(commitEntry.stockDelta).toBe(-3);
+
+    expect(commitEntry.reservedStockDelta).toBe(-3);
+
+    expect(commitEntry.referenceId).toBe("ORDER-LEDGER-001");
+
+    expect(commitEntry.before).toEqual({
+      stock: 15,
+      reservedStock: 4,
+      availableStock: 11,
+    });
+
+    expect(commitEntry.after).toEqual({
+      stock: 12,
+      reservedStock: 1,
+      availableStock: 11,
+    });
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Failed Inventory Operations Do Not Create Ledger Entries
+  |--------------------------------------------------------------------------
+  */
+
+  it("does not create Inventory Ledger entries for failed operations", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Failed Ledger Products",
+
+      slug: "failed-ledger-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initial Inventory
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 5
+    | reservedStock = 2
+    | available     = 3
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Failed Ledger Product",
+
+        slug: "failed-ledger-product",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/failed-ledger-product.jpg",
+
+            altText: "Failed ledger Product",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "FAILED-LEDGER-M",
+
+            size: "M",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 5,
+              reservedStock: 2,
+              lowStockThreshold: 2,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unsafe Physical Adjustment
+    |--------------------------------------------------------------------------
+    |
+    | 5 - 4 = 1
+    | Reserved stock is 2.
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl(product.id, variant.id))
+      .send({
+        quantityDelta: -4,
+        reason: "damage",
+      })
+      .expect(409);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Insufficient Available Stock
+    |--------------------------------------------------------------------------
+    |
+    | Only three units are available.
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 4,
+        referenceId: "ORDER-FAILED-001",
+      })
+      .expect(409);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Excessive Release
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-FAILED-001",
+      })
+      .expect(409);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Excessive Commit
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-FAILED-001",
+      })
+      .expect(409);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Ledger Entries Created
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerCount = await ProductInventoryLedger.countDocuments({
+      product: product.id,
+    });
+
+    expect(ledgerCount).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Inventory Remains Unchanged
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 5,
+      reservedStock: 2,
+      availableStock: 3,
+      lowStockThreshold: 2,
+    });
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Inventory Ledger Transaction Rollback
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back Product inventory when Inventory Ledger creation fails", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Ledger Rollback Products",
+
+      slug: "ledger-rollback-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Ledger Rollback Product",
+
+        slug: "ledger-rollback-product",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/ledger-rollback-product.jpg",
+
+            altText: "Ledger rollback Product",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "LEDGER-ROLLBACK-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deliberately Corrupt the SKU
+    |--------------------------------------------------------------------------
+    |
+    | Direct collection access bypasses Mongoose validation.
+    |--------------------------------------------------------------------------
+    */
+
+    await Product.collection.updateOne(
+      {
+        _id: new Product.base.Types.ObjectId(product.id),
+      },
+      {
+        $unset: {
+          "variants.0.sku": "",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Attempt Inventory Adjustment
+    |--------------------------------------------------------------------------
+    |
+    | Product update occurs inside the transaction.
+    |
+    | Ledger validation fails because SKU is missing.
+    | The centralized error handler maps the Mongoose
+    | validation failure to 400 Bad Request.
+    |
+    | The complete transaction must still be rolled back.
+    |--------------------------------------------------------------------------
+    */
+
+    const adjustmentResponse = await agent
+      .patch(createInventoryUrl(product.id, variant.id))
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+        note: "This transaction must roll back",
+      })
+      .expect(400);
+
+    expect(adjustmentResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Product Update Was Rolled Back
+    |--------------------------------------------------------------------------
+    */
+
+    const persistedProduct = await Product.findById(product.id).lean();
+
+    expect(persistedProduct.variants[0].inventory.stock).toBe(10);
+
+    expect(persistedProduct.variants[0].inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify No Ledger Entry Was Inserted
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerCount = await ProductInventoryLedger.countDocuments({
+      product: product.id,
+    });
+
+    expect(ledgerCount).toBe(0);
   });
 });

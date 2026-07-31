@@ -1462,6 +1462,13 @@ Suppose available stock is insufficient:
 5. Transaction aborts
 6. No ledger entry is created
 |--------------------------------------------------------------------------
+Part 78: Inventory Ledger Integration Tests
+Update:
+tests/integration/product.integration.test.js
+This part adds three tests:
+Every successful inventory operation creates the correct ledger entry.
+Failed inventory operations create no ledger records.
+A ledger-write failure rolls back the Product inventory update.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
