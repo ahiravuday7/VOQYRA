@@ -8,27 +8,6 @@ import {
 
 /*
 |--------------------------------------------------------------------------
-| Reusable Utility Schemas
-|--------------------------------------------------------------------------
-*/
-
-const emptyObjectSchema = z.preprocess(
-  (value) => value ?? {},
-  z.strictObject({}),
-);
-
-const objectIdSchema = z
-  .string({
-    error: "Product category ID is required",
-  })
-  .trim()
-  .regex(/^[a-fA-F0-9]{24}$/, {
-    error: "Value must be a valid MongoDB ObjectId",
-  })
-  .toLowerCase();
-
-/*
-|--------------------------------------------------------------------------
 | Admin Product List Values
 |--------------------------------------------------------------------------
 */
@@ -55,6 +34,59 @@ const PRODUCT_SORT_FIELD_VALUES = Object.freeze([
 ]);
 
 const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
+
+/*
+|--------------------------------------------------------------------------
+| Product Inventory Values
+|--------------------------------------------------------------------------
+*/
+
+const PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES = Object.freeze([
+  "restock",
+  "customer-return",
+  "damage",
+  "shrinkage",
+  "correction",
+  "manual-adjustment",
+]);
+
+const MAX_INVENTORY_OPERATION_QUANTITY = 1_000_000;
+
+/*
+|--------------------------------------------------------------------------
+| Public Product Sort Values
+|--------------------------------------------------------------------------
+*/
+
+const PUBLIC_PRODUCT_SORT_VALUES = Object.freeze([
+  "newest",
+  "oldest",
+  "price-low-to-high",
+  "price-high-to-low",
+  "name-asc",
+  "name-desc",
+]);
+
+/*
+|--------------------------------------------------------------------------
+| Reusable Utility Schemas
+|--------------------------------------------------------------------------
+*/
+
+const emptyObjectSchema = z.preprocess(
+  (value) => value ?? {},
+  z.strictObject({}),
+);
+
+const objectIdSchema = z
+  .string({
+    error: "Product category ID is required",
+  })
+  .trim()
+  .regex(/^[a-fA-F0-9]{24}$/, {
+    error: "Value must be a valid MongoDB ObjectId",
+  })
+  .toLowerCase();
 
 /*
 |--------------------------------------------------------------------------
@@ -95,6 +127,47 @@ const createQueryIntegerSchema = ({ fieldName, minimum, maximum }) => {
       })
       .min(minimum, {
         error: `${fieldName} must be at least ${minimum}`,
+      })
+      .max(maximum, {
+        error: `${fieldName} cannot exceed ${maximum}`,
+      }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Query Number
+|--------------------------------------------------------------------------
+|
+| Used for Product price filtering.
+|--------------------------------------------------------------------------
+*/
+
+const createQueryNumberSchema = ({ fieldName, minimum, maximum }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (normalizedValue === "") {
+        return Number.NaN;
+      }
+
+      return Number(normalizedValue);
+    },
+
+    z
+      .number({
+        error: `${fieldName} must be a number`,
+      })
+      .finite({
+        error: `${fieldName} must be a finite number`,
+      })
+      .min(minimum, {
+        error: `${fieldName} cannot be less than ${minimum}`,
       })
       .max(maximum, {
         error: `${fieldName} cannot exceed ${maximum}`,
@@ -743,6 +816,134 @@ const productSeoSchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Product ID Parameters
+|--------------------------------------------------------------------------
+*/
+
+const productIdParamsSchema = z.strictObject({
+  productId: objectIdSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Product Variant Parameters
+|--------------------------------------------------------------------------
+*/
+
+const productVariantParamsSchema = z.strictObject({
+  productId: objectIdSchema,
+
+  variantId: objectIdSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Inventory Adjustment Body
+|--------------------------------------------------------------------------
+|
+| Positive quantityDelta:
+| Adds physical stock.
+|
+| Negative quantityDelta:
+| Removes physical stock.
+|
+| Examples:
+|
+|  10 → Add 10 units
+|  -3 → Remove 3 units
+|--------------------------------------------------------------------------
+*/
+
+const inventoryAdjustmentBodySchema = z.strictObject({
+  quantityDelta: z
+    .number({
+      error: "Inventory quantity delta must be a number",
+    })
+    .int({
+      error: "Inventory quantity delta must be a whole number",
+    })
+    .min(-MAX_INVENTORY_OPERATION_QUANTITY, {
+      error: `Inventory quantity delta cannot be less than -${MAX_INVENTORY_OPERATION_QUANTITY}`,
+    })
+    .max(MAX_INVENTORY_OPERATION_QUANTITY, {
+      error: `Inventory quantity delta cannot exceed ${MAX_INVENTORY_OPERATION_QUANTITY}`,
+    })
+    .refine(
+      (value) => {
+        return value !== 0;
+      },
+      {
+        error: "Inventory quantity delta cannot be zero",
+      },
+    ),
+
+  reason: z.enum(PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES, {
+    error: "Invalid inventory adjustment reason",
+  }),
+
+  note: z
+    .string()
+    .trim()
+    .min(1, {
+      error: "Inventory adjustment note cannot be empty",
+    })
+    .max(300, {
+      error: "Inventory adjustment note cannot exceed 300 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Inventory Quantity Body
+|--------------------------------------------------------------------------
+|
+| Reused for:
+|
+| - Reserve stock
+| - Release reservation
+| - Commit reserved stock
+|--------------------------------------------------------------------------
+*/
+
+const inventoryQuantityBodySchema = z.strictObject({
+  quantity: z
+    .number({
+      error: "Inventory quantity must be a number",
+    })
+    .int({
+      error: "Inventory quantity must be a whole number",
+    })
+    .min(1, {
+      error: "Inventory quantity must be at least 1",
+    })
+    .max(MAX_INVENTORY_OPERATION_QUANTITY, {
+      error: `Inventory quantity cannot exceed ${MAX_INVENTORY_OPERATION_QUANTITY}`,
+    }),
+
+  referenceId: z
+    .string()
+    .trim()
+    .min(1, {
+      error: "Inventory reference ID cannot be empty",
+    })
+    .max(120, {
+      error: "Inventory reference ID cannot exceed 120 characters",
+    })
+    .optional(),
+});
+/*
+|--------------------------------------------------------------------------
+| Public Product Slug Parameters
+|--------------------------------------------------------------------------
+*/
+
+const publicProductSlugParamsSchema = z.strictObject({
+  slug: productSlugSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Product Body
 |--------------------------------------------------------------------------
 */
@@ -866,64 +1067,6 @@ const updateProductBodySchema = createProductBodySchema.partial().refine(
     error: "At least one product field must be provided",
   },
 );
-
-/*
-|--------------------------------------------------------------------------
-| Product ID Parameters
-|--------------------------------------------------------------------------
-*/
-
-const productIdParamsSchema = z.strictObject({
-  productId: objectIdSchema,
-});
-
-/*
-|--------------------------------------------------------------------------
-| Create Product Request
-|--------------------------------------------------------------------------
-*/
-
-export const createProductRequestSchema = z.strictObject({
-  body: createProductBodySchema,
-
-  params: emptyObjectSchema,
-
-  query: emptyObjectSchema,
-});
-
-/*
-|--------------------------------------------------------------------------
-| Update Product Request
-|--------------------------------------------------------------------------
-*/
-
-export const updateProductRequestSchema = z.strictObject({
-  body: updateProductBodySchema,
-
-  params: productIdParamsSchema,
-
-  query: emptyObjectSchema,
-});
-
-/*
-|--------------------------------------------------------------------------
-| Product-by-ID Request
-|--------------------------------------------------------------------------
-|
-| This can later be reused for:
-|
-| GET    /admin/products/:productId
-| DELETE /admin/products/:productId
-|--------------------------------------------------------------------------
-*/
-
-export const productIdRequestSchema = z.strictObject({
-  body: emptyObjectSchema,
-
-  params: productIdParamsSchema,
-
-  query: emptyObjectSchema,
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -1057,86 +1200,7 @@ const adminProductListQuerySchema = z.strictObject({
     .optional()
     .default("desc"),
 });
-/*
-|--------------------------------------------------------------------------
-| Admin Product List Request
-|--------------------------------------------------------------------------
-|
-| GET /api/v1/admin/products
-|--------------------------------------------------------------------------
-*/
 
-export const adminProductListRequestSchema = z.strictObject({
-  body: emptyObjectSchema,
-
-  params: emptyObjectSchema,
-
-  query: adminProductListQuerySchema,
-});
-
-/*
-|--------------------------------------------------------------------------
-| Public Product Sort Values
-|--------------------------------------------------------------------------
-*/
-
-const PUBLIC_PRODUCT_SORT_VALUES = Object.freeze([
-  "newest",
-  "oldest",
-  "price-low-to-high",
-  "price-high-to-low",
-  "name-asc",
-  "name-desc",
-]);
-/*
-|--------------------------------------------------------------------------
-| Query Number
-|--------------------------------------------------------------------------
-|
-| Used for Product price filtering.
-|--------------------------------------------------------------------------
-*/
-
-const createQueryNumberSchema = ({ fieldName, minimum, maximum }) => {
-  return z.preprocess(
-    (value) => {
-      if (typeof value !== "string") {
-        return value;
-      }
-
-      const normalizedValue = value.trim();
-
-      if (normalizedValue === "") {
-        return Number.NaN;
-      }
-
-      return Number(normalizedValue);
-    },
-
-    z
-      .number({
-        error: `${fieldName} must be a number`,
-      })
-      .finite({
-        error: `${fieldName} must be a finite number`,
-      })
-      .min(minimum, {
-        error: `${fieldName} cannot be less than ${minimum}`,
-      })
-      .max(maximum, {
-        error: `${fieldName} cannot exceed ${maximum}`,
-      }),
-  );
-};
-/*
-|--------------------------------------------------------------------------
-| Public Product Slug Parameters
-|--------------------------------------------------------------------------
-*/
-
-const publicProductSlugParamsSchema = z.strictObject({
-  slug: productSlugSchema,
-});
 /*
 |--------------------------------------------------------------------------
 | Public Product List Query
@@ -1226,6 +1290,72 @@ const publicProductListQuerySchema = z
       });
     }
   });
+
+/*
+|--------------------------------------------------------------------------
+| Create Product Request
+|--------------------------------------------------------------------------
+*/
+
+export const createProductRequestSchema = z.strictObject({
+  body: createProductBodySchema,
+
+  params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Request
+|--------------------------------------------------------------------------
+*/
+
+export const updateProductRequestSchema = z.strictObject({
+  body: updateProductBodySchema,
+
+  params: productIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Product-by-ID Request
+|--------------------------------------------------------------------------
+|
+| This can later be reused for:
+|
+| GET    /admin/products/:productId
+| DELETE /admin/products/:productId
+|--------------------------------------------------------------------------
+*/
+
+export const productIdRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: productIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Product List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/products
+|--------------------------------------------------------------------------
+*/
+
+export const adminProductListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminProductListQuerySchema,
+});
+
 /*
 |--------------------------------------------------------------------------
 | Public Product List Request
@@ -1255,6 +1385,69 @@ export const publicProductDetailsRequestSchema = z.strictObject({
   body: emptyObjectSchema,
 
   params: publicProductSlugParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Adjust Product Inventory Request
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/variants/:variantId/inventory
+|--------------------------------------------------------------------------
+*/
+
+export const adjustProductInventoryRequestSchema = z.strictObject({
+  body: inventoryAdjustmentBodySchema,
+
+  params: productVariantParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Product Inventory Request
+|--------------------------------------------------------------------------
+*/
+
+export const reserveProductInventoryRequestSchema = z.strictObject({
+  body: inventoryQuantityBodySchema,
+
+  params: productVariantParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Release Product Inventory Request
+|--------------------------------------------------------------------------
+*/
+
+export const releaseProductInventoryRequestSchema = z.strictObject({
+  body: inventoryQuantityBodySchema,
+
+  params: productVariantParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Commit Product Inventory Request
+|--------------------------------------------------------------------------
+|
+| Converts reserved inventory into sold inventory.
+|--------------------------------------------------------------------------
+*/
+
+export const commitProductInventoryRequestSchema = z.strictObject({
+  body: inventoryQuantityBodySchema,
+
+  params: productVariantParamsSchema,
 
   query: emptyObjectSchema,
 });

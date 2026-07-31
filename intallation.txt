@@ -1286,6 +1286,25 @@ Update:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 69: Product Inventory Request Validation
+
+Update only:
+
+src/modules/products/product.validation.js
+
+This step prepares four inventory operations:
+
+Adjust physical stock
+Reserve stock for an order
+Release reserved stock
+Commit reserved stock after purchase
+
+No routes are added yet.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
