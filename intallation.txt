@@ -1384,6 +1384,39 @@ Update only:
 
 tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
+Part 76: Product Inventory Ledger Model
+
+This step permanently records every inventory mutation, including:
+
+Product and variant
+Operation type
+Quantity and deltas
+Before/after inventory
+Adjustment reason or order reference
+Actor
+Timestamp
+
+No ledger entries are created yet. Service integration comes next.
+
+Update/create:
+
+src/shared/constants/product-inventory.constants.js
+src/modules/products/product-inventory-ledger.model.js
+src/modules/products/product.validation.js
+Current implementation:
+Inventory validation             ✅
+Atomic inventory operations      ✅
+Inventory service                ✅
+Inventory controllers/routes     ✅
+Inventory integration tests      ✅
+Inventory constants              ✅
+Inventory Ledger model           ✅
+Atomic ledger integration        ❌
+Ledger query APIs                ❌
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

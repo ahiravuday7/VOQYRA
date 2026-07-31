@@ -6,6 +6,8 @@ import {
   PRODUCT_STATUS_VALUES,
 } from "../../shared/constants/product.constants.js";
 
+import { PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES } from "../../shared/constants/product-inventory.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Admin Product List Values
@@ -40,15 +42,6 @@ const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
 | Product Inventory Values
 |--------------------------------------------------------------------------
 */
-
-const PRODUCT_INVENTORY_ADJUSTMENT_REASON_VALUES = Object.freeze([
-  "restock",
-  "customer-return",
-  "damage",
-  "shrinkage",
-  "correction",
-  "manual-adjustment",
-]);
 
 const MAX_INVENTORY_OPERATION_QUANTITY = 1_000_000;
 
