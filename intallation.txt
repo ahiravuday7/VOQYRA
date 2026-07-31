@@ -1378,6 +1378,11 @@ Complete inventory lifecycle.
 Inventory request validation.
 Atomic stock-safety conflicts.
 |--------------------------------------------------------------------------
+Part 75: Product Inventory Safety and Concurrency Tests
+
+Update only:
+
+tests/integration/product.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

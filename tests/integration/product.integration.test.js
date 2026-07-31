@@ -4998,4 +4998,695 @@ describe("Product integration", () => {
       lowStockThreshold: 3,
     });
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Missing Product and Variant Inventory
+|--------------------------------------------------------------------------
+*/
+
+  it("returns not-found errors for missing Products and variants", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const unknownProductId = "507f1f77bcf86cd799439011";
+
+    const unknownVariantId = "507f1f77bcf86cd799439012";
+
+    /*
+    |--------------------------------------------------------------------------
+    | Missing Product
+    |--------------------------------------------------------------------------
+    */
+
+    const missingProductResponse = await agent
+      .patch(createInventoryUrl(unknownProductId, unknownVariantId))
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+      })
+      .expect(404);
+
+    expect(missingProductResponse.body.success).toBe(false);
+
+    expect(missingProductResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Missing Variant Products",
+
+      slug: "missing-variant-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Missing Variant T-Shirt",
+
+        slug: "missing-variant-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/missing-variant-tshirt.jpg",
+
+            altText: "Missing variant T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "MISSING-VARIANT-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Missing Variant
+    |--------------------------------------------------------------------------
+    */
+
+    const missingVariantResponse = await agent
+      .post(createInventoryUrl(product.id, unknownVariantId, "reserve"))
+      .send({
+        quantity: 1,
+        referenceId: "ORDER-MISSING-VARIANT",
+      })
+      .expect(404);
+
+    expect(missingVariantResponse.body.success).toBe(false);
+
+    expect(missingVariantResponse.body.errorCode).toBe(
+      "PRODUCT_VARIANT_NOT_FOUND",
+    );
+
+    /*
+     * Failed operations must not change
+     * the existing variant inventory.
+     */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 10,
+      reservedStock: 0,
+      availableStock: 10,
+      lowStockThreshold: 3,
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Inactive Inventory Reservation Rules
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects reservations for inactive Products and inactive variants", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Inactive Inventory Products",
+
+      slug: "inactive-inventory-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Draft Product
+    |--------------------------------------------------------------------------
+    */
+
+    const draftResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Draft Inventory Product",
+
+        slug: "draft-inventory-product",
+
+        category: category.id,
+
+        status: "draft",
+
+        variants: [
+          {
+            sku: "DRAFT-INVENTORY-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const draftProduct = draftResponse.body.data.product;
+
+    const draftVariant = draftProduct.variants[0];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Draft Product Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveProductResponse = await agent
+      .post(createInventoryUrl(draftProduct.id, draftVariant.id, "reserve"))
+      .send({
+        quantity: 1,
+        referenceId: "ORDER-INACTIVE-PRODUCT",
+      })
+      .expect(409);
+
+    expect(inactiveProductResponse.body.errorCode).toBe("PRODUCT_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active Product with Active and Inactive Variants
+    |--------------------------------------------------------------------------
+    */
+
+    const activeResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Variant Status Product",
+
+        slug: "variant-status-product",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/variant-status-product.jpg",
+
+            altText: "Variant status Product",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "VARIANT-STATUS-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 0,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+
+          {
+            sku: "VARIANT-STATUS-L",
+
+            size: "L",
+
+            color: {
+              name: "Blue",
+              code: "#0000FF",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 699,
+            },
+
+            inventory: {
+              stock: 8,
+              reservedStock: 0,
+              lowStockThreshold: 2,
+            },
+
+            isActive: false,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const activeProduct = activeResponse.body.data.product;
+
+    const inactiveVariant = activeProduct.variants.find((variant) => {
+      return variant.sku === "VARIANT-STATUS-L";
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactive Variant Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveVariantResponse = await agent
+      .post(createInventoryUrl(activeProduct.id, inactiveVariant.id, "reserve"))
+      .send({
+        quantity: 1,
+        referenceId: "ORDER-INACTIVE-VARIANT",
+      })
+      .expect(409);
+
+    expect(inactiveVariantResponse.body.errorCode).toBe(
+      "PRODUCT_VARIANT_INACTIVE",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventories Remain Unchanged
+    |--------------------------------------------------------------------------
+    */
+
+    const draftDetailsResponse = await agent
+      .get(`${adminProductUrl}/${draftProduct.id}`)
+      .expect(200);
+
+    expect(
+      draftDetailsResponse.body.data.product.variants[0].inventory
+        .reservedStock,
+    ).toBe(0);
+
+    const activeDetailsResponse = await agent
+      .get(`${adminProductUrl}/${activeProduct.id}`)
+      .expect(200);
+
+    const persistedInactiveVariant =
+      activeDetailsResponse.body.data.product.variants.find((variant) => {
+        return variant.sku === "VARIANT-STATUS-L";
+      });
+
+    expect(persistedInactiveVariant.inventory.reservedStock).toBe(0);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Deleted Product Inventory
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects every inventory operation for a soft-deleted Product", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Deleted Inventory Products",
+
+      slug: "deleted-inventory-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Deleted Inventory T-Shirt",
+
+        slug: "deleted-inventory-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/deleted-inventory-tshirt.jpg",
+
+            altText: "Deleted inventory T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "DELETED-INVENTORY-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+
+            inventory: {
+              stock: 10,
+              reservedStock: 2,
+              lowStockThreshold: 3,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await agent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Adjustment
+    |--------------------------------------------------------------------------
+    */
+
+    const adjustmentResponse = await agent
+      .patch(createInventoryUrl(product.id, variant.id))
+      .send({
+        quantityDelta: 1,
+        reason: "restock",
+      })
+      .expect(404);
+
+    expect(adjustmentResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    const reserveResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 1,
+      })
+      .expect(404);
+
+    expect(reserveResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Release
+    |--------------------------------------------------------------------------
+    */
+
+    const releaseResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 1,
+      })
+      .expect(404);
+
+    expect(releaseResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Commit
+    |--------------------------------------------------------------------------
+    */
+
+    const commitResponse = await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 1,
+      })
+      .expect(404);
+
+    expect(commitResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Was Not Modified
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 10,
+      reservedStock: 2,
+      availableStock: 8,
+      lowStockThreshold: 3,
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Concurrent Product Inventory Reservation
+|--------------------------------------------------------------------------
+*/
+
+  it("prevents concurrent requests from reserving the same available stock", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Concurrent Inventory Products",
+
+      slug: "concurrent-inventory-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Product with One Available Unit
+    |--------------------------------------------------------------------------
+    |
+    | stock         = 1
+    | reservedStock = 0
+    | available     = 1
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await createProductRequest(
+      agent,
+      createProductPayload({
+        name: "Last Unit T-Shirt",
+
+        slug: "last-unit-tshirt",
+
+        category: category.id,
+
+        status: "active",
+
+        images: [
+          {
+            url: "https://example.com/last-unit-tshirt.jpg",
+
+            altText: "Last unit T-shirt",
+
+            isPrimary: true,
+          },
+        ],
+
+        variants: [
+          {
+            sku: "LAST-UNIT-M",
+
+            size: "M",
+
+            color: {
+              name: "Black",
+              code: "#000000",
+            },
+
+            pricing: {
+              buyingPrice: 300,
+              sellingPrice: 799,
+            },
+
+            inventory: {
+              stock: 1,
+              reservedStock: 0,
+              lowStockThreshold: 1,
+            },
+
+            isActive: true,
+          },
+        ],
+      }),
+    ).expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const variant = product.variants[0];
+
+    const reserveUrl = createInventoryUrl(product.id, variant.id, "reserve");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Send Two Reservations Concurrently
+    |--------------------------------------------------------------------------
+    |
+    | Both requests attempt to reserve the only
+    | available unit.
+    |--------------------------------------------------------------------------
+    */
+
+    const responses = await Promise.all([
+      agent.post(reserveUrl).send({
+        quantity: 1,
+
+        referenceId: "ORDER-CONCURRENT-001",
+      }),
+
+      agent.post(reserveUrl).send({
+        quantity: 1,
+
+        referenceId: "ORDER-CONCURRENT-002",
+      }),
+    ]);
+
+    const statusCodes = responses
+      .map((response) => {
+        return response.status;
+      })
+      .sort((firstStatus, secondStatus) => {
+        return firstStatus - secondStatus;
+      });
+
+    /*
+     * Exactly one request succeeds.
+     * The other request is rejected.
+     */
+    expect(statusCodes).toEqual([200, 409]);
+
+    const successfulResponse = responses.find((response) => {
+      return response.status === 200;
+    });
+
+    const failedResponse = responses.find((response) => {
+      return response.status === 409;
+    });
+
+    expect(successfulResponse.body.success).toBe(true);
+
+    expect(failedResponse.body.success).toBe(false);
+
+    expect(failedResponse.body.errorCode).toBe(
+      "PRODUCT_INSUFFICIENT_AVAILABLE_STOCK",
+    );
+
+    expect(failedResponse.body.details).toEqual({
+      requestedQuantity: 1,
+      stock: 1,
+      reservedStock: 1,
+      availableStock: 0,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Final Inventory
+    |--------------------------------------------------------------------------
+    |
+    | The same unit must not be reserved twice.
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await agent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.variants[0].inventory).toEqual({
+      stock: 1,
+      reservedStock: 1,
+      availableStock: 0,
+      lowStockThreshold: 1,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Product Is Now Out of Stock
+    |--------------------------------------------------------------------------
+    */
+
+    const publicResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(200);
+
+    expect(publicResponse.body.data.product.availability).toEqual({
+      availableStock: 0,
+      isInStock: false,
+      isLowStock: false,
+    });
+  });
 });
