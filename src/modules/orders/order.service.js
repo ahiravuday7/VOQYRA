@@ -3,9 +3,19 @@ import {
   ORDER_INVENTORY_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
+import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
+
+import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
+
 import AppError from "../../shared/errors/app-error.js";
 
-import { findProductsForCheckout } from "../products/product.repository.js";
+import { createProductInventoryLedgerEntry } from "../products/product-inventory-ledger.repository.js";
+
+import {
+  findProductsForCheckout,
+  findProductVariantInventorySnapshot,
+  reserveVariantStockAtomically,
+} from "../products/product.repository.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -111,6 +121,56 @@ const createOrderInsufficientAvailableStockError = ({
       availableStock,
     },
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Require Active Order Transaction
+|--------------------------------------------------------------------------
+|
+| This function must never create or commit its own transaction.
+|
+| The future Order creation service will own the transaction
+| containing:
+|
+| - Product inventory reservations
+| - Inventory Ledger entries
+| - Order document creation
+|--------------------------------------------------------------------------
+*/
+
+const requireActiveOrderTransaction = (session) => {
+  if (
+    !session ||
+    typeof session.inTransaction !== "function" ||
+    !session.inTransaction()
+  ) {
+    throw new Error(
+      "Order inventory reservation requires an active MongoDB transaction",
+    );
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Order Inventory Reservation Conflict
+|--------------------------------------------------------------------------
+*/
+
+const createOrderInventoryReservationConflictError = (productId, variantId) => {
+  return new AppError(
+    "Product inventory changed while the Order was being processed",
+    409,
+    {
+      errorCode: "ORDER_INVENTORY_RESERVATION_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
 };
 
 /*
@@ -535,4 +595,290 @@ export const buildOrderCheckoutSnapshot = async (
 
     totals,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Order Inventory Ledger State
+|--------------------------------------------------------------------------
+*/
+
+const buildOrderInventoryState = (stock, reservedStock) => {
+  return {
+    stock,
+
+    reservedStock,
+
+    availableStock: stock - reservedStock,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Reserved Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedReservedVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((item) => {
+    return String(item._id) === String(variantId);
+  });
+
+  if (!variant) {
+    throw createOrderVariantUnavailableError(product._id, variantId);
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Order Inventory Reservation
+|--------------------------------------------------------------------------
+|
+| Called only when the atomic reservation returns null.
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedOrderReservation = async ({
+  productId,
+  variantId,
+  requestedQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  /*
+   * Missing, deleted, or inactive Products are exposed
+   * using the same safe checkout error.
+   */
+  if (
+    !snapshot ||
+    snapshot.isDeleted ||
+    snapshot.status !== PRODUCT_STATUSES.ACTIVE
+  ) {
+    throw createOrderProductUnavailableError(productId);
+  }
+
+  if (!snapshot.variant || !snapshot.variant.isActive) {
+    throw createOrderVariantUnavailableError(productId, variantId);
+  }
+
+  const { stock, reservedStock, availableStock } = snapshot.variant;
+
+  if (
+    !Number.isInteger(stock) ||
+    !Number.isInteger(reservedStock) ||
+    stock < 0 ||
+    reservedStock < 0 ||
+    reservedStock > stock
+  ) {
+    throw createOrderProductInventoryInvalidError({
+      productId,
+      variantId,
+      stock,
+      reservedStock,
+    });
+  }
+
+  if (availableStock < requestedQuantity) {
+    throw createOrderInsufficientAvailableStockError({
+      productId,
+      variantId,
+
+      requestedQuantity,
+
+      stock,
+      reservedStock,
+      availableStock,
+    });
+  }
+
+  throw createOrderInventoryReservationConflictError(productId, variantId);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Reservation Ledger Entry
+|--------------------------------------------------------------------------
+*/
+
+const createOrderReservationLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  referenceId,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReservedVariant(updatedProduct, variantId);
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * Reservation does not change physical stock.
+   *
+   * before reserved =
+   * after reserved - requested quantity
+   */
+  const beforeReservedStock = afterReservedStock - quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RESERVE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: quantity,
+
+      before: buildOrderInventoryState(afterStock, beforeReservedStock),
+
+      after: buildOrderInventoryState(afterStock, afterReservedStock),
+
+      referenceId,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+
+  return updatedVariant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Order Items Inventory in Transaction
+|--------------------------------------------------------------------------
+|
+| Requirements:
+|
+| - checkoutItems must contain trusted Order-item snapshots.
+| - session must already be inside a transaction.
+| - referenceId should be the generated Order number.
+|
+| The reservations run sequentially.
+|
+| Do not use Promise.all() for operations using the same
+| MongoDB transaction session.
+|--------------------------------------------------------------------------
+*/
+
+export const reserveOrderItemsInventoryInTransaction = async (
+  checkoutItems,
+  { referenceId, actorUserId, session },
+) => {
+  requireActiveOrderTransaction(session);
+
+  if (!referenceId || typeof referenceId !== "string") {
+    throw new Error(
+      "Order inventory reservation requires an Order reference ID",
+    );
+  }
+
+  if (!actorUserId) {
+    throw new Error("Order inventory reservation requires an actor user ID");
+  }
+
+  const reservedOrderItems = [];
+
+  /*
+   * Run sequentially so one transaction session does
+   * not execute multiple operations in parallel.
+   */
+  for (const checkoutItem of checkoutItems) {
+    const productId = checkoutItem.product;
+
+    const variantId = checkoutItem.variantId;
+
+    const quantity = checkoutItem.quantity;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Atomic Product Reservation
+      |--------------------------------------------------------------------------
+      |
+      | The condition and mutation occur in one database operation:
+      |
+      | availableStock >= quantity
+      | reservedStock += quantity
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedProduct = await reserveVariantStockAtomically({
+      productId,
+      variantId,
+      quantity,
+
+      actorUserId,
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedOrderReservation({
+        productId,
+        variantId,
+
+        requestedQuantity: quantity,
+
+        session,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Create Matching Ledger Entry
+      |--------------------------------------------------------------------------
+      |
+      | Uses the same transaction session.
+      |--------------------------------------------------------------------------
+      */
+
+    await createOrderReservationLedgerEntry({
+      updatedProduct,
+      variantId,
+      quantity,
+      referenceId,
+      actorUserId,
+      session,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Update Trusted Order-Item Inventory Snapshot
+      |--------------------------------------------------------------------------
+      */
+
+    reservedOrderItems.push({
+      ...checkoutItem,
+
+      inventory: {
+        status: ORDER_INVENTORY_STATUSES.RESERVED,
+
+        reservedQuantity: quantity,
+
+        committedQuantity: 0,
+
+        releasedQuantity: 0,
+      },
+    });
+  }
+
+  return reservedOrderItems;
 };

@@ -1720,6 +1720,26 @@ Prepare the data needed for atomic Order creation.
 
 No inventory reservation or Order insertion happens yet.
 |--------------------------------------------------------------------------
+Part 87: Transaction-Aware Inventory Reservation for Orders
+
+Update only:
+
+src/modules/orders/order.service.js
+
+This step adds a reusable Order inventory function that:
+
+Runs inside an existing MongoDB transaction
+Reserves every Order item atomically
+Creates one Inventory Ledger entry per item
+Updates Order-item inventory snapshots to reserved
+Throws on any failure so the outer transaction rolls everything back
+
+It does not create the Order document yet.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
