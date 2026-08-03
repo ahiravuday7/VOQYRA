@@ -1686,6 +1686,21 @@ Inventory status
 Order number
 Created/updated user IDs
 |--------------------------------------------------------------------------
+Part 85: Order Repository and Product Checkout Snapshot Query
+
+Create/update:
+
+src/modules/orders/order.repository.js
+src/modules/products/product.repository.js
+
+This step adds:
+
+Basic Order persistence functions
+One optimized Product checkout query
+Trusted Product, variant, image, pricing, and inventory data
+MongoDB transaction-session support
+
+No Order service, controller, or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

@@ -1325,6 +1325,36 @@ export const findPublicProductBySlug = async (slug) => {
 
 /*
 |--------------------------------------------------------------------------
+| Normalize Checkout Product IDs
+|--------------------------------------------------------------------------
+*/
+
+const normalizeCheckoutProductIds = (productIds) => {
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    return [];
+  }
+
+  /*
+   * Convert to strings before using Set.
+   *
+   * Different ObjectId instances containing the same
+   * value are different JavaScript object references.
+   */
+  const uniqueProductIds = [
+    ...new Set(
+      productIds.map((productId) => {
+        return String(productId);
+      }),
+    ),
+  ];
+
+  return uniqueProductIds.map((productId) => {
+    return new mongoose.Types.ObjectId(productId);
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Inventory Object ID Normalizer
 |--------------------------------------------------------------------------
 */
@@ -1773,4 +1803,127 @@ export const commitVariantStockAtomically = async ({
       "variants.$[variant].inventory.reservedStock": -quantity,
     },
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Products for Checkout
+|--------------------------------------------------------------------------
+|
+| Loads all requested Products in one aggregation query.
+|
+| A Product is returned only when:
+|
+| - It is active.
+| - It is published.
+| - It is not deleted.
+| - Its selected Category is active and not deleted.
+| - Every Category ancestor is active and not deleted.
+|
+| All variants are returned intentionally.
+|
+| The Order service must determine whether the specifically
+| requested variant exists and is active.
+|--------------------------------------------------------------------------
+*/
+
+export const findProductsForCheckout = async (
+  productIds,
+  { session = null } = {},
+) => {
+  const normalizedProductIds = normalizeCheckoutProductIds(productIds);
+
+  if (normalizedProductIds.length === 0) {
+    return [];
+  }
+
+  const pipeline = [
+    /*
+      |--------------------------------------------------------------------------
+      | Requested Publicly Available Products
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $match: {
+        ...buildPublicProductMatchFilter(),
+
+        _id: {
+          $in: normalizedProductIds,
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Validate Complete Category Path
+      |--------------------------------------------------------------------------
+      |
+      | This reuses the same category rules as the
+      | public Product API.
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicCategoryVisibilityStages(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Checkout Snapshot Projection
+      |--------------------------------------------------------------------------
+      |
+      | Do not expose buyingPrice to the Order service.
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $project: {
+        _id: 1,
+
+        name: 1,
+        slug: 1,
+
+        category: {
+          _id: 1,
+          name: 1,
+          slug: 1,
+        },
+
+        images: {
+          _id: 1,
+          url: 1,
+          altText: 1,
+          sortOrder: 1,
+          isPrimary: 1,
+        },
+
+        variants: {
+          _id: 1,
+          sku: 1,
+          size: 1,
+          color: 1,
+          isActive: 1,
+
+          pricing: {
+            sellingPrice: 1,
+            discountPrice: 1,
+            currency: 1,
+          },
+
+          inventory: {
+            stock: 1,
+            reservedStock: 1,
+            lowStockThreshold: 1,
+          },
+        },
+      },
+    },
+  ];
+
+  const aggregation = Product.aggregate(pipeline);
+
+  if (session) {
+    aggregation.session(session);
+  }
+
+  return aggregation;
 };
