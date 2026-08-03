@@ -1758,6 +1758,20 @@ Commit everything together
 
 When any step fails, all Product reservations and ledger entries are rolled back.
 |--------------------------------------------------------------------------
+Part 89: Customer Order Mapper and Create Order Controller
+
+Create:
+
+src/modules/orders/order.mapper.js
+src/modules/orders/order.controller.js
+
+This step adds:
+
+A customer-safe Order response mapper
+The POST /api/v1/orders controller
+A 201 Created response after the atomic transaction succeeds
+
+No route is registered yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
