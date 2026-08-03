@@ -1,0 +1,329 @@
+import { z } from "zod";
+
+import {
+  MAX_ORDER_ITEMS,
+  MAX_ORDER_ITEM_QUANTITY,
+  ORDER_PAYMENT_METHOD_VALUES,
+} from "../../shared/constants/order.constants.js";
+
+/*
+|--------------------------------------------------------------------------
+| Order Validation Values
+|--------------------------------------------------------------------------
+*/
+
+const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
+
+const INDIAN_POSTAL_CODE_PATTERN = /^[1-9][0-9]{5}$/;
+
+const PHONE_NUMBER_PATTERN = /^\+?[1-9][0-9]{9,14}$/;
+
+/*
+|--------------------------------------------------------------------------
+| ObjectId Schema
+|--------------------------------------------------------------------------
+*/
+
+const objectIdSchema = z
+  .string({
+    error: "ID must be a string",
+  })
+  .trim()
+  .regex(OBJECT_ID_PATTERN, {
+    error: "ID must be a valid ObjectId",
+  });
+
+/*
+|--------------------------------------------------------------------------
+| Empty Object Schema
+|--------------------------------------------------------------------------
+*/
+
+const emptyObjectSchema = z.strictObject({});
+
+/*
+|--------------------------------------------------------------------------
+| Phone Number Schema
+|--------------------------------------------------------------------------
+|
+| Accepted examples:
+|
+| 9876543210
+| +919876543210
+| 98765 43210
+| +91-98765-43210
+|--------------------------------------------------------------------------
+*/
+
+const phoneNumberSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    return value.trim().replace(/[\s()-]/g, "");
+  },
+
+  z
+    .string({
+      error: "Phone number must be a string",
+    })
+    .regex(PHONE_NUMBER_PATTERN, {
+      error: "Phone number must be valid",
+    }),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Item
+|--------------------------------------------------------------------------
+|
+| Product details and prices are not accepted from the customer.
+|
+| The service will load:
+|
+| - Product name
+| - Product slug
+| - SKU
+| - Size
+| - Colour
+| - Image
+| - Current selling price
+| - Current discount price
+|--------------------------------------------------------------------------
+*/
+
+const createOrderItemSchema = z.strictObject({
+  productId: objectIdSchema,
+
+  variantId: objectIdSchema,
+
+  quantity: z
+    .number({
+      error: "Order item quantity must be a number",
+    })
+    .int({
+      error: "Order item quantity must be a whole number",
+    })
+    .min(1, {
+      error: "Order item quantity must be at least 1",
+    })
+    .max(MAX_ORDER_ITEM_QUANTITY, {
+      error: `Order item quantity cannot exceed ${MAX_ORDER_ITEM_QUANTITY}`,
+    }),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Items
+|--------------------------------------------------------------------------
+*/
+
+const createOrderItemsSchema = z
+  .array(createOrderItemSchema, {
+    error: "Order items must be an array",
+  })
+  .min(1, {
+    error: "Order must contain at least one item",
+  })
+  .max(MAX_ORDER_ITEMS, {
+    error: `Order cannot contain more than ${MAX_ORDER_ITEMS} items`,
+  })
+  .superRefine((items, context) => {
+    const seenVariants = new Map();
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+
+      const itemKey = `${item.productId}:${item.variantId}`;
+
+      if (seenVariants.has(itemKey)) {
+        context.addIssue({
+          code: "custom",
+
+          path: [index, "variantId"],
+
+          message: "Order cannot contain duplicate Product variants",
+        });
+
+        continue;
+      }
+
+      seenVariants.set(itemKey, index);
+    }
+  });
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Shipping Address
+|--------------------------------------------------------------------------
+*/
+
+const createOrderShippingAddressSchema = z.strictObject({
+  fullName: z
+    .string({
+      error: "Shipping full name must be a string",
+    })
+    .trim()
+    .min(2, {
+      error: "Shipping full name must contain at least 2 characters",
+    })
+    .max(150, {
+      error: "Shipping full name cannot exceed 150 characters",
+    }),
+
+  phone: phoneNumberSchema,
+
+  alternatePhone: phoneNumberSchema.optional(),
+
+  email: z
+    .string({
+      error: "Shipping email must be a string",
+    })
+    .trim()
+    .toLowerCase()
+    .email({
+      error: "Shipping email must be valid",
+    })
+    .max(254, {
+      error: "Shipping email cannot exceed 254 characters",
+    })
+    .optional(),
+
+  addressLine1: z
+    .string({
+      error: "Shipping address line 1 must be a string",
+    })
+    .trim()
+    .min(5, {
+      error: "Shipping address line 1 must contain at least 5 characters",
+    })
+    .max(250, {
+      error: "Shipping address line 1 cannot exceed 250 characters",
+    }),
+
+  addressLine2: z
+    .string({
+      error: "Shipping address line 2 must be a string",
+    })
+    .trim()
+    .min(1, {
+      error: "Shipping address line 2 cannot be empty",
+    })
+    .max(250, {
+      error: "Shipping address line 2 cannot exceed 250 characters",
+    })
+    .optional(),
+
+  landmark: z
+    .string({
+      error: "Shipping landmark must be a string",
+    })
+    .trim()
+    .min(1, {
+      error: "Shipping landmark cannot be empty",
+    })
+    .max(150, {
+      error: "Shipping landmark cannot exceed 150 characters",
+    })
+    .optional(),
+
+  city: z
+    .string({
+      error: "Shipping city must be a string",
+    })
+    .trim()
+    .min(2, {
+      error: "Shipping city must contain at least 2 characters",
+    })
+    .max(100, {
+      error: "Shipping city cannot exceed 100 characters",
+    }),
+
+  state: z
+    .string({
+      error: "Shipping state must be a string",
+    })
+    .trim()
+    .min(2, {
+      error: "Shipping state must contain at least 2 characters",
+    })
+    .max(100, {
+      error: "Shipping state cannot exceed 100 characters",
+    }),
+
+  postalCode: z
+    .string({
+      error: "Shipping postal code must be a string",
+    })
+    .trim()
+    .regex(INDIAN_POSTAL_CODE_PATTERN, {
+      error: "Shipping postal code must be a valid 6-digit Indian PIN code",
+    }),
+
+  country: z
+    .string({
+      error: "Shipping country must be a string",
+    })
+    .trim()
+    .refine(
+      (value) => {
+        return value.toLowerCase() === "india";
+      },
+      {
+        error: "Shipping country must be India",
+      },
+    )
+    .transform(() => {
+      return "India";
+    })
+    .optional()
+    .default("India"),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Body
+|--------------------------------------------------------------------------
+*/
+
+const createOrderBodySchema = z.strictObject({
+  items: createOrderItemsSchema,
+
+  shippingAddress: createOrderShippingAddressSchema,
+
+  paymentMethod: z.enum(ORDER_PAYMENT_METHOD_VALUES, {
+    error: "Invalid Order payment method",
+  }),
+
+  customerNote: z
+    .string({
+      error: "Customer note must be a string",
+    })
+    .trim()
+    .min(1, {
+      error: "Customer note cannot be empty",
+    })
+    .max(500, {
+      error: "Customer note cannot exceed 500 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/orders
+|--------------------------------------------------------------------------
+*/
+
+export const createOrderRequestSchema = z.strictObject({
+  body: createOrderBodySchema,
+
+  params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});

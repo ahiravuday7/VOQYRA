@@ -1658,6 +1658,33 @@ src/modules/orders/order.model.js
 
 This step establishes the Order data structure only. No validation, service, controller, or routes are added yet.
 |--------------------------------------------------------------------------
+Part 84: Create Order Request Validation
+
+Create:
+
+src/modules/orders/order.validation.js
+
+This step validates customer input for:
+
+POST /api/v1/orders
+
+The customer may provide:
+
+Product and variant IDs
+Quantity
+Shipping address
+Payment method
+Optional customer note
+
+The customer must not provide:
+
+Prices
+Totals
+Order status
+Payment status
+Inventory status
+Order number
+Created/updated user IDs
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
