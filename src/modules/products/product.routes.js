@@ -15,6 +15,7 @@ import {
   commitProductInventoryRequestSchema,
   releaseProductInventoryRequestSchema,
   reserveProductInventoryRequestSchema,
+  adminProductInventoryLedgerListRequestSchema,
 } from "./product.validation.js";
 
 import {
@@ -29,6 +30,7 @@ import {
   releaseProductInventoryController,
   reserveProductInventoryController,
 } from "./product.controller.js";
+import { getAdminProductInventoryLedgerController } from "./product-inventory-ledger.controller.js";
 
 const router = Router();
 
@@ -65,6 +67,22 @@ router.get(
   "/",
   validateRequest(adminProductListRequestSchema),
   getAdminProductsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| List Product Inventory Ledger
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| This static route must be registered before "/:productId".
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/inventory-ledger",
+  validateRequest(adminProductInventoryLedgerListRequestSchema),
+  getAdminProductInventoryLedgerController,
 );
 
 /*

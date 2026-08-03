@@ -1542,6 +1542,18 @@ product-inventory-ledger.repository.js
 product-inventory-ledger.mapper.js
     Admin API response formatting
 |--------------------------------------------------------------------------
+Part 81: Inventory Ledger Controller and Admin Route
+
+Create/update:
+
+src/modules/products/product-inventory-ledger.controller.js
+src/modules/products/product.routes.js
+
+This adds:
+
+GET /api/v1/admin/products/inventory-ledger
+
+The endpoint remains admin-protected through the existing Product router authentication middleware.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
