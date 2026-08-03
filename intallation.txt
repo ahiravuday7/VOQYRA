@@ -1736,6 +1736,27 @@ Throws on any failure so the outer transaction rolls everything back
 
 It does not create the Order document yet.
 |--------------------------------------------------------------------------
+Part 88: Order Number Generation and Atomic Order Creation
+
+Update:
+
+src/modules/orders/order.service.js
+
+After this step, Order creation will execute as one MongoDB transaction:
+
+Generate Order number
+        ↓
+Load trusted Product snapshots
+        ↓
+Reserve every Order item
+        ↓
+Create Inventory Ledger entries
+        ↓
+Create Order document
+        ↓
+Commit everything together
+
+When any step fails, all Product reservations and ledger entries are rolled back.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

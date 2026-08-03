@@ -1,6 +1,12 @@
+import { randomBytes } from "node:crypto";
+
+import mongoose from "mongoose";
+
 import {
   ORDER_CURRENCIES,
   ORDER_INVENTORY_STATUSES,
+  ORDER_PAYMENT_STATUSES,
+  ORDER_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -17,6 +23,29 @@ import {
   reserveVariantStockAtomically,
 } from "../products/product.repository.js";
 
+import {
+  createOrderDocument,
+  findExistingOrderNumber,
+} from "./order.repository.js";
+
+/*
+|--------------------------------------------------------------------------
+| Order Number Configuration
+|--------------------------------------------------------------------------
+|
+| Example:
+|
+| ORD-20260803-A1B2C3
+|--------------------------------------------------------------------------
+*/
+
+const ORDER_NUMBER_PREFIX = "ORD";
+
+const ORDER_NUMBER_RANDOM_BYTES = 3;
+
+const MAX_ORDER_NUMBER_GENERATION_ATTEMPTS = 10;
+
+const MAX_ORDER_CREATION_ATTEMPTS = 3;
 /*
 |--------------------------------------------------------------------------
 | Order Checkout Errors
@@ -123,6 +152,317 @@ const createOrderInsufficientAvailableStockError = ({
   });
 };
 
+/*
+|--------------------------------------------------------------------------
+| Order Creation Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderNumberGenerationError = () => {
+  return new AppError("Unable to generate a unique Order number", 503, {
+    errorCode: "ORDER_NUMBER_GENERATION_FAILED",
+  });
+};
+
+const createOrderCreationConflictError = () => {
+  return new AppError(
+    "The Order could not be created because its reference conflicted. Please try again",
+    409,
+    {
+      errorCode: "ORDER_CREATION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Generate Order Number Candidate
+|--------------------------------------------------------------------------
+*/
+
+const generateOrderNumberCandidate = (date = new Date()) => {
+  const dateSegment = date.toISOString().slice(0, 10).replace(/-/g, "");
+
+  const randomSegment = randomBytes(ORDER_NUMBER_RANDOM_BYTES)
+    .toString("hex")
+    .toUpperCase();
+
+  return `${ORDER_NUMBER_PREFIX}-` + `${dateSegment}-` + `${randomSegment}`;
+};
+/*
+|--------------------------------------------------------------------------
+| Generate Unique Order Number
+|--------------------------------------------------------------------------
+|
+| A pre-check reduces unnecessary duplicate-key failures.
+|
+| The unique MongoDB index remains necessary because two
+| concurrent transactions could generate the same candidate
+| after both pre-checks have completed.
+|--------------------------------------------------------------------------
+*/
+
+const generateUniqueOrderNumber = async ({ session }) => {
+  for (
+    let attempt = 1;
+    attempt <= MAX_ORDER_NUMBER_GENERATION_ATTEMPTS;
+    attempt += 1
+  ) {
+    const orderNumber = generateOrderNumberCandidate();
+
+    const existingOrder = await findExistingOrderNumber(orderNumber, {
+      session,
+    });
+
+    if (!existingOrder) {
+      return orderNumber;
+    }
+  }
+
+  throw createOrderNumberGenerationError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Detect Duplicate Order Number
+|--------------------------------------------------------------------------
+*/
+
+const isDuplicateOrderNumberError = (error) => {
+  if (error?.code !== 11000) {
+    return false;
+  }
+
+  return Boolean(
+    error?.keyPattern?.orderNumber || error?.keyValue?.orderNumber,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Initial Order Status History
+|--------------------------------------------------------------------------
+*/
+
+const buildInitialOrderStatusHistory = (actorUserId) => {
+  return [
+    {
+      status: ORDER_STATUSES.PENDING,
+
+      note: "Order created",
+
+      changedBy: actorUserId,
+
+      changedAt: new Date(),
+    },
+  ];
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build New Order Document Data
+|--------------------------------------------------------------------------
+*/
+
+const buildNewOrderDocumentData = ({
+  orderNumber,
+  customerId,
+  orderData,
+  checkoutSnapshot,
+  reservedItems,
+}) => {
+  return {
+    orderNumber,
+
+    customer: customerId,
+
+    items: reservedItems,
+
+    shippingAddress: orderData.shippingAddress,
+
+    totals: checkoutSnapshot.totals,
+
+    payment: {
+      method: orderData.paymentMethod,
+
+      status: ORDER_PAYMENT_STATUSES.PENDING,
+
+      paidAt: null,
+
+      failedAt: null,
+
+      refundedAt: null,
+    },
+
+    status: ORDER_STATUSES.PENDING,
+
+    /*
+     * Every item has already been reserved
+     * inside the current transaction.
+     */
+    inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+    statusHistory: buildInitialOrderStatusHistory(customerId),
+
+    customerNote: orderData.customerNote ?? undefined,
+
+    createdBy: customerId,
+
+    updatedBy: customerId,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Order Creation
+|--------------------------------------------------------------------------
+|
+| This function performs one complete transaction attempt.
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderCreation = async (orderData, customerId) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let createdOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Generate Order Reference
+          |--------------------------------------------------------------------------
+          */
+
+        const orderNumber = await generateUniqueOrderNumber({
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Checkout Snapshot
+          |--------------------------------------------------------------------------
+          |
+          | Product names, images, SKUs, variants and prices
+          | are loaded from the database.
+          |--------------------------------------------------------------------------
+          */
+
+        const checkoutSnapshot = await buildOrderCheckoutSnapshot(
+          orderData.items,
+          {
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Reserve Every Order Item
+          |--------------------------------------------------------------------------
+          |
+          | This also creates one Inventory Ledger entry
+          | for every successful reservation.
+          |--------------------------------------------------------------------------
+          */
+
+        const reservedItems = await reserveOrderItemsInventoryInTransaction(
+          checkoutSnapshot.items,
+          {
+            referenceId: orderNumber,
+
+            actorUserId: customerId,
+
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Order Data
+          |--------------------------------------------------------------------------
+          */
+
+        const newOrderData = buildNewOrderDocumentData({
+          orderNumber,
+          customerId,
+          orderData,
+          checkoutSnapshot,
+          reservedItems,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Order
+          |--------------------------------------------------------------------------
+          */
+
+        createdOrder = await createOrderDocument(newOrderData, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return createdOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Customer Order
+|--------------------------------------------------------------------------
+|
+| Retries only when the generated Order number collides
+| with the unique database index.
+|
+| MongoDB automatically handles transient transaction
+| retries inside session.withTransaction().
+|--------------------------------------------------------------------------
+*/
+
+export const createCustomerOrder = async (orderData, customerId) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to create an Order");
+  }
+
+  for (let attempt = 1; attempt <= MAX_ORDER_CREATION_ATTEMPTS; attempt += 1) {
+    try {
+      return await executeAtomicOrderCreation(orderData, customerId);
+    } catch (error) {
+      const duplicateOrderNumber = isDuplicateOrderNumberError(error);
+
+      if (duplicateOrderNumber && attempt < MAX_ORDER_CREATION_ATTEMPTS) {
+        /*
+         * A new transaction and new Order number
+         * will be used on the next attempt.
+         */
+        continue;
+      }
+
+      if (duplicateOrderNumber) {
+        throw createOrderCreationConflictError();
+      }
+
+      throw error;
+    }
+  }
+
+  throw createOrderCreationConflictError();
+};
 /*
 |--------------------------------------------------------------------------
 | Require Active Order Transaction
