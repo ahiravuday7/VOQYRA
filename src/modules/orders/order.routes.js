@@ -6,9 +6,17 @@ import validateRequest from "../../middlewares/validate-request.middleware.js";
 
 import { USER_ROLES } from "../../shared/constants/user.constants.js";
 
-import { createCustomerOrderController } from "./order.controller.js";
+import {
+  createCustomerOrderController,
+  getCustomerOrderController,
+  getCustomerOrdersController,
+} from "./order.controller.js";
 
-import { createOrderRequestSchema } from "./order.validation.js";
+import {
+  createOrderRequestSchema,
+  customerOrderDetailsRequestSchema,
+  customerOrderListRequestSchema,
+} from "./order.validation.js";
 
 const router = Router();
 
@@ -26,6 +34,35 @@ const router = Router();
 
 router.use(authenticate, authorizeRoles(USER_ROLES.CUSTOMER));
 
+/*
+|--------------------------------------------------------------------------
+| List Customer Orders
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/",
+  validateRequest(customerOrderListRequestSchema),
+  getCustomerOrdersController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order Details
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/:orderId
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:orderId",
+  validateRequest(customerOrderDetailsRequestSchema),
+  getCustomerOrderController,
+);
 /*
 |--------------------------------------------------------------------------
 | Create Customer Order

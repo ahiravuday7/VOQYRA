@@ -1,6 +1,10 @@
-import { toCustomerOrder } from "./order.mapper.js";
+import { toCustomerOrder, toCustomerOrderSummary } from "./order.mapper.js";
 
-import { createCustomerOrder } from "./order.service.js";
+import {
+  createCustomerOrder,
+  getCustomerOrderById,
+  getCustomerOrders,
+} from "./order.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -47,6 +51,76 @@ export const createCustomerOrderController = async (request, response) => {
 
     data: {
       order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Orders
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrdersController = async (request, response) => {
+  const customerId = request.user._id;
+
+  const filters = request.validated.query;
+
+  const { orders, pagination } = await getCustomerOrders(customerId, filters);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Orders retrieved successfully",
+
+    data: {
+      orders: orders.map((order) => {
+        return toCustomerOrderSummary(order);
+      }),
+
+      pagination,
+
+      filters: {
+        status: filters.status ?? null,
+
+        paymentStatus: filters.paymentStatus ?? null,
+
+        inventoryStatus: filters.inventoryStatus ?? null,
+
+        sortBy: filters.sortBy,
+
+        sortDirection: filters.sortDirection,
+      },
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order by ID
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/:orderId
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const customerId = request.user._id;
+
+  const order = await getCustomerOrderById(orderId, customerId);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order retrieved successfully",
+
+    data: {
+      order: toCustomerOrder(order),
     },
   });
 };

@@ -1804,8 +1804,28 @@ Insufficient-stock handling
 Complete transaction rollback
 
 Use the same MongoDB replica-set setup, authentication helpers, Category factory, and Product factory already used in your Product integration tests. Transactions will not work with a standalone MongoMemoryServer; your existing MongoMemoryReplSet setup must remain enabled.
+
+Part 92: Stabilize the Order Integration Tests
+
+There are two concrete issues to fix before continuing.
 |--------------------------------------------------------------------------
-|--------------------------------------------------------------------------
+Part 93: Customer Order History and Order Details API
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order.mapper.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.routes.js
+
+This step adds:
+
+GET /api/v1/orders
+GET /api/v1/orders/:orderId
+
+Both endpoints are customer-authenticated and ownership-protected. A customer can never retrieve another customer’s Order.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

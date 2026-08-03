@@ -4,6 +4,9 @@ import {
   MAX_ORDER_ITEMS,
   MAX_ORDER_ITEM_QUANTITY,
   ORDER_PAYMENT_METHOD_VALUES,
+  ORDER_INVENTORY_STATUS_VALUES,
+  ORDER_PAYMENT_STATUS_VALUES,
+  ORDER_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 /*
@@ -17,6 +20,21 @@ const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 const INDIAN_POSTAL_CODE_PATTERN = /^[1-9][0-9]{5}$/;
 
 const PHONE_NUMBER_PATTERN = /^\+?[1-9][0-9]{9,14}$/;
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order List Values
+|--------------------------------------------------------------------------
+*/
+
+const CUSTOMER_ORDER_SORT_FIELD_VALUES = Object.freeze([
+  "createdAt",
+  "updatedAt",
+  "orderNumber",
+  "grandTotal",
+]);
+
+const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
 
 /*
 |--------------------------------------------------------------------------
@@ -35,11 +53,61 @@ const objectIdSchema = z
 
 /*
 |--------------------------------------------------------------------------
-| Empty Object Schema
+| Empty Request Object
+|--------------------------------------------------------------------------
+|
+| GET requests normally do not contain a body.
+| Convert undefined or null into an empty object.
 |--------------------------------------------------------------------------
 */
 
-const emptyObjectSchema = z.strictObject({});
+const emptyObjectSchema = z.preprocess((value) => {
+  return value ?? {};
+}, z.strictObject({}));
+
+/*
+|--------------------------------------------------------------------------
+| Query Integer
+|--------------------------------------------------------------------------
+|
+| Express query values arrive as strings.
+|
+| "1"  → 1
+| "20" → 20
+|--------------------------------------------------------------------------
+*/
+
+const createQueryIntegerSchema = ({ fieldName, minimum, maximum }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (!/^\d+$/.test(normalizedValue)) {
+        return Number.NaN;
+      }
+
+      return Number(normalizedValue);
+    },
+
+    z
+      .number({
+        error: `${fieldName} must be a number`,
+      })
+      .int({
+        error: `${fieldName} must be a whole number`,
+      })
+      .min(minimum, {
+        error: `${fieldName} must be at least ${minimum}`,
+      })
+      .max(maximum, {
+        error: `${fieldName} cannot exceed ${maximum}`,
+      }),
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -72,6 +140,16 @@ const phoneNumberSchema = z.preprocess(
       error: "Phone number must be valid",
     }),
 );
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Parameters
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderParamsSchema = z.strictObject({
+  orderId: objectIdSchema,
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -312,6 +390,66 @@ const createOrderBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Customer Order List Query
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderListQuerySchema = z.strictObject({
+  page: createQueryIntegerSchema({
+    fieldName: "Page",
+
+    minimum: 1,
+
+    maximum: 100000,
+  })
+    .optional()
+    .default(1),
+
+  limit: createQueryIntegerSchema({
+    fieldName: "Limit",
+
+    minimum: 1,
+
+    maximum: 50,
+  })
+    .optional()
+    .default(20),
+
+  status: z
+    .enum(ORDER_STATUS_VALUES, {
+      error: "Invalid Order status",
+    })
+    .optional(),
+
+  paymentStatus: z
+    .enum(ORDER_PAYMENT_STATUS_VALUES, {
+      error: "Invalid Order payment status",
+    })
+    .optional(),
+
+  inventoryStatus: z
+    .enum(ORDER_INVENTORY_STATUS_VALUES, {
+      error: "Invalid Order inventory status",
+    })
+    .optional(),
+
+  sortBy: z
+    .enum(CUSTOMER_ORDER_SORT_FIELD_VALUES, {
+      error: "Invalid Order sorting field",
+    })
+    .optional()
+    .default("createdAt"),
+
+  sortDirection: z
+    .enum(SORT_DIRECTION_VALUES, {
+      error: "Order sort direction must be asc or desc",
+    })
+    .optional()
+    .default("desc"),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Request
 |--------------------------------------------------------------------------
 |
@@ -324,6 +462,40 @@ export const createOrderRequestSchema = z.strictObject({
   body: createOrderBodySchema,
 
   params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: customerOrderListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Details Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/:orderId
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: customerOrderParamsSchema,
 
   query: emptyObjectSchema,
 });

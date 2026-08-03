@@ -256,6 +256,96 @@ const mapCustomerOrderCancellation = (cancellation) => {
 
 /*
 |--------------------------------------------------------------------------
+| Map Customer Order Summary Item
+|--------------------------------------------------------------------------
+*/
+
+const mapCustomerOrderSummaryItem = (item) => {
+  return {
+    id: normalizeIdentifier(item._id),
+
+    productId: normalizeIdentifier(item.product),
+
+    variantId: normalizeIdentifier(item.variantId),
+
+    sku: item.sku,
+
+    productName: item.productName,
+
+    productSlug: item.productSlug,
+
+    size: item.size,
+
+    color: {
+      name: item.color?.name ?? null,
+
+      code: item.color?.code ?? null,
+    },
+
+    image: {
+      url: item.image?.url ?? null,
+
+      altText: item.image?.altText ?? null,
+    },
+
+    quantity: item.quantity,
+
+    unitFinalPrice: item.pricing?.unitFinalPrice ?? 0,
+
+    lineSubtotal: item.pricing?.lineSubtotal ?? 0,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Customer Order Summary
+|--------------------------------------------------------------------------
+*/
+
+export const toCustomerOrderSummary = (order) => {
+  const normalizedOrder = normalizeOrderObject(order);
+
+  const items = normalizedOrder.items ?? [];
+
+  const totalQuantity = items.reduce((total, item) => {
+    return total + item.quantity;
+  }, 0);
+
+  return {
+    id: normalizeIdentifier(normalizedOrder._id),
+
+    orderNumber: normalizedOrder.orderNumber,
+
+    items: items.map(mapCustomerOrderSummaryItem),
+
+    distinctItemCount: items.length,
+
+    totalQuantity,
+
+    totals: mapOrderTotals(normalizedOrder.totals),
+
+    payment: {
+      method: normalizedOrder.payment?.method,
+
+      status: normalizedOrder.payment?.status,
+    },
+
+    shipment: mapCustomerOrderShipment(normalizedOrder.shipment),
+
+    status: normalizedOrder.status,
+
+    inventoryStatus: normalizedOrder.inventoryStatus,
+
+    cancellation: mapCustomerOrderCancellation(normalizedOrder.cancellation),
+
+    createdAt: normalizedOrder.createdAt,
+
+    updatedAt: normalizedOrder.updatedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Map Customer Order
 |--------------------------------------------------------------------------
 |

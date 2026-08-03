@@ -26,6 +26,8 @@ import {
 import {
   createOrderDocument,
   findExistingOrderNumber,
+  findCustomerOrderById,
+  listCustomerOrders,
 } from "./order.repository.js";
 
 /*
@@ -149,6 +151,18 @@ const createOrderInsufficientAvailableStockError = ({
       reservedStock,
       availableStock,
     },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Retrieval Error
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerOrderNotFoundError = () => {
+  return new AppError("Order was not found", 404, {
+    errorCode: "ORDER_NOT_FOUND",
   });
 };
 
@@ -1221,4 +1235,46 @@ export const reserveOrderItemsInventoryInTransaction = async (
   }
 
   return reservedOrderItems;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Orders
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrders = async (customerId, filters) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to list Orders");
+  }
+
+  return listCustomerOrders(customerId, filters);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderById = async (orderId, customerId) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to retrieve an Order");
+  }
+
+  const order = await findCustomerOrderById(orderId, customerId);
+
+  if (!order) {
+    /*
+     * Return the same error when:
+     *
+     * - The Order does not exist.
+     * - The Order belongs to another customer.
+     *
+     * This prevents Order ownership disclosure.
+     */
+    throw createCustomerOrderNotFoundError();
+  }
+
+  return order;
 };
