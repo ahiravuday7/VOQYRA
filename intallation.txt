@@ -1555,6 +1555,103 @@ GET /api/v1/admin/products/inventory-ledger
 
 The endpoint remains admin-protected through the existing Product router authentication middleware.
 |--------------------------------------------------------------------------
+Part 82: Inventory Ledger Query Integration Tests
+
+Update:
+
+tests/integration/product.integration.test.js
+
+This part adds coverage for:
+
+Authorization
+Pagination
+Ascending and descending sorting
+Product and variant filters
+Operation and reference filters
+Actor filtering
+Date-range filtering
+Strict query validation
+|--------------------------------------------------------------------------
+The Product + Inventory Ledger module is now complete ✅
+The next major backend area should be the Order module, because the inventory operations already use referenceId values such as:
+
+ORDER-2026-00001
+Recommended next sequence
+Order constants and model
+Order number
+Customer
+Items
+Product and variant snapshots
+Prices
+Shipping address
+Payment status
+Order status
+Inventory reservation status
+Create order validation
+Products and quantities
+Shipping address
+Payment method
+Coupon placeholder
+Strict backend-controlled fields
+Atomic order creation
+Validate Products and variants
+Check current prices
+Reserve inventory
+Create Order
+Roll everything back if any item fails
+Order APIs
+Customer creates an order
+Customer lists their orders
+Customer views one order
+Admin lists all orders
+Admin updates order status
+Cancel order and release reserved stock
+Order lifecycle
+Pending
+Confirmed
+Processing
+Shipped
+Delivered
+Cancelled
+Refunded
+Inventory integration
+Order created → reserve
+Order cancelled → release
+Payment completed → commit
+Failed checkout → release
+Important design rule
+
+Do not reserve inventory when a customer merely adds an item to the cart.
+
+Add to cart     → no reservation
+Start checkout  → usually no reservation yet
+Create order    → reserve inventory
+Payment success → commit inventory
+Cancel/failure  → release inventory
+
+Otherwise, customers could keep products unavailable simply by leaving items in their carts.
+
+Before starting
+
+Run:
+
+npm test
+
+Expected based on the current sequence:
+
+Test Files: 3 passed
+Tests:      71 passed
+Failed:      0
+
+Then proceed with:
+
+Part 83: Order Constants and Order Model
+
+That should be the next implementation step.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

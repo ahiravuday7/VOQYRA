@@ -53,6 +53,80 @@ const createInventoryUrl = (productId, variantId, operation = null) => {
 
 /*
 |--------------------------------------------------------------------------
+| Create Inventory Ledger Test Product
+|--------------------------------------------------------------------------
+*/
+
+const createInventoryLedgerTestProduct = async ({
+  agent,
+  categoryId,
+  name,
+  slug,
+  sku,
+  stock = 10,
+  reservedStock = 0,
+  lowStockThreshold = 3,
+}) => {
+  const createResponse = await createProductRequest(
+    agent,
+    createProductPayload({
+      name,
+      slug,
+
+      category: categoryId,
+
+      status: "active",
+
+      images: [
+        {
+          url: `https://example.com/${slug}.jpg`,
+
+          altText: name,
+
+          isPrimary: true,
+        },
+      ],
+
+      variants: [
+        {
+          sku,
+
+          size: "M",
+
+          color: {
+            name: "Black",
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+            sellingPrice: 799,
+            discountPrice: 699,
+          },
+
+          inventory: {
+            stock,
+            reservedStock,
+            lowStockThreshold,
+          },
+
+          isActive: true,
+        },
+      ],
+    }),
+  ).expect(201);
+
+  const product = createResponse.body.data.product;
+
+  return {
+    product,
+
+    variant: product.variants[0],
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Product Payload Factory
 |--------------------------------------------------------------------------
 */
@@ -6342,5 +6416,619 @@ describe("Product integration", () => {
     });
 
     expect(ledgerCount).toBe(0);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Inventory Ledger Authorization
+|--------------------------------------------------------------------------
+*/
+
+  it("protects the Inventory Ledger endpoint with admin authorization", async () => {
+    /*
+    |--------------------------------------------------------------------------
+    | Unauthenticated Request
+    |--------------------------------------------------------------------------
+    */
+
+    const unauthenticatedResponse = await request(app)
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .expect(401);
+
+    expect(unauthenticatedResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Request
+    |--------------------------------------------------------------------------
+    */
+
+    const { agent: customerAgent } = await createAuthenticatedAgent({
+      role: USER_ROLES.CUSTOMER,
+    });
+
+    const forbiddenResponse = await customerAgent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .expect(403);
+
+    expect(forbiddenResponse.body.success).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Request
+    |--------------------------------------------------------------------------
+    */
+
+    const { agent: adminAgent } = await createAuthenticatedAgent({
+      role: USER_ROLES.ADMIN,
+    });
+
+    const adminResponse = await adminAgent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .expect(200);
+
+    expect(adminResponse.body.success).toBe(true);
+
+    expect(adminResponse.body.data.inventoryLedger).toEqual([]);
+
+    expect(adminResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      totalItems: 0,
+      totalPages: 0,
+      hasPreviousPage: false,
+      hasNextPage: false,
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Inventory Ledger Pagination and Sorting
+|--------------------------------------------------------------------------
+*/
+
+  it("paginates and sorts Inventory Ledger entries", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Ledger Pagination Products",
+
+      slug: "ledger-pagination-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const { product, variant } = await createInventoryLedgerTestProduct({
+      agent,
+
+      categoryId: category.id,
+
+      name: "Ledger Pagination Product",
+
+      slug: "ledger-pagination-product",
+
+      sku: "LEDGER-PAGINATION-M",
+
+      stock: 10,
+      reservedStock: 2,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Four Ledger Entries
+    |--------------------------------------------------------------------------
+    |
+    | 1. Adjust
+    | 2. Reserve
+    | 3. Release
+    | 4. Commit
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl(product.id, variant.id))
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 4,
+        referenceId: "ORDER-PAGINATION-001",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "release"))
+      .send({
+        quantity: 2,
+        referenceId: "ORDER-PAGINATION-001",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "commit"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-PAGINATION-001",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ascending — Page One
+    |--------------------------------------------------------------------------
+    */
+
+    const ascendingPageOneResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        page: 1,
+        limit: 2,
+        sortDirection: "asc",
+      })
+      .expect(200);
+
+    expect(
+      ascendingPageOneResponse.body.data.inventoryLedger.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["adjust", "reserve"]);
+
+    expect(ascendingPageOneResponse.body.data.pagination).toEqual({
+      page: 1,
+      limit: 2,
+      totalItems: 4,
+      totalPages: 2,
+      hasPreviousPage: false,
+      hasNextPage: true,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ascending — Page Two
+    |--------------------------------------------------------------------------
+    */
+
+    const ascendingPageTwoResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        page: 2,
+        limit: 2,
+        sortDirection: "asc",
+      })
+      .expect(200);
+
+    expect(
+      ascendingPageTwoResponse.body.data.inventoryLedger.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["release", "commit"]);
+
+    expect(ascendingPageTwoResponse.body.data.pagination).toEqual({
+      page: 2,
+      limit: 2,
+      totalItems: 4,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Descending — Page One
+    |--------------------------------------------------------------------------
+    */
+
+    const descendingResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        page: 1,
+        limit: 2,
+        sortDirection: "desc",
+      })
+      .expect(200);
+
+    expect(
+      descendingResponse.body.data.inventoryLedger.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["commit", "release"]);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Inventory Ledger Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("filters Inventory Ledger entries by Product, variant, operation, reference, actor, and date range", async () => {
+    const { agent, user } = await createAuthenticatedAgent();
+
+    const actorId = String(user._id ?? user.id);
+
+    const categoryResponse = await createCategoryRequest(agent, {
+      name: "Ledger Filter Products",
+
+      slug: "ledger-filter-products",
+
+      status: "active",
+    }).expect(201);
+
+    const category = categoryResponse.body.data.category;
+
+    const firstResult = await createInventoryLedgerTestProduct({
+      agent,
+
+      categoryId: category.id,
+
+      name: "First Ledger Filter Product",
+
+      slug: "first-ledger-filter-product",
+
+      sku: "LEDGER-FILTER-FIRST-M",
+
+      stock: 10,
+      reservedStock: 2,
+    });
+
+    const secondResult = await createInventoryLedgerTestProduct({
+      agent,
+
+      categoryId: category.id,
+
+      name: "Second Ledger Filter Product",
+
+      slug: "second-ledger-filter-product",
+
+      sku: "LEDGER-FILTER-SECOND-M",
+
+      stock: 8,
+      reservedStock: 0,
+    });
+
+    const firstProduct = firstResult.product;
+
+    const firstVariant = firstResult.variant;
+
+    const secondProduct = secondResult.product;
+
+    const secondVariant = secondResult.variant;
+
+    const rangeStart = new Date(Date.now() - 2_000).toISOString();
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Product — Four Entries
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl(firstProduct.id, firstVariant.id))
+      .send({
+        quantityDelta: 5,
+        reason: "restock",
+        note: "First Product delivery",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(firstProduct.id, firstVariant.id, "reserve"))
+      .send({
+        quantity: 3,
+        referenceId: "ORDER-FILTER-FIRST",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(firstProduct.id, firstVariant.id, "release"))
+      .send({
+        quantity: 1,
+        referenceId: "ORDER-FILTER-FIRST",
+      })
+      .expect(200);
+
+    await agent
+      .post(createInventoryUrl(firstProduct.id, firstVariant.id, "commit"))
+      .send({
+        quantity: 2,
+        referenceId: "ORDER-FILTER-FIRST",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Product — One Entry
+    |--------------------------------------------------------------------------
+    */
+
+    await agent
+      .patch(createInventoryUrl(secondProduct.id, secondVariant.id))
+      .send({
+        quantityDelta: 2,
+        reason: "correction",
+        note: "Second Product correction",
+      })
+      .expect(200);
+
+    const rangeEnd = new Date(Date.now() + 2_000).toISOString();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const productFilterResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        product: firstProduct.id,
+
+        sortDirection: "asc",
+      })
+      .expect(200);
+
+    expect(productFilterResponse.body.data.inventoryLedger).toHaveLength(4);
+
+    expect(
+      productFilterResponse.body.data.inventoryLedger.every((entry) => {
+        return entry.productId === firstProduct.id;
+      }),
+    ).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Variant Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const variantFilterResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        variantId: secondVariant.id,
+      })
+      .expect(200);
+
+    expect(variantFilterResponse.body.data.inventoryLedger).toHaveLength(1);
+
+    expect(variantFilterResponse.body.data.inventoryLedger[0].variantId).toBe(
+      secondVariant.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Operation Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const operationFilterResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        operation: "reserve",
+      })
+      .expect(200);
+
+    expect(operationFilterResponse.body.data.inventoryLedger).toHaveLength(1);
+
+    expect(operationFilterResponse.body.data.inventoryLedger[0].operation).toBe(
+      "reserve",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reference Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const referenceFilterResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        referenceId: "ORDER-FILTER-FIRST",
+
+        sortDirection: "asc",
+      })
+      .expect(200);
+
+    expect(
+      referenceFilterResponse.body.data.inventoryLedger.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "release", "commit"]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Actor Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const actorFilterResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        actor: actorId,
+      })
+      .expect(200);
+
+    expect(actorFilterResponse.body.data.inventoryLedger).toHaveLength(5);
+
+    expect(
+      actorFilterResponse.body.data.inventoryLedger.every((entry) => {
+        return entry.actorId === actorId;
+      }),
+    ).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inclusive Date-Time Range
+    |--------------------------------------------------------------------------
+    */
+
+    const dateRangeResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        from: rangeStart,
+
+        to: rangeEnd,
+      })
+      .expect(200);
+
+    expect(dateRangeResponse.body.data.inventoryLedger).toHaveLength(5);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Historical Date Range with No Matches
+    |--------------------------------------------------------------------------
+    */
+
+    const emptyDateRangeResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        from: "2000-01-01",
+
+        to: "2000-01-02",
+      })
+      .expect(200);
+
+    expect(emptyDateRangeResponse.body.data.inventoryLedger).toEqual([]);
+
+    expect(emptyDateRangeResponse.body.data.pagination.totalItems).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Combined Filters
+    |--------------------------------------------------------------------------
+    */
+
+    const combinedResponse = await agent
+      .get(`${adminProductUrl}/inventory-ledger`)
+      .query({
+        product: firstProduct.id,
+
+        variantId: firstVariant.id,
+
+        operation: "commit",
+
+        referenceId: "ORDER-FILTER-FIRST",
+
+        actor: actorId,
+
+        from: rangeStart,
+
+        to: rangeEnd,
+      })
+      .expect(200);
+
+    expect(combinedResponse.body.data.inventoryLedger).toHaveLength(1);
+
+    const combinedEntry = combinedResponse.body.data.inventoryLedger[0];
+
+    expect(combinedEntry).toMatchObject({
+      productId: firstProduct.id,
+
+      variantId: firstVariant.id,
+
+      operation: "commit",
+
+      referenceId: "ORDER-FILTER-FIRST",
+
+      actorId,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mapper Fields
+    |--------------------------------------------------------------------------
+    */
+
+    expect(combinedEntry.changes).toEqual({
+      stockDelta: -2,
+      reservedStockDelta: -2,
+      availableStockDelta: 0,
+    });
+
+    expect(new Date(combinedEntry.createdAt).toString()).not.toBe(
+      "Invalid Date",
+    );
+  });
+  /*
+|--------------------------------------------------------------------------
+| Inventory Ledger Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid Inventory Ledger query parameters", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const ledgerUrl = `${adminProductUrl}/inventory-ledger`;
+
+    const invalidQueries = [
+      {
+        page: 0,
+      },
+
+      {
+        page: "abc",
+      },
+
+      {
+        limit: 0,
+      },
+
+      {
+        limit: 101,
+      },
+
+      {
+        operation: "sale",
+      },
+
+      {
+        product: "invalid-product-id",
+      },
+
+      {
+        variantId: "invalid-variant-id",
+      },
+
+      {
+        actor: "invalid-actor-id",
+      },
+
+      {
+        referenceId: "   ",
+      },
+
+      {
+        from: "31-07-2026",
+      },
+
+      {
+        from: "2026-02-30",
+      },
+
+      {
+        from: "2026-08-03",
+
+        to: "2026-08-01",
+      },
+
+      {
+        sortDirection: "newest",
+      },
+
+      {
+        unknown: "value",
+      },
+    ];
+
+    for (const query of invalidQueries) {
+      const response = await agent.get(ledgerUrl).query(query).expect(400);
+
+      expect(response.body.success).toBe(false);
+    }
   });
 });
