@@ -1702,6 +1702,23 @@ MongoDB transaction-session support
 
 No Order service, controller, or route is added yet.
 |--------------------------------------------------------------------------
+Part 86: Order Checkout Snapshot Builder and Business Errors
+
+Create:
+
+src/modules/orders/order.service.js
+
+This step will:
+
+Load all requested Products in one query.
+Verify each Product and variant is available.
+Verify an early stock snapshot.
+Ignore all customer-provided pricing.
+Copy trusted Product details into immutable Order-item snapshots.
+Calculate trusted item prices and Order totals.
+Prepare the data needed for atomic Order creation.
+
+No inventory reservation or Order insertion happens yet.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
