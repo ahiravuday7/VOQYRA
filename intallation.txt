@@ -1649,6 +1649,14 @@ Part 83: Order Constants and Order Model
 
 That should be the next implementation step.
 |--------------------------------------------------------------------------
+Part 83: Order Constants and Order Model
+
+Create:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.model.js
+
+This step establishes the Order data structure only. No validation, service, controller, or routes are added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
