@@ -1518,6 +1518,29 @@ Combined query
 GET /api/v1/admin/products/inventory-ledger?product=PRODUCT_ID&operation=commit&from=2026-07-01&to=2026-07-31&page=1&limit=20&sortDirection=desc
 
 |--------------------------------------------------------------------------
+Part 80: Inventory Ledger Mapper and Service
+Create:
+
+src/modules/products/product-inventory-ledger.mapper.js
+src/modules/products/product-inventory-ledger.service.js
+
+This step converts raw ledger documents into a stable admin response format.
+
+No controller or route is added yet.
+
+The responsibilities remain clear:
+
+product.service.js
+    Product creation, update, visibility and inventory mutations
+
+product-inventory-ledger.service.js
+    Inventory history retrieval
+
+product-inventory-ledger.repository.js
+    Ledger insertion and database queries
+
+product-inventory-ledger.mapper.js
+    Admin API response formatting
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
