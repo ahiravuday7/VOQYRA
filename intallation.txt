@@ -1786,6 +1786,29 @@ POST /api/v1/orders
 
 Only authenticated customers can create Orders.
 |--------------------------------------------------------------------------
+Part 91: Create Order Integration Tests
+
+Create:
+
+
+tests/integration/order.integration.test.js
+
+These tests cover:
+
+Authentication and customer authorization
+Request validation
+Trusted database pricing
+Atomic stock reservation
+Inventory Ledger creation
+Insufficient-stock handling
+Complete transaction rollback
+
+Use the same MongoDB replica-set setup, authentication helpers, Category factory, and Product factory already used in your Product integration tests. Transactions will not work with a standalone MongoMemoryServer; your existing MongoMemoryReplSet setup must remain enabled.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
