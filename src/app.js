@@ -15,6 +15,7 @@ import healthRoutes from "./routes/health.routes.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import categoryRoutes from "./modules/categories/category.routes.js";
 import publicCategoryRoutes from "./modules/categories/category.public.routes.js";
+import orderRoutes from "./modules/orders/order.routes.js";
 
 import productRoutes from "./modules/products/product.routes.js";
 import publicProductRoutes from "./modules/products/product.public.routes.js";
@@ -111,6 +112,7 @@ app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/categories", publicCategoryRoutes);
 app.use("/api/v1/products", publicProductRoutes);
+app.use("/api/v1/orders", orderRoutes);
 
 /*
 |--------------------------------------------------------------------------

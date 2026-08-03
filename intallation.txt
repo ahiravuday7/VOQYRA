@@ -1773,6 +1773,18 @@ A 201 Created response after the atomic transaction succeeds
 
 No route is registered yet.
 |--------------------------------------------------------------------------
+Part 90: Customer Order Route Registration
+
+Create/update:
+
+src/modules/orders/order.routes.js
+src/app.js
+
+This step exposes:
+
+POST /api/v1/orders
+
+Only authenticated customers can create Orders.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
