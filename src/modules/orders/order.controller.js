@@ -12,6 +12,7 @@ import {
   cancelCustomerOrder,
   getAdminOrders,
   getAdminOrderById,
+  updateAdminOrderStatus,
 } from "./order.service.js";
 
 /*
@@ -306,6 +307,58 @@ export const getAdminOrderController = async (request, response) => {
     success: true,
 
     message: "Admin Order retrieved successfully",
+
+    data: {
+      order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Admin Order Status
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/orders/:orderId/status
+|--------------------------------------------------------------------------
+*/
+
+export const updateAdminOrderStatusController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const statusData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const updatedOrder = await updateAdminOrderStatus(
+    orderId,
+    adminId,
+    statusData,
+  );
+
+  const mappedOrder = toAdminOrder(updatedOrder);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      status: mappedOrder.status,
+
+      inventoryStatus: mappedOrder.inventoryStatus,
+
+      paymentStatus: mappedOrder.payment.status,
+    },
+    "Admin Order status updated",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order status updated successfully",
 
     data: {
       order: mappedOrder,

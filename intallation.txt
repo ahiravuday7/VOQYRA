@@ -2078,6 +2078,33 @@ Commit everything together
 
 No controller or route is added yet.
 |--------------------------------------------------------------------------
+Part 106: Admin Order Status Update Service, Controller, and Route
+
+Update:
+
+src/modules/orders/order.service.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+
+This step exposes:
+
+PATCH /api/v1/admin/orders/:orderId/status
+
+Supported through this endpoint:
+
+pending   → confirmed
+confirmed → processing
+shipped   → delivered
+
+Protected dedicated workflows:
+pending    → cancelled   Use cancellation workflow
+processing → shipped     Use shipment workflow
+delivered  → refunded    Use refund workflow
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

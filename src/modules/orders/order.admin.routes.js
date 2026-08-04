@@ -9,11 +9,13 @@ import { USER_ROLES } from "../../shared/constants/user.constants.js";
 import {
   getAdminOrdersController,
   getAdminOrderController,
+  updateAdminOrderStatusController,
 } from "./order.controller.js";
 
 import {
   adminOrderListRequestSchema,
   adminOrderDetailsRequestSchema,
+  adminOrderStatusUpdateRequestSchema,
 } from "./order.validation.js";
 
 const router = Router();
@@ -40,6 +42,30 @@ router.get(
   validateRequest(adminOrderListRequestSchema),
   getAdminOrdersController,
 );
+
+/*
+|--------------------------------------------------------------------------
+| Update Admin Order Status
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/orders/:orderId/status
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/:orderId/status",
+  validateRequest(adminOrderStatusUpdateRequestSchema),
+  updateAdminOrderStatusController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Details
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/orders/:orderId
+|--------------------------------------------------------------------------
+*/
 
 router.get(
   "/:orderId",

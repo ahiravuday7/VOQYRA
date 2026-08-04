@@ -424,6 +424,37 @@ const createOrderInventoryCommitConflictError = (productId, variantId) => {
 
 /*
 |--------------------------------------------------------------------------
+| Dedicated Shipment Workflow Required
+|--------------------------------------------------------------------------
+*/
+
+const createDedicatedShipmentWorkflowRequiredError = () => {
+  return new AppError("Order shipment must use the shipment workflow", 409, {
+    errorCode: "ORDER_SHIPMENT_WORKFLOW_REQUIRED",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Status Notes
+|--------------------------------------------------------------------------
+*/
+
+const ADMIN_ORDER_STATUS_DEFAULT_NOTES = Object.freeze({
+  [ORDER_STATUSES.CONFIRMED]: "Order confirmed by admin",
+
+  [ORDER_STATUSES.PROCESSING]: "Order processing started",
+
+  [ORDER_STATUSES.SHIPPED]: "Order shipped",
+
+  [ORDER_STATUSES.DELIVERED]: "Order delivered",
+
+  [ORDER_STATUSES.CANCELLED]: "Order cancelled by admin",
+
+  [ORDER_STATUSES.REFUNDED]: "Order refunded",
+});
+/*
+|--------------------------------------------------------------------------
 | Find Updated Committed Variant
 |--------------------------------------------------------------------------
 */
@@ -2289,6 +2320,190 @@ const buildConfirmedOrderState = (
 
 /*
 |--------------------------------------------------------------------------
+| Build Simple Admin Order Status State
+|--------------------------------------------------------------------------
+|
+| Used only for transitions that do not require:
+|
+| - Inventory reservation
+| - Inventory release
+| - Inventory commit
+| - Shipment creation
+| - Payment refund
+|--------------------------------------------------------------------------
+*/
+
+const buildSimpleAdminOrderStatusState = (
+  order,
+  { targetStatus, adminId, note, adminNote, changedAt = new Date() },
+) => {
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  const nextState = {
+    status: targetStatus,
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: targetStatus,
+
+        note:
+          note ??
+          ADMIN_ORDER_STATUS_DEFAULT_NOTES[targetStatus] ??
+          `Order status changed to ${targetStatus}`,
+
+        changedBy: adminId,
+
+        changedAt,
+      },
+    ],
+
+    updatedBy: adminId,
+  };
+
+  /*
+   * Do not erase an existing admin note when
+   * no new adminNote is provided.
+   */
+  if (adminNote !== undefined) {
+    nextState.adminNote = adminNote;
+  }
+
+  /*
+   * When a shipped Order is marked delivered,
+   * record the delivery time automatically.
+   */
+  if (targetStatus === ORDER_STATUSES.DELIVERED) {
+    nextState["shipment.deliveredAt"] = changedAt;
+  }
+
+  return nextState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Simple Admin Order Status Update
+|--------------------------------------------------------------------------
+*/
+
+const executeSimpleAdminOrderStatusUpdate = async ({
+  orderId,
+  adminId,
+  statusData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let updatedOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(orderId, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate Transition
+          |--------------------------------------------------------------------------
+          */
+
+        const transitionPlan = getAdminOrderStatusTransitionPlan(
+          order,
+          statusData.status,
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Protect Dedicated Workflows
+          |--------------------------------------------------------------------------
+          */
+
+        if (transitionPlan.requiresInventoryCommit) {
+          /*
+           * Confirmation must use confirmAdminOrder(),
+           * which commits Product inventory.
+           */
+          throw createOrderInventoryCommitStateInvalidError({
+            orderId: order._id,
+          });
+        }
+
+        if (transitionPlan.requiresInventoryRelease) {
+          throw createDedicatedCancellationWorkflowRequiredError();
+        }
+
+        if (transitionPlan.requiresShipment) {
+          throw createDedicatedShipmentWorkflowRequiredError();
+        }
+
+        if (transitionPlan.requiresRefund) {
+          throw createDedicatedRefundWorkflowRequiredError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Status State
+          |--------------------------------------------------------------------------
+          */
+
+        const nextState = buildSimpleAdminOrderStatusState(order, {
+          targetStatus: statusData.status,
+
+          adminId,
+
+          note: statusData.note,
+
+          adminNote: statusData.adminNote,
+        });
+
+        order.set(nextState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Order
+          |--------------------------------------------------------------------------
+          */
+
+        updatedOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return updatedOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
 | Execute Atomic Admin Order Confirmation
 |--------------------------------------------------------------------------
 */
@@ -2766,6 +2981,63 @@ export const confirmAdminOrder = async (orderId, adminId, statusData) => {
   }
 
   return executeAtomicAdminOrderConfirmation({
+    orderId,
+    adminId,
+    statusData,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Admin Order Status
+|--------------------------------------------------------------------------
+|
+| Dispatches status changes to the correct business workflow.
+|--------------------------------------------------------------------------
+*/
+
+export const updateAdminOrderStatus = async (orderId, adminId, statusData) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to update an Order status");
+  }
+
+  const targetStatus = statusData?.status;
+
+  if (!targetStatus) {
+    throw new Error("Target Order status is required");
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pending → Confirmed
+    |--------------------------------------------------------------------------
+    |
+    | Confirmation commits:
+    |
+    | - Product physical stock
+    | - Product reserved stock
+    | - Order item inventory state
+    | - Inventory Ledger entries
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetStatus === ORDER_STATUSES.CONFIRMED) {
+    return confirmAdminOrder(orderId, adminId, statusData);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Other Allowed Simple Transitions
+    |--------------------------------------------------------------------------
+    |
+    | Currently:
+    |
+    | confirmed → processing
+    | shipped   → delivered
+    |--------------------------------------------------------------------------
+    */
+
+  return executeSimpleAdminOrderStatusUpdate({
     orderId,
     adminId,
     statusData,
