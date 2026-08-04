@@ -2009,6 +2009,26 @@ GET /api/v1/admin/orders/:orderId
 
 Only authenticated admins can access it.
 |--------------------------------------------------------------------------
+Part 103: Admin Order Details Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+GET /api/v1/admin/orders/:orderId
+
+Coverage includes:
+
+Authentication
+Admin-only authorization
+Invalid Order IDs
+Missing Orders
+Complete admin Order details
+Cancelled Order audit information
+
+Keep all existing Order tests unchanged.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -2986,3 +2986,456 @@ describe("GET /api/v1/admin/orders", () => {
     );
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Details
+|--------------------------------------------------------------------------
+*/
+
+describe("GET /api/v1/admin/orders/:orderId", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when admin Order details are requested without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app).get(`/api/v1/admin/orders/${orderId}`);
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer requests admin Order details", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent.get(`/api/v1/admin/orders/${orderId}`);
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the admin Order ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/orders/not-a-valid-object-id",
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the admin Order does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingOrderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/orders/${missingOrderId}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    expect(response.body.message).toBe("Order was not found");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Admin Order Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns complete Order details including internal admin audit fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Admin Details Cotton Shirt",
+
+      slug: "admin-details-cotton-shirt",
+
+      variants: [
+        {
+          sku: "ADMIN-DETAILS-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 899,
+
+            discountPrice: 749,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 260,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 2,
+
+      customerNote: "Admin details integration test",
+    });
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/orders/${createdOrder.id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Admin Order retrieved successfully");
+
+    const order = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Identity and Ownership
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.id).toBe(createdOrder.id);
+
+    expect(order.orderNumber).toBe(createdOrder.orderNumber);
+
+    expect(order.customerId).toBe(String(customer._id));
+
+    expect(order.createdBy).toBe(String(customer._id));
+
+    expect(order.updatedBy).toBe(String(customer._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Snapshot
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.items).toHaveLength(1);
+
+    expect(order.items[0].sku).toBe("ADMIN-DETAILS-BLK-M");
+
+    expect(order.items[0].productName).toBe("Admin Details Cotton Shirt");
+
+    expect(order.items[0].size).toBe("M");
+
+    expect(order.items[0].color).toEqual({
+      name: "Black",
+
+      code: "#000000",
+    });
+
+    expect(order.items[0].quantity).toBe(2);
+
+    expect(order.items[0].pricing).toEqual({
+      currency: "INR",
+
+      unitSellingPrice: 899,
+
+      unitDiscountPrice: 749,
+
+      unitFinalPrice: 749,
+
+      discountPerUnit: 150,
+
+      lineSubtotal: 1498,
+    });
+
+    expect(order.items[0].inventory).toEqual({
+      status: "reserved",
+
+      reservedQuantity: 2,
+
+      committedQuantity: 0,
+
+      releasedQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Totals and State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.distinctItemCount).toBe(1);
+
+    expect(order.totalQuantity).toBe(2);
+
+    expect(order.totals).toEqual({
+      currency: "INR",
+
+      itemsSubtotal: 1498,
+
+      discountAmount: 0,
+
+      shippingAmount: 0,
+
+      taxAmount: 0,
+
+      grandTotal: 1498,
+    });
+
+    expect(order.status).toBe("pending");
+
+    expect(order.inventoryStatus).toBe("reserved");
+
+    expect(order.payment.status).toBe("pending");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Customer and Admin Information
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.customerNote).toBe("Admin details integration test");
+
+    expect(order.adminNote).toBeNull();
+
+    expect(order.shippingAddress.fullName).toBe("Dipak Ahirav");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Internal Status Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.statusHistory).toHaveLength(1);
+
+    expect(order.statusHistory[0].status).toBe("pending");
+
+    expect(order.statusHistory[0].note).toBe("Order created");
+
+    expect(order.statusHistory[0].changedBy).toBe(String(customer._id));
+
+    expect(order.statusHistory[0].changedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Cancellation Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.cancellation).toEqual({
+      reason: null,
+
+      cancelledBy: null,
+
+      cancelledAt: null,
+    });
+
+    expect(order.createdAt).toBeTruthy();
+
+    expect(order.updatedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancelled Order Audit Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns cancellation and status-history audit details for a cancelled Order", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Cancelled Admin Details Product",
+
+      slug: "cancelled-admin-details-product",
+
+      variants: [
+        {
+          sku: "ADMIN-CANCELLED-BLU-L",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 999,
+
+            discountPrice: 849,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 275,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 1,
+    });
+
+    const cancellationReason = "I ordered the wrong colour by mistake.";
+
+    await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: cancellationReason,
+      })
+      .expect(200);
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/orders/${createdOrder.id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    const order = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Cancelled Order State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.status).toBe("cancelled");
+
+    expect(order.inventoryStatus).toBe("released");
+
+    expect(order.items[0].inventory).toEqual({
+      status: "released",
+
+      reservedQuantity: 0,
+
+      committedQuantity: 0,
+
+      releasedQuantity: 1,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Cancellation Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.cancellation.reason).toBe(cancellationReason);
+
+    expect(order.cancellation.cancelledBy).toBe(String(customer._id));
+
+    expect(order.cancellation.cancelledAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Status History Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.statusHistory).toHaveLength(2);
+
+    expect(
+      order.statusHistory.map((historyEntry) => {
+        return historyEntry.status;
+      }),
+    ).toEqual(["pending", "cancelled"]);
+
+    expect(order.statusHistory[0].changedBy).toBe(String(customer._id));
+
+    expect(order.statusHistory[1].changedBy).toBe(String(customer._id));
+
+    expect(order.statusHistory[1].note).toBe("Order cancelled by customer");
+
+    expect(order.updatedBy).toBe(String(customer._id));
+  });
+});
