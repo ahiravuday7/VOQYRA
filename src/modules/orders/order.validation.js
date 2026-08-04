@@ -789,6 +789,37 @@ const adminOrderShipmentBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Delivery Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderDeliveryBodySchema = z.strictObject({
+  note: z
+    .string({
+      error: "Delivery note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Delivery note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Delivery note cannot exceed 500 characters",
+    })
+    .optional(),
+
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Request
 |--------------------------------------------------------------------------
 |
@@ -918,6 +949,23 @@ export const adminOrderStatusUpdateRequestSchema = z.strictObject({
 
 export const adminOrderShipmentRequestSchema = z.strictObject({
   body: adminOrderShipmentBodySchema,
+
+  params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Delivery Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/deliver
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderDeliveryRequestSchema = z.strictObject({
+  body: adminOrderDeliveryBodySchema,
 
   params: customerOrderParamsSchema,
 

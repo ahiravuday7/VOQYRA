@@ -442,6 +442,98 @@ const createOrderShipmentPaymentStateInvalidError = (
 
 /*
 |--------------------------------------------------------------------------
+| Dedicated Delivery Workflow Required
+|--------------------------------------------------------------------------
+*/
+
+const createDedicatedDeliveryWorkflowRequiredError = () => {
+  return new AppError(
+    "Order delivery must use the delivery completion workflow",
+    409,
+    {
+      errorCode: "ORDER_DELIVERY_WORKFLOW_REQUIRED",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Delivery Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderAlreadyDeliveredError = (order) => {
+  return new AppError("This Order has already been delivered", 409, {
+    errorCode: "ORDER_ALREADY_DELIVERED",
+
+    details: {
+      status: order.status,
+
+      deliveredAt: order.shipment?.deliveredAt ?? null,
+    },
+  });
+};
+
+const createOrderDeliveryStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Order cannot be delivered from its current status",
+    409,
+    {
+      errorCode: "ORDER_DELIVERY_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        requiredStatus: ORDER_STATUSES.SHIPPED,
+      },
+    },
+  );
+};
+
+const createOrderDeliveryShipmentStateInvalidError = () => {
+  return new AppError(
+    "The Order must contain valid shipment information before delivery",
+    409,
+    {
+      errorCode: "ORDER_DELIVERY_SHIPMENT_STATE_INVALID",
+    },
+  );
+};
+
+const createOrderDeliveryInventoryStateInvalidError = (inventoryStatus) => {
+  return new AppError(
+    "Order inventory must remain committed before delivery",
+    409,
+    {
+      errorCode: "ORDER_DELIVERY_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+const createOrderDeliveryPaymentStateInvalidError = (
+  paymentMethod,
+  paymentStatus,
+) => {
+  return new AppError(
+    "Order payment state does not allow delivery completion",
+    409,
+    {
+      errorCode: "ORDER_DELIVERY_PAYMENT_STATE_INVALID",
+
+      details: {
+        paymentMethod,
+        paymentStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Order Inventory Commit Errors
 |--------------------------------------------------------------------------
 */
@@ -497,6 +589,68 @@ const createDedicatedShipmentWorkflowRequiredError = () => {
   return new AppError("Order shipment must use the shipment workflow", 409, {
     errorCode: "ORDER_SHIPMENT_WORKFLOW_REQUIRED",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Order Was Already Delivered
+|--------------------------------------------------------------------------
+*/
+
+const orderHasCompletedDelivery = (order) => {
+  return Boolean(
+    order.status === ORDER_STATUSES.DELIVERED || order.shipment?.deliveredAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Shipment Is Ready for Delivery
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderShipmentIsReadyForDelivery = (order) => {
+  const shipment = order.shipment;
+
+  const validShipment = Boolean(
+    shipment?.shippedAt && shipment?.carrier && shipment?.trackingNumber,
+  );
+
+  if (!validShipment) {
+    throw createOrderDeliveryShipmentStateInvalidError();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Delivery Inventory Remains Committed
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderInventoryRemainsCommittedForDelivery = (order) => {
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.COMMITTED) {
+    throw createOrderDeliveryInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createOrderDeliveryInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const fullyCommitted =
+      inventory?.status === ORDER_INVENTORY_STATUSES.COMMITTED &&
+      inventory.reservedQuantity === 0 &&
+      inventory.committedQuantity === item.quantity &&
+      inventory.releasedQuantity === 0;
+
+    if (!fullyCommitted) {
+      throw createOrderDeliveryInventoryStateInvalidError(
+        order.inventoryStatus,
+      );
+    }
+  }
 };
 
 /*
@@ -946,6 +1100,9 @@ export const getAdminOrderStatusTransitionPlan = (order, targetStatus) => {
 
     requiresShipment:
       action === ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_SHIPMENT,
+
+    requiresDelivery:
+      action === ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_DELIVERY,
 
     requiresRefund: action === ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_REFUND,
   };
@@ -2523,14 +2680,6 @@ const buildSimpleAdminOrderStatusState = (
     nextState.adminNote = adminNote;
   }
 
-  /*
-   * When a shipped Order is marked delivered,
-   * record the delivery time automatically.
-   */
-  if (targetStatus === ORDER_STATUSES.DELIVERED) {
-    nextState["shipment.deliveredAt"] = changedAt;
-  }
-
   return nextState;
 };
 
@@ -2599,6 +2748,10 @@ const executeSimpleAdminOrderStatusUpdate = async ({
 
         if (transitionPlan.requiresShipment) {
           throw createDedicatedShipmentWorkflowRequiredError();
+        }
+
+        if (transitionPlan.requiresDelivery) {
+          throw createDedicatedDeliveryWorkflowRequiredError();
         }
 
         if (transitionPlan.requiresRefund) {
@@ -3426,4 +3579,245 @@ export const shipAdminOrder = async (orderId, adminId, shipmentData) => {
     adminId,
     shipmentData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Delivery Payment Plan
+|--------------------------------------------------------------------------
+|
+| Cash on delivery:
+|
+| pending → paid during delivery
+| paid    → remain paid
+|
+| Online:
+|
+| must already be paid
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderDeliveryPaymentPlan = (order) => {
+  const paymentMethod = order.payment?.method;
+
+  const paymentStatus = order.payment?.status;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cash on Delivery — Pending
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    paymentMethod === ORDER_PAYMENT_METHODS.CASH_ON_DELIVERY &&
+    paymentStatus === ORDER_PAYMENT_STATUSES.PENDING
+  ) {
+    return {
+      paymentMethod,
+      currentPaymentStatus: paymentStatus,
+
+      targetPaymentStatus: ORDER_PAYMENT_STATUSES.PAID,
+
+      shouldMarkPaymentPaid: true,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cash on Delivery — Already Paid
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    paymentMethod === ORDER_PAYMENT_METHODS.CASH_ON_DELIVERY &&
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID
+  ) {
+    return {
+      paymentMethod,
+      currentPaymentStatus: paymentStatus,
+
+      targetPaymentStatus: paymentStatus,
+
+      shouldMarkPaymentPaid: false,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Online Payment
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    paymentMethod === ORDER_PAYMENT_METHODS.ONLINE &&
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID
+  ) {
+    return {
+      paymentMethod,
+      currentPaymentStatus: paymentStatus,
+
+      targetPaymentStatus: paymentStatus,
+
+      shouldMarkPaymentPaid: false,
+    };
+  }
+
+  throw createOrderDeliveryPaymentStateInvalidError(
+    paymentMethod,
+    paymentStatus,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Order Can Be Delivered
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderCanBeDelivered = (order) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Delivery Protection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderHasCompletedDelivery(order)) {
+    throw createOrderAlreadyDeliveredError(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Current Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (order.status !== ORDER_STATUSES.SHIPPED) {
+    throw createOrderDeliveryStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Transition Plan
+    |--------------------------------------------------------------------------
+    */
+
+  const transitionPlan = getAdminOrderStatusTransitionPlan(
+    order,
+    ORDER_STATUSES.DELIVERED,
+  );
+
+  if (!transitionPlan.requiresDelivery) {
+    throw createOrderDeliveryStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment State
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderShipmentIsReadyForDelivery(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inventory State
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderInventoryRemainsCommittedForDelivery(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Payment State
+    |--------------------------------------------------------------------------
+    */
+
+  const paymentPlan = getAdminOrderDeliveryPaymentPlan(order);
+
+  return {
+    transitionPlan,
+    paymentPlan,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Delivered Order State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminDeliveredOrderState = (
+  order,
+  { deliveryData, adminId, deliveredAt = new Date() },
+) => {
+  const { paymentPlan } = assertAdminOrderCanBeDelivered(order);
+
+  const existingShipment = normalizeOrderSubdocument(order.shipment);
+
+  const existingPayment = normalizeOrderSubdocument(order.payment);
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  const deliveredState = {
+    status: ORDER_STATUSES.DELIVERED,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    shipment: {
+      ...existingShipment,
+
+      deliveredAt,
+    },
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.DELIVERED,
+
+        note: deliveryData.note ?? "Order delivered",
+
+        changedBy: adminId,
+
+        changedAt: deliveredAt,
+      },
+    ],
+
+    updatedBy: adminId,
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Cash-on-Delivery Payment
+    |--------------------------------------------------------------------------
+    */
+
+  if (paymentPlan.shouldMarkPaymentPaid) {
+    deliveredState.payment = {
+      ...existingPayment,
+
+      status: ORDER_PAYMENT_STATUSES.PAID,
+
+      paidAt: existingPayment.paidAt ?? deliveredAt,
+
+      failedAt: null,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Preserve Existing Admin Note
+    |--------------------------------------------------------------------------
+    */
+
+  if (deliveryData.adminNote !== undefined) {
+    deliveredState.adminNote = deliveryData.adminNote;
+  }
+
+  return deliveredState;
 };

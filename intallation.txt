@@ -2244,6 +2244,70 @@ Duplicate shipment protection
 Online-payment rules
 Invalid inventory state
 |--------------------------------------------------------------------------
+Part 111: Admin Delivery Completion Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares the dedicated delivery workflow:
+
+POST /api/v1/admin/orders/:orderId/deliver
+
+The workflow will:
+
+shipped
+   ↓
+delivered
+
+For cash-on-delivery Orders, successful delivery will also complete the pending payment:
+
+payment.status = paid
+payment.paidAt = deliveredAt
+
+No controller, route, or database persistence is added yet.
+
+Delivery behavior for cash on delivery::
+
+Before delivery:
+
+Order status       = shipped
+Payment method     = cash-on-delivery
+Payment status     = pending
+Payment paidAt     = null
+
+After delivery:
+
+Order status       = delivered
+Payment method     = cash-on-delivery
+Payment status     = paid
+Payment paidAt     = deliveredAt
+
+This represents payment collection at delivery.
+
+Delivery behavior for online payment::
+
+Before delivery:
+
+Order status       = shipped
+Payment method     = online
+Payment status     = paid
+Payment paidAt     = existing payment timestamp
+
+After delivery:
+
+Order status       = delivered
+Payment status     = paid
+Payment paidAt     = unchanged
+
+Delivery must not overwrite the original online-payment timestamp.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
