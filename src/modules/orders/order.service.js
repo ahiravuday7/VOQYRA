@@ -34,6 +34,7 @@ import {
   findCustomerOrderForCancellation,
   saveOrderDocument,
   listAdminOrders,
+  findAdminOrderById,
 } from "./order.repository.js";
 
 /*
@@ -262,6 +263,34 @@ const createOrderInventoryReleaseStateInvalidError = ({
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Not Found
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderNotFoundError = () => {
+  return new AppError("Order was not found", 404, {
+    errorCode: "ORDER_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderById = async (orderId) => {
+  const order = await findAdminOrderById(orderId);
+
+  if (!order) {
+    throw createAdminOrderNotFoundError();
+  }
+
+  return order;
 };
 
 /*

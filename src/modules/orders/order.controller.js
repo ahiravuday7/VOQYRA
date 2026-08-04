@@ -2,6 +2,7 @@ import {
   toCustomerOrder,
   toCustomerOrderSummary,
   toAdminOrderSummary,
+  toAdminOrder,
 } from "./order.mapper.js";
 
 import {
@@ -10,6 +11,7 @@ import {
   getCustomerOrders,
   cancelCustomerOrder,
   getAdminOrders,
+  getAdminOrderById,
 } from "./order.service.js";
 
 /*
@@ -261,6 +263,52 @@ export const getAdminOrdersController = async (request, response) => {
 
         sortDirection: filters.sortDirection,
       },
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Details
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/orders/:orderId
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const order = await getAdminOrderById(orderId);
+
+  const mappedOrder = toAdminOrder(order);
+
+  request.log?.info(
+    {
+      adminId: String(request.user._id),
+
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      customerId: mappedOrder.customerId,
+
+      status: mappedOrder.status,
+
+      paymentStatus: mappedOrder.payment.status,
+
+      inventoryStatus: mappedOrder.inventoryStatus,
+    },
+    "Admin Order retrieved",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Order retrieved successfully",
+
+    data: {
+      order: mappedOrder,
     },
   });
 };

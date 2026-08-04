@@ -1992,6 +1992,22 @@ This part tests:
 GET /api/v1/admin/orders
 
 |--------------------------------------------------------------------------
+Part 102: Admin Order Details API
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order.mapper.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+
+This step exposes:
+
+GET /api/v1/admin/orders/:orderId
+
+Only authenticated admins can access it.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

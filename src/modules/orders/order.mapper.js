@@ -298,6 +298,31 @@ const mapCustomerOrderSummaryItem = (item) => {
 
 /*
 |--------------------------------------------------------------------------
+| Map Admin Status History
+|--------------------------------------------------------------------------
+|
+| Admin responses include changedBy for auditing.
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminOrderStatusHistory = (statusHistory = []) => {
+  return statusHistory.map((historyEntry) => {
+    return {
+      id: normalizeIdentifier(historyEntry._id),
+
+      status: historyEntry.status,
+
+      note: historyEntry.note ?? null,
+
+      changedBy: normalizeIdentifier(historyEntry.changedBy),
+
+      changedAt: historyEntry.changedAt,
+    };
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Map Customer Order Summary
 |--------------------------------------------------------------------------
 */
@@ -465,6 +490,67 @@ export const toAdminOrderSummary = (order) => {
     customerNote: normalizedOrder.customerNote ?? null,
 
     adminNote: normalizedOrder.adminNote ?? null,
+
+    createdBy: normalizeIdentifier(normalizedOrder.createdBy),
+
+    updatedBy: normalizeIdentifier(normalizedOrder.updatedBy),
+
+    createdAt: normalizedOrder.createdAt,
+
+    updatedAt: normalizedOrder.updatedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Order Details
+|--------------------------------------------------------------------------
+|
+| Includes customer-safe data plus internal audit information.
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminOrder = (order) => {
+  const normalizedOrder = normalizeOrderObject(order);
+
+  const items = normalizedOrder.items ?? [];
+
+  const totalQuantity = items.reduce((total, item) => {
+    return total + item.quantity;
+  }, 0);
+
+  return {
+    id: normalizeIdentifier(normalizedOrder._id),
+
+    orderNumber: normalizedOrder.orderNumber,
+
+    customerId: normalizeIdentifier(normalizedOrder.customer),
+
+    items: items.map(mapCustomerOrderItem),
+
+    distinctItemCount: items.length,
+
+    totalQuantity,
+
+    shippingAddress: mapOrderShippingAddress(normalizedOrder.shippingAddress),
+
+    totals: mapOrderTotals(normalizedOrder.totals),
+
+    payment: mapCustomerOrderPayment(normalizedOrder.payment),
+
+    shipment: mapCustomerOrderShipment(normalizedOrder.shipment),
+
+    status: normalizedOrder.status,
+
+    inventoryStatus: normalizedOrder.inventoryStatus,
+
+    statusHistory: mapAdminOrderStatusHistory(normalizedOrder.statusHistory),
+
+    customerNote: normalizedOrder.customerNote ?? null,
+
+    adminNote: normalizedOrder.adminNote ?? null,
+
+    cancellation: mapAdminOrderCancellation(normalizedOrder.cancellation),
 
     createdBy: normalizeIdentifier(normalizedOrder.createdBy),
 

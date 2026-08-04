@@ -540,3 +540,22 @@ export const listAdminOrders = async (filters) => {
     },
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Order by ID
+|--------------------------------------------------------------------------
+|
+| Admin lookup does not apply customer ownership filtering.
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderById = (orderId, { session = null } = {}) => {
+  const query = Order.findById(orderId).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

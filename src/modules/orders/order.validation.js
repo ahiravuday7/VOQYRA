@@ -759,3 +759,20 @@ export const adminOrderListRequestSchema = z.strictObject({
 
   query: adminOrderListQuerySchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Details Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/orders/:orderId
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});

@@ -6,9 +6,15 @@ import validateRequest from "../../middlewares/validate-request.middleware.js";
 
 import { USER_ROLES } from "../../shared/constants/user.constants.js";
 
-import { getAdminOrdersController } from "./order.controller.js";
+import {
+  getAdminOrdersController,
+  getAdminOrderController,
+} from "./order.controller.js";
 
-import { adminOrderListRequestSchema } from "./order.validation.js";
+import {
+  adminOrderListRequestSchema,
+  adminOrderDetailsRequestSchema,
+} from "./order.validation.js";
 
 const router = Router();
 
@@ -22,10 +28,10 @@ router.use(authenticate, authorizeRoles(USER_ROLES.ADMIN));
 
 /*
 |--------------------------------------------------------------------------
-| List Admin Orders
+| Get Admin Order Details
 |--------------------------------------------------------------------------
 |
-| GET /api/v1/admin/orders
+| GET /api/v1/admin/orders/:orderId
 |--------------------------------------------------------------------------
 */
 
@@ -35,4 +41,9 @@ router.get(
   getAdminOrdersController,
 );
 
+router.get(
+  "/:orderId",
+  validateRequest(adminOrderDetailsRequestSchema),
+  getAdminOrderController,
+);
 export default router;
