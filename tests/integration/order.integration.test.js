@@ -2145,3 +2145,844 @@ describe("POST /api/v1/orders/:orderId/cancel", () => {
     ).toBe(2);
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order List
+|--------------------------------------------------------------------------
+*/
+
+describe("GET /api/v1/admin/orders", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when the request is unauthenticated", async () => {
+    const response = await request(app).get("/api/v1/admin/orders");
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer requests the admin Order list", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get("/api/v1/admin/orders");
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Order Results
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns Orders with admin-only fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "ADMIN-LIST-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 2,
+
+      customerNote: "Admin list integration test",
+    });
+
+    const response = await adminAgent.get("/api/v1/admin/orders");
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Admin Orders retrieved successfully");
+
+    expect(response.body.data.orders).toHaveLength(1);
+
+    const order = response.body.data.orders[0];
+
+    expect(order.id).toBe(createdOrder.id);
+
+    expect(order.orderNumber).toBe(createdOrder.orderNumber);
+
+    expect(order.customerId).toBe(String(customer._id));
+
+    expect(order.items[0].sku).toBe("ADMIN-LIST-BLK-M");
+
+    expect(order.customerNote).toBe("Admin list integration test");
+
+    /*
+     * These fields are intentionally available
+     * to admins.
+     */
+    expect(order).toHaveProperty("adminNote");
+
+    expect(order).toHaveProperty("createdBy");
+
+    expect(order).toHaveProperty("updatedBy");
+
+    expect(order.cancellation).toHaveProperty("cancelledBy");
+
+    expect(order.createdBy).toBe(String(customer._id));
+
+    expect(order.updatedBy).toBe(String(customer._id));
+
+    expect(response.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 20,
+
+      totalItems: 1,
+
+      totalPages: 1,
+
+      hasPreviousPage: false,
+
+      hasNextPage: false,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+
+  it("searches Orders by Order number, SKU and shipping customer name", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Premium Search Shirt",
+
+      slug: "premium-search-shirt",
+
+      variants: [
+        {
+          sku: "SEARCH-SHIRT-BLU-L",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 400,
+
+            sellingPrice: 999,
+
+            discountPrice: 899,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 280,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Search by Exact Order Number
+        |--------------------------------------------------------------------------
+        */
+
+    const orderNumberResponse = await adminAgent
+      .get("/api/v1/admin/orders")
+      .query({
+        search: createdOrder.orderNumber,
+      });
+
+    expect(orderNumberResponse.status).toBe(200);
+
+    expect(orderNumberResponse.body.data.orders).toHaveLength(1);
+
+    expect(orderNumberResponse.body.data.orders[0].id).toBe(createdOrder.id);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Search by SKU
+        |--------------------------------------------------------------------------
+        */
+
+    const skuResponse = await adminAgent.get("/api/v1/admin/orders").query({
+      search: "SEARCH-SHIRT-BLU-L",
+    });
+
+    expect(skuResponse.status).toBe(200);
+
+    expect(skuResponse.body.data.orders).toHaveLength(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Search by Shipping Name
+        |--------------------------------------------------------------------------
+        */
+
+    const customerNameResponse = await adminAgent
+      .get("/api/v1/admin/orders")
+      .query({
+        search: "Dipak",
+      });
+
+    expect(customerNameResponse.status).toBe(200);
+
+    expect(customerNameResponse.body.data.orders).toHaveLength(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Missing Search
+        |--------------------------------------------------------------------------
+        */
+
+    const missingResponse = await adminAgent.get("/api/v1/admin/orders").query({
+      search: "DOES-NOT-EXIST",
+    });
+
+    expect(missingResponse.status).toBe(200);
+
+    expect(missingResponse.body.data.orders).toHaveLength(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer ID Filter
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters Orders by customer ID", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: firstCustomerAgent,
+
+      user: firstCustomer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { agent: secondCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "CUSTOMER-FILTER-M",
+
+          size: "M",
+
+          color: {
+            name: "White",
+
+            code: "#FFFFFF",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstOrder = await createCustomerOrderFixture({
+      customerAgent: firstCustomerAgent,
+
+      product,
+
+      customerNote: "First customer admin filter",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent: secondCustomerAgent,
+
+      product,
+
+      customerNote: "Second customer admin filter",
+    });
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      customerId: String(firstCustomer._id),
+    });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.orders).toHaveLength(1);
+
+    expect(response.body.data.orders[0].id).toBe(firstOrder.id);
+
+    expect(response.body.data.orders[0].customerId).toBe(
+      String(firstCustomer._id),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Status and Inventory Filters
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters Orders by status, payment status and inventory status", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "STATUS-FILTER-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 30,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const activeOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Active pending Order",
+    });
+
+    const cancelledOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Order to cancel",
+    });
+
+    await customerAgent
+      .post(`/api/v1/orders/${cancelledOrder.id}/cancel`)
+      .send({
+        reason: "Cancelling this Order for admin filtering.",
+      })
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Pending Orders
+        |--------------------------------------------------------------------------
+        */
+
+    const pendingResponse = await adminAgent.get("/api/v1/admin/orders").query({
+      status: "pending",
+
+      paymentStatus: "pending",
+
+      inventoryStatus: "reserved",
+    });
+
+    expect(pendingResponse.status).toBe(200);
+
+    expect(pendingResponse.body.data.orders).toHaveLength(1);
+
+    expect(pendingResponse.body.data.orders[0].id).toBe(activeOrder.id);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Cancelled Orders
+        |--------------------------------------------------------------------------
+        */
+
+    const cancelledResponse = await adminAgent
+      .get("/api/v1/admin/orders")
+      .query({
+        status: "cancelled",
+
+        inventoryStatus: "released",
+      });
+
+    expect(cancelledResponse.status).toBe(200);
+
+    expect(cancelledResponse.body.data.orders).toHaveLength(1);
+
+    expect(cancelledResponse.body.data.orders[0].id).toBe(cancelledOrder.id);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+  it("paginates admin Orders", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "ADMIN-PAGINATION-M",
+
+          size: "M",
+
+          color: {
+            name: "Green",
+
+            code: "#008000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 30,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Admin pagination 1",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Admin pagination 2",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Admin pagination 3",
+    });
+
+    const firstPage = await adminAgent.get("/api/v1/admin/orders").query({
+      page: 1,
+
+      limit: 2,
+    });
+
+    expect(firstPage.status).toBe(200);
+
+    expect(firstPage.body.data.orders).toHaveLength(2);
+
+    expect(firstPage.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 2,
+
+      totalItems: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: false,
+
+      hasNextPage: true,
+    });
+
+    const secondPage = await adminAgent.get("/api/v1/admin/orders").query({
+      page: 2,
+
+      limit: 2,
+    });
+
+    expect(secondPage.status).toBe(200);
+
+    expect(secondPage.body.data.orders).toHaveLength(1);
+
+    expect(secondPage.body.data.pagination.hasPreviousPage).toBe(true);
+
+    expect(secondPage.body.data.pagination.hasNextPage).toBe(false);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Grand Total Sorting
+    |--------------------------------------------------------------------------
+    */
+
+  it("sorts admin Orders by grand total", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "TOTAL-SORT-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 50,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const quantityOneOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 1,
+    });
+
+    const quantityThreeOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 3,
+    });
+
+    const quantityTwoOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 2,
+    });
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      sortBy: "grandTotal",
+
+      sortDirection: "desc",
+    });
+
+    expect(response.status).toBe(200);
+
+    const returnedOrderIds = response.body.data.orders.map((order) => {
+      return order.id;
+    });
+
+    expect(returnedOrderIds).toEqual([
+      quantityThreeOrder.id,
+      quantityTwoOrder.id,
+      quantityOneOrder.id,
+    ]);
+
+    const grandTotals = response.body.data.orders.map((order) => {
+      return order.totals.grandTotal;
+    });
+
+    expect(grandTotals).toEqual([1800, 1200, 600]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Total Range Filtering
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters admin Orders by grand-total range", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "TOTAL-RANGE-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 50,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 1,
+    });
+
+    const matchingOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 2,
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 3,
+    });
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      minTotal: 1000,
+
+      maxTotal: 1500,
+    });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.orders).toHaveLength(1);
+
+    expect(response.body.data.orders[0].id).toBe(matchingOrder.id);
+
+    expect(response.body.data.orders[0].totals.grandTotal).toBe(1200);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Admin Query
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid admin Order filters and ranges", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      page: 0,
+
+      limit: 500,
+
+      status: "invalid-status",
+
+      dateFrom: "2026-08-10",
+
+      dateTo: "2026-08-01",
+
+      minTotal: 5000,
+
+      maxTotal: 500,
+
+      sortBy: "invalid-sort-field",
+
+      sortDirection: "newest",
+    });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "query",
+        }),
+      ]),
+    );
+  });
+});

@@ -1979,6 +1979,23 @@ GET /api/v1/admin/orders
 
 Only authenticated admins can access it.
 |--------------------------------------------------------------------------
+Part 101: Admin Order List Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+Keep all existing create, history, and cancellation tests unchanged.
+
+This part tests:
+
+GET /api/v1/admin/orders
+
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
