@@ -4,6 +4,7 @@ import {
   createCustomerOrder,
   getCustomerOrderById,
   getCustomerOrders,
+  cancelCustomerOrder,
 } from "./order.service.js";
 
 /*
@@ -121,6 +122,58 @@ export const getCustomerOrderController = async (request, response) => {
 
     data: {
       order: toCustomerOrder(order),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/:orderId/cancel
+|--------------------------------------------------------------------------
+*/
+
+export const cancelCustomerOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const cancellationData = request.validated.body;
+
+  const customerId = request.user._id;
+
+  const cancelledOrder = await cancelCustomerOrder(
+    orderId,
+    customerId,
+    cancellationData,
+  );
+
+  const mappedOrder = toCustomerOrder(cancelledOrder);
+
+  request.log?.info(
+    {
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      customerId: String(customerId),
+
+      status: mappedOrder.status,
+
+      inventoryStatus: mappedOrder.inventoryStatus,
+
+      cancellationReason: mappedOrder.cancellation.reason,
+    },
+    "Customer Order cancelled",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order cancelled successfully",
+
+    data: {
+      order: mappedOrder,
     },
   });
 };

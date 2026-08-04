@@ -1656,10 +1656,17 @@ const buildReleasedOrderItems = (orderItems) => {
 
         status: ORDER_INVENTORY_STATUSES.RELEASED,
 
-        reservedQuantity: normalizedItem.quantity,
+        /*
+         * No quantity remains actively reserved
+         * after cancellation.
+         */
+        reservedQuantity: 0,
 
         committedQuantity: 0,
 
+        /*
+         * Complete reserved quantity was released.
+         */
         releasedQuantity: normalizedItem.quantity,
       },
     };

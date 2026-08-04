@@ -10,12 +10,14 @@ import {
   createCustomerOrderController,
   getCustomerOrderController,
   getCustomerOrdersController,
+  cancelCustomerOrderController,
 } from "./order.controller.js";
 
 import {
   createOrderRequestSchema,
   customerOrderDetailsRequestSchema,
   customerOrderListRequestSchema,
+  cancelCustomerOrderRequestSchema,
 } from "./order.validation.js";
 
 const router = Router();
@@ -47,6 +49,21 @@ router.get(
   "/",
   validateRequest(customerOrderListRequestSchema),
   getCustomerOrdersController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/:orderId/cancel
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/cancel",
+  validateRequest(cancelCustomerOrderRequestSchema),
+  cancelCustomerOrderController,
 );
 
 /*

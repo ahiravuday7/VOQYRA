@@ -1904,6 +1904,27 @@ That matches the inventory flow already defined for cancelled Orders.
 
 No controller or route is added yet.
 |--------------------------------------------------------------------------
+Part 97: Customer Order Cancellation Controller and Route
+
+Update:
+
+src/modules/orders/order.controller.js
+src/modules/orders/order.routes.js
+
+This step exposes:
+
+POST /api/v1/orders/:orderId/cancel
+
+The endpoint will:
+
+Validate the Order ID and cancellation reason.
+Confirm the Order belongs to the authenticated customer.
+Release every reserved Product quantity.
+Create matching Inventory Ledger entries.
+Mark the Order as cancelled.
+Return the updated customer-safe Order.
+
+Everything is committed in one MongoDB transaction.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
