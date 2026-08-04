@@ -2176,6 +2176,49 @@ Trusted shipped-Order state generation
 
 No database persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
+Part 109: Admin Shipment Persistence, Controller, and Route
+
+Update:
+
+src/modules/orders/order.service.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+
+This step exposes:
+
+POST /api/v1/admin/orders/:orderId/ship
+
+The shipment workflow will atomically update:
+
+Order status          processing → shipped
+Shipment information  carrier, tracking number, tracking URL
+Shipment timestamp    shippedAt
+Status history        new shipped entry
+Audit fields          updatedBy
+
+Product inventory does not change during shipment because it was already committed during Order confirmation.
+
+Complete Order workflow before shipping
+
+An Order must pass through:
+
+Customer creates Order
+        ↓
+pending
+inventory reserved
+        ↓
+Admin confirms Order
+        ↓
+confirmed
+inventory committed
+        ↓
+Admin starts processing
+        ↓
+processing
+        ↓
+Admin creates shipment
+        ↓
+shipped
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

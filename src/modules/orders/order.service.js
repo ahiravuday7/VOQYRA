@@ -3316,3 +3316,114 @@ export const buildAdminShippedOrderState = (
 
   return shippedState;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Order Shipment
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderShipment = async ({
+  orderId,
+  adminId,
+  shipmentData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let shippedOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(orderId, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Shipment State
+          |--------------------------------------------------------------------------
+          |
+          | This validates:
+          |
+          | - Order status is processing
+          | - Shipment does not already exist
+          | - Inventory is fully committed
+          | - Payment state allows shipment
+          |--------------------------------------------------------------------------
+          */
+
+        const shippedState = buildAdminShippedOrderState(order, {
+          shipmentData,
+          adminId,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Shipment State
+          |--------------------------------------------------------------------------
+          */
+
+        order.set(shippedState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Order
+          |--------------------------------------------------------------------------
+          */
+
+        shippedOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return shippedOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Ship Admin Order
+|--------------------------------------------------------------------------
+*/
+
+export const shipAdminOrder = async (orderId, adminId, shipmentData) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to ship an Order");
+  }
+
+  if (!shipmentData) {
+    throw new Error("Shipment data is required");
+  }
+
+  return executeAtomicAdminOrderShipment({
+    orderId,
+    adminId,
+    shipmentData,
+  });
+};

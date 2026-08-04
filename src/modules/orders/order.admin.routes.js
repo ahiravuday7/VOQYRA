@@ -10,12 +10,14 @@ import {
   getAdminOrdersController,
   getAdminOrderController,
   updateAdminOrderStatusController,
+  shipAdminOrderController,
 } from "./order.controller.js";
 
 import {
   adminOrderListRequestSchema,
   adminOrderDetailsRequestSchema,
   adminOrderStatusUpdateRequestSchema,
+  adminOrderShipmentRequestSchema,
 } from "./order.validation.js";
 
 const router = Router();
@@ -56,6 +58,21 @@ router.patch(
   "/:orderId/status",
   validateRequest(adminOrderStatusUpdateRequestSchema),
   updateAdminOrderStatusController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Ship Admin Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/ship
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/ship",
+  validateRequest(adminOrderShipmentRequestSchema),
+  shipAdminOrderController,
 );
 
 /*

@@ -13,6 +13,7 @@ import {
   getAdminOrders,
   getAdminOrderById,
   updateAdminOrderStatus,
+  shipAdminOrder,
 } from "./order.service.js";
 
 /*
@@ -359,6 +360,56 @@ export const updateAdminOrderStatusController = async (request, response) => {
     success: true,
 
     message: "Order status updated successfully",
+
+    data: {
+      order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Ship Admin Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/ship
+|--------------------------------------------------------------------------
+*/
+
+export const shipAdminOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const shipmentData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const shippedOrder = await shipAdminOrder(orderId, adminId, shipmentData);
+
+  const mappedOrder = toAdminOrder(shippedOrder);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      status: mappedOrder.status,
+
+      carrier: mappedOrder.shipment.carrier,
+
+      trackingNumber: mappedOrder.shipment.trackingNumber,
+
+      shippedAt: mappedOrder.shipment.shippedAt,
+    },
+    "Admin Order shipped",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order shipped successfully",
 
     data: {
       order: mappedOrder,
