@@ -2481,6 +2481,85 @@ Update Order and payment state
         ↓
 Commit both operations together
 |--------------------------------------------------------------------------
+Part 116: Admin Refund Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+POST /api/v1/admin/orders/:orderId/refund
+
+Coverage includes:
+
+Authentication and admin authorization
+Refund request validation
+Successful COD refund
+Successful online-payment refund
+Immutable refund audit creation
+Duplicate refund protection
+Duplicate reference protection
+Generic status endpoint protection
+Invalid delivery, payment, and inventory states
+Product inventory invariants
+Transaction rollback
+
+Expected COD refund lifecycle
+
+Before refund:
+
+Order status           = delivered
+Payment method         = cash-on-delivery
+Payment status         = paid
+Payment paidAt         = delivery timestamp
+Payment refundedAt     = null
+
+After refund:
+
+Order status           = refunded
+Payment status         = refunded
+Payment paidAt         = unchanged
+Payment refundedAt     = refund timestamp
+
+The audit timestamp must match:
+
+order.payment.refundedAt.getTime() ===
+order.refund.refundedAt.getTime()
+6. Expected online refund lifecycle
+
+Before refund:
+
+Payment method         = online
+Payment status         = paid
+Payment paidAt         = gateway payment timestamp
+
+After refund:
+
+Payment status         = refunded
+Payment paidAt         = unchanged
+Payment refundedAt     = refund timestamp
+
+The original payment timestamp remains available for financial auditing.
+
+Current Order implementation
+Customer Order creation                     ✅
+Customer Order cancellation                 ✅
+Admin Order confirmation                    ✅
+Admin processing transition                 ✅
+Admin shipment workflow                     ✅
+Admin delivery workflow                     ✅
+COD payment completion                      ✅
+Admin full-refund workflow                  ✅
+Embedded refund snapshot                    ✅
+Immutable refund audit                      ✅
+Refund authorization tests                  ✅
+COD and online refund tests                 ✅
+Duplicate refund protection                 ✅
+Duplicate reference protection              ✅
+Refund transaction rollback                 ✅
+Automatic returned-stock restoration        Not implemented intentionally
+Return inspection workflow                  ❌
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
