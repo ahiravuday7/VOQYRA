@@ -303,6 +303,42 @@ const moveOrderToProcessing = async ({ adminAgent, orderId }) => {
 
 /*
 |--------------------------------------------------------------------------
+| Move Order to Shipped
+|--------------------------------------------------------------------------
+*/
+
+const moveOrderToShipped = async ({
+  adminAgent,
+  orderId,
+  shipmentData = {},
+}) => {
+  await moveOrderToProcessing({
+    adminAgent,
+    orderId,
+  });
+
+  return adminAgent
+    .post(`/api/v1/admin/orders/${orderId}/ship`)
+    .send({
+      carrier: shipmentData.carrier ?? "Blue Dart",
+
+      trackingNumber:
+        shipmentData.trackingNumber ??
+        `BD-${new mongoose.Types.ObjectId()
+          .toString()
+          .slice(-12)
+          .toUpperCase()}`,
+
+      trackingUrl:
+        shipmentData.trackingUrl ?? "https://tracking.example.com/order",
+
+      note: shipmentData.note ?? "Order shipped for delivery integration test.",
+    })
+    .expect(200);
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -5180,5 +5216,862 @@ describe("POST /api/v1/admin/orders/:orderId/ship", () => {
     expect(variantAfterRequest.inventory.reservedStock).toBe(
       variantBeforeRequest.inventory.reservedStock,
     );
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Delivery
+|--------------------------------------------------------------------------
+*/
+
+describe("POST /api/v1/admin/orders/:orderId/deliver", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when completing delivery without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/orders/${orderId}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer uses the admin delivery endpoint", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/orders/${orderId}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the delivery Order ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post("/api/v1/admin/orders/not-a-valid-object-id/deliver")
+      .send({});
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects backend-controlled delivery fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${orderId}/deliver`)
+      .send({
+        note: "OK",
+
+        status: "delivered",
+
+        deliveredAt: new Date().toISOString(),
+
+        paymentStatus: "paid",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the delivery Order does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingOrderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${missingOrderId}/deliver`)
+      .send({
+        note: "Delivery confirmation test.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    expect(response.body.message).toBe("Order was not found");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful COD Delivery
+    |--------------------------------------------------------------------------
+    */
+
+  it("delivers a shipped cash-on-delivery Order and marks its payment as paid", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Delivery Integration Shirt",
+
+      slug: "delivery-integration-shirt",
+
+      variants: [
+        {
+          sku: "DELIVERY-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 899,
+
+            discountPrice: 749,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 12,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 260,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 2,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+
+      shipmentData: {
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-DELIVERY-123456",
+
+        trackingUrl: "https://tracking.example.com/BD-DELIVERY-123456",
+      },
+    });
+
+    /*
+     * After confirmation:
+     *
+     * stock         = 10
+     * reservedStock = 0
+     *
+     * Shipment must not change inventory.
+     */
+    const productBeforeDelivery = await Product.findById(product._id).lean();
+
+    const variantBeforeDelivery = findProductVariant(
+      productBeforeDelivery,
+      variant._id,
+    );
+
+    expect(variantBeforeDelivery.inventory.stock).toBe(10);
+
+    expect(variantBeforeDelivery.inventory.reservedStock).toBe(0);
+
+    const ledgerCountBeforeDelivery =
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+      });
+
+    expect(ledgerCountBeforeDelivery).toBe(2);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Delivery confirmed by the courier partner.",
+
+        adminNote: "Customer received the package successfully.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Order delivered successfully");
+
+    const deliveredOrder = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Delivered Order State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(deliveredOrder.id).toBe(createdOrder.id);
+
+    expect(deliveredOrder.status).toBe("delivered");
+
+    expect(deliveredOrder.inventoryStatus).toBe("committed");
+
+    expect(deliveredOrder.shipment.carrier).toBe("Blue Dart");
+
+    expect(deliveredOrder.shipment.trackingNumber).toBe("BD-DELIVERY-123456");
+
+    expect(deliveredOrder.shipment.shippedAt).toBeTruthy();
+
+    expect(deliveredOrder.shipment.deliveredAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | COD Payment Completion
+        |--------------------------------------------------------------------------
+        */
+
+    expect(deliveredOrder.payment.method).toBe("cash-on-delivery");
+
+    expect(deliveredOrder.payment.status).toBe("paid");
+
+    expect(deliveredOrder.payment.paidAt).toBeTruthy();
+
+    expect(deliveredOrder.payment.paidAt).toBe(
+      deliveredOrder.shipment.deliveredAt,
+    );
+
+    expect(deliveredOrder.payment.failedAt).toBeNull();
+
+    expect(deliveredOrder.adminNote).toBe(
+      "Customer received the package successfully.",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Item Inventory Remains Committed
+        |--------------------------------------------------------------------------
+        */
+
+    expect(deliveredOrder.items[0].inventory).toEqual({
+      status: "committed",
+
+      reservedQuantity: 0,
+
+      committedQuantity: 2,
+
+      releasedQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("delivered");
+
+    expect(storedOrder.payment.status).toBe("paid");
+
+    expect(storedOrder.payment.paidAt).toBeTruthy();
+
+    expect(storedOrder.shipment.deliveredAt).toBeTruthy();
+
+    expect(storedOrder.payment.paidAt.getTime()).toBe(
+      storedOrder.shipment.deliveredAt.getTime(),
+    );
+
+    expect(String(storedOrder.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Status History
+        |--------------------------------------------------------------------------
+        */
+
+    expect(
+      storedOrder.statusHistory.map((entry) => {
+        return entry.status;
+      }),
+    ).toEqual(["pending", "confirmed", "processing", "shipped", "delivered"]);
+
+    const deliveryHistory = storedOrder.statusHistory.at(-1);
+
+    expect(deliveryHistory.note).toBe(
+      "Delivery confirmed by the courier partner.",
+    );
+
+    expect(String(deliveryHistory.changedBy)).toBe(String(admin._id));
+
+    expect(deliveryHistory.changedAt.getTime()).toBe(
+      storedOrder.shipment.deliveredAt.getTime(),
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterDelivery = await Product.findById(product._id).lean();
+
+    const variantAfterDelivery = findProductVariant(
+      productAfterDelivery,
+      variant._id,
+    );
+
+    expect(variantAfterDelivery.inventory.stock).toBe(
+      variantBeforeDelivery.inventory.stock,
+    );
+
+    expect(variantAfterDelivery.inventory.reservedStock).toBe(
+      variantBeforeDelivery.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Delivery Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntriesAfterDelivery = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesAfterDelivery).toHaveLength(2);
+
+    expect(
+      ledgerEntriesAfterDelivery.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Online Payment Timestamp Preservation
+    |--------------------------------------------------------------------------
+    */
+
+  it("preserves the original paidAt timestamp for a paid online Order", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Online Payment Delivery Product",
+
+      slug: "online-payment-delivery-product",
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    const originalPaidAt = new Date("2026-08-01T08:30:00.000Z");
+
+    /*
+     * Convert the pending COD fixture into
+     * a successfully paid online Order.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "payment.method": "online",
+
+          "payment.status": "paid",
+
+          "payment.paidAt": originalPaidAt,
+
+          "payment.failedAt": null,
+        },
+      },
+    );
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Paid online Order delivered successfully.",
+      });
+
+    expect(response.status).toBe(200);
+
+    const deliveredOrder = response.body.data.order;
+
+    expect(deliveredOrder.status).toBe("delivered");
+
+    expect(deliveredOrder.payment.method).toBe("online");
+
+    expect(deliveredOrder.payment.status).toBe("paid");
+
+    expect(deliveredOrder.payment.paidAt).toBe(originalPaidAt.toISOString());
+
+    expect(deliveredOrder.shipment.deliveredAt).toBeTruthy();
+
+    expect(deliveredOrder.payment.paidAt).not.toBe(
+      deliveredOrder.shipment.deliveredAt,
+    );
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.payment.paidAt.getTime()).toBe(originalPaidAt.getTime());
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Delivery
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects completing delivery twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "First delivery confirmation.",
+      })
+      .expect(200);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Second delivery confirmation.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_ALREADY_DELIVERED");
+
+    expect(response.body.details.status).toBe("delivered");
+
+    expect(response.body.details.deliveredAt).toBeTruthy();
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(
+      storedOrder.statusHistory.filter((entry) => {
+        return entry.status === "delivered";
+      }),
+    ).toHaveLength(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Generic Status Endpoint Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires the dedicated delivery workflow instead of the generic status endpoint", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "delivered",
+
+        note: "Attempt generic delivery.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_DELIVERY_WORKFLOW_REQUIRED");
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("shipped");
+
+    expect(storedOrder.shipment.deliveredAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Shipment State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects delivery when required shipment information is missing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    /*
+     * Keep the Order status shipped, but corrupt
+     * required shipment information.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "shipment.shippedAt": null,
+
+          "shipment.trackingNumber": null,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Attempt delivery with invalid shipment state.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_DELIVERY_SHIPMENT_STATE_INVALID",
+    );
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("shipped");
+
+    expect(storedOrder.shipment.deliveredAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Inventory State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects delivery when the Order inventory snapshot is not fully committed", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "DELIVERY-INVENTORY-M",
+
+          size: "M",
+
+          color: {
+            name: "White",
+
+            code: "#FFFFFF",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    const productBeforeRequest = await Product.findById(product._id).lean();
+
+    /*
+     * Corrupt only the Order inventory snapshot.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          inventoryStatus: "reserved",
+
+          "items.0.inventory.status": "reserved",
+
+          "items.0.inventory.reservedQuantity": 1,
+
+          "items.0.inventory.committedQuantity": 0,
+
+          "items.0.inventory.releasedQuantity": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Attempt delivery with invalid inventory state.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_DELIVERY_INVENTORY_STATE_INVALID",
+    );
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("shipped");
+
+    expect(unchangedOrder.payment.status).toBe("pending");
+
+    expect(unchangedOrder.shipment.deliveredAt).toBeNull();
+
+    const productAfterRequest = await Product.findById(product._id).lean();
+
+    const variantBeforeRequest = findProductVariant(
+      productBeforeRequest,
+      variant._id,
+    );
+
+    const variantAfterRequest = findProductVariant(
+      productAfterRequest,
+      variant._id,
+    );
+
+    expect(variantAfterRequest.inventory.stock).toBe(
+      variantBeforeRequest.inventory.stock,
+    );
+
+    expect(variantAfterRequest.inventory.reservedStock).toBe(
+      variantBeforeRequest.inventory.reservedStock,
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Payment State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects delivery when an online Order payment is pending", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToShipped({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    /*
+     * Simulate an invalid unpaid online state after shipment.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "payment.method": "online",
+
+          "payment.status": "pending",
+
+          "payment.paidAt": null,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/deliver`)
+      .send({
+        note: "Attempt delivery with unpaid online payment.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_DELIVERY_PAYMENT_STATE_INVALID",
+    );
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("shipped");
+
+    expect(unchangedOrder.payment.status).toBe("pending");
+
+    expect(unchangedOrder.shipment.deliveredAt).toBeNull();
   });
 });

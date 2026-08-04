@@ -2353,6 +2353,29 @@ Admin completes delivery
         ↓
 delivered
 |--------------------------------------------------------------------------
+Part 113: Admin Delivery Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+POST /api/v1/admin/orders/:orderId/deliver
+
+Coverage includes:
+
+Authentication and admin authorization
+Request validation
+Missing Orders
+Successful COD delivery
+Automatic COD payment completion
+Online-payment timestamp preservation
+Status-history audit
+Product inventory invariants
+Duplicate-delivery protection
+Invalid shipment, inventory, and payment states
+Generic status endpoint protection
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
