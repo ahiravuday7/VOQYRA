@@ -232,6 +232,51 @@ const createCustomerOrderFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Multi-Item Customer Order
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerOrderWithItemsFixture = async ({
+  customerAgent,
+  items,
+  customerNote = "Multi-item Order integration test",
+}) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("Multi-item Order fixture requires at least one item");
+  }
+
+  const firstItem = items[0];
+
+  const requestBody = createOrderRequestBody({
+    productId: firstItem.product._id,
+
+    variantId: firstItem.variant._id,
+
+    quantity: firstItem.quantity,
+  });
+
+  requestBody.items = items.map(({ product, variant, quantity }) => {
+    return {
+      productId: String(product._id),
+
+      variantId: String(variant._id),
+
+      quantity,
+    };
+  });
+
+  requestBody.customerNote = customerNote;
+
+  const response = await customerAgent
+    .post("/api/v1/orders")
+    .send(requestBody)
+    .expect(201);
+
+  return response.body.data.order;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -1318,5 +1363,785 @@ describe("Customer Order history endpoints", () => {
      * Order belongs to another customer.
      */
     expect(response.body.message).toBe("Order was not found");
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Cancellation
+|--------------------------------------------------------------------------
+*/
+
+describe("POST /api/v1/orders/:orderId/cancel", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when cancelling without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/orders/${orderId}/cancel`)
+      .send({
+        reason: "I selected the wrong size.",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Only Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when an admin attempts to use the customer cancellation endpoint", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/orders/${orderId}/cancel`)
+      .send({
+        reason: "Admin should not use this endpoint.",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects an invalid cancellation reason", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${orderId}/cancel`)
+      .send({
+        reason: "No",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "body",
+
+          field: "reason",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Atomic Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("cancels an Order, releases reserved inventory and creates a release Ledger entry", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "CANCEL-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+     * Order creation must reserve two units.
+     */
+    const productAfterCreation = await Product.findById(product._id).lean();
+
+    const variantAfterCreation = findProductVariant(
+      productAfterCreation,
+      variant._id,
+    );
+
+    expect(variantAfterCreation.inventory.stock).toBe(10);
+
+    expect(variantAfterCreation.inventory.reservedStock).toBe(2);
+
+    const cancellationReason =
+      "I selected the wrong size while placing the Order.";
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: cancellationReason,
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Order cancelled successfully");
+
+    const cancelledOrder = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Customer Response
+        |--------------------------------------------------------------------------
+        */
+
+    expect(cancelledOrder.status).toBe("cancelled");
+
+    expect(cancelledOrder.inventoryStatus).toBe("released");
+
+    expect(cancelledOrder.cancellation.reason).toBe(cancellationReason);
+
+    expect(cancelledOrder.cancellation.cancelledAt).toBeTruthy();
+
+    expect(cancelledOrder.cancellation).not.toHaveProperty("cancelledBy");
+
+    expect(cancelledOrder.items[0].inventory).toEqual({
+      status: "released",
+
+      reservedQuantity: 0,
+
+      committedQuantity: 0,
+
+      releasedQuantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("cancelled");
+
+    expect(storedOrder.inventoryStatus).toBe("released");
+
+    expect(storedOrder.items[0].inventory.reservedQuantity).toBe(0);
+
+    expect(storedOrder.items[0].inventory.releasedQuantity).toBe(2);
+
+    expect(storedOrder.cancellation.reason).toBe(cancellationReason);
+
+    expect(String(storedOrder.cancellation.cancelledBy)).toBe(
+      String(customer._id),
+    );
+
+    expect(storedOrder.statusHistory.at(-1).status).toBe("cancelled");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterCancellation = await Product.findById(product._id).lean();
+
+    const variantAfterCancellation = findProductVariant(
+      productAfterCancellation,
+      variant._id,
+    );
+
+    expect(variantAfterCancellation.inventory.stock).toBe(10);
+
+    expect(variantAfterCancellation.inventory.reservedStock).toBe(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Ledger Audit Trail
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      product: product._id,
+
+      variantId: variant._id,
+
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    const reserveLedger = ledgerEntries.find((ledger) => {
+      return ledger.operation === "reserve";
+    });
+
+    const releaseLedger = ledgerEntries.find((ledger) => {
+      return ledger.operation === "release";
+    });
+
+    expect(reserveLedger).toBeTruthy();
+
+    expect(releaseLedger).toBeTruthy();
+
+    expect(releaseLedger.quantity).toBe(2);
+
+    expect(releaseLedger.stockDelta).toBe(0);
+
+    expect(releaseLedger.reservedStockDelta).toBe(-2);
+
+    expect(releaseLedger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(releaseLedger.after).toMatchObject({
+      stock: 10,
+
+      reservedStock: 0,
+
+      availableStock: 10,
+    });
+
+    expect(String(releaseLedger.actor)).toBe(String(customer._id));
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cross-Customer Ownership
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when a customer tries to cancel another customer's Order", async () => {
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent: ownerAgent,
+
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    const response = await otherCustomerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "Trying to cancel someone else's Order.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("pending");
+
+    expect(unchangedOrder.inventoryStatus).toBe("reserved");
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects a second cancellation attempt without releasing inventory twice", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "First valid cancellation request.",
+      })
+      .expect(200);
+
+    const secondResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "Second cancellation request should fail.",
+      });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_CANCELLATION_NOT_ALLOWED",
+    );
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Processing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects customer cancellation after Order processing has started", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          status: "processing",
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "Cancellation should be blocked now.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_CANCELLATION_NOT_ALLOWED");
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Paid Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires a refund workflow before cancelling a paid Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    /*
+     * Direct database update prepares the required
+     * paid-state test condition.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "payment.status": "paid",
+
+          "payment.paidAt": new Date(),
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "Paid Order cancellation should require a refund.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_CANCELLATION_REQUIRES_REFUND");
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back earlier reservation releases when a later Order item cannot be released", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const firstProduct = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Cancellation Rollback Product One",
+
+      slug: "cancellation-rollback-product-one",
+
+      variants: [
+        {
+          sku: "CANCEL-ROLLBACK-ONE",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const secondProduct = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Cancellation Rollback Product Two",
+
+      slug: "cancellation-rollback-product-two",
+
+      variants: [
+        {
+          sku: "CANCEL-ROLLBACK-TWO",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = firstProduct.variants[0];
+
+    const secondVariant = secondProduct.variants[0];
+
+    const createdOrder = await createCustomerOrderWithItemsFixture({
+      customerAgent,
+
+      items: [
+        {
+          product: firstProduct,
+
+          variant: firstVariant,
+
+          quantity: 2,
+        },
+        {
+          product: secondProduct,
+
+          variant: secondVariant,
+
+          quantity: 1,
+        },
+      ],
+    });
+
+    /*
+     * Simulate corrupted inventory after Order creation.
+     *
+     * The Order still owns one reserved unit for Product Two,
+     * but the Product no longer contains that reservation.
+     */
+    await Product.updateOne(
+      {
+        _id: secondProduct._id,
+
+        "variants._id": secondVariant._id,
+      },
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/cancel`)
+      .send({
+        reason: "Cancellation rollback integration test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_INVENTORY_RELEASE_STATE_INVALID",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Product Release Must Be Rolled Back
+        |--------------------------------------------------------------------------
+        */
+
+    const finalFirstProduct = await Product.findById(firstProduct._id).lean();
+
+    const finalFirstVariant = findProductVariant(
+      finalFirstProduct,
+      firstVariant._id,
+    );
+
+    expect(finalFirstVariant.inventory.stock).toBe(10);
+
+    expect(finalFirstVariant.inventory.reservedStock).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Pre-existing Corruption Remains Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const finalSecondProduct = await Product.findById(secondProduct._id).lean();
+
+    const finalSecondVariant = findProductVariant(
+      finalSecondProduct,
+      secondVariant._id,
+    );
+
+    expect(finalSecondVariant.inventory.reservedStock).toBe(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Must Remain Active and Reserved
+        |--------------------------------------------------------------------------
+        */
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("pending");
+
+    expect(unchangedOrder.inventoryStatus).toBe("reserved");
+
+    expect(unchangedOrder.cancellation?.cancelledAt ?? null).toBeNull();
+
+    expect(unchangedOrder.items[0].inventory.status).toBe("reserved");
+
+    expect(unchangedOrder.items[0].inventory.reservedQuantity).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Release Ledger from First Item Must Be Rolled Back
+        |--------------------------------------------------------------------------
+        */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+     * Only the two original reservation entries remain.
+     */
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+      }),
+    ).toBe(2);
   });
 });

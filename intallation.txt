@@ -1926,6 +1926,17 @@ Return the updated customer-safe Order.
 
 Everything is committed in one MongoDB transaction.
 |--------------------------------------------------------------------------
+Part 98: Customer Order Cancellation Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+Keep the existing create-order and Order-history tests unchanged.
+
+This part adds tests for:
+
+POST /api/v1/orders/:orderId/cancel
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
