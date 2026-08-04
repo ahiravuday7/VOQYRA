@@ -137,3 +137,22 @@ export const ORDER_STATUS_TRANSITIONS = Object.freeze({
 
   [ORDER_STATUSES.REFUNDED]: Object.freeze([]),
 });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Cancellation States
+|--------------------------------------------------------------------------
+|
+| Customers may cancel only before Order processing or shipment begins.
+|--------------------------------------------------------------------------
+*/
+
+export const CUSTOMER_CANCELLABLE_ORDER_STATUS_VALUES = Object.freeze([
+  ORDER_STATUSES.PENDING,
+  ORDER_STATUSES.CONFIRMED,
+]);
+
+export const CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES = Object.freeze([
+  ORDER_PAYMENT_STATUSES.PENDING,
+  ORDER_PAYMENT_STATUSES.FAILED,
+]);

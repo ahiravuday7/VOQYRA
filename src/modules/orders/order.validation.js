@@ -390,6 +390,26 @@ const createOrderBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Customer Order Cancellation Body
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderCancellationBodySchema = z.strictObject({
+  reason: z
+    .string({
+      error: "Cancellation reason is required",
+    })
+    .trim()
+    .min(5, {
+      error: "Cancellation reason must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Cancellation reason cannot exceed 500 characters",
+    }),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order List Query
 |--------------------------------------------------------------------------
 */
@@ -462,6 +482,23 @@ export const createOrderRequestSchema = z.strictObject({
   body: createOrderBodySchema,
 
   params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Cancellation Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/:orderId/cancel
+|--------------------------------------------------------------------------
+*/
+
+export const cancelCustomerOrderRequestSchema = z.strictObject({
+  body: customerOrderCancellationBodySchema,
+
+  params: customerOrderParamsSchema,
 
   query: emptyObjectSchema,
 });

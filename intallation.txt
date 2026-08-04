@@ -1852,6 +1852,23 @@ Cross-customer ownership protection
 
 Keep the existing seven POST /api/v1/orders tests unchanged.
 |--------------------------------------------------------------------------
+Part 95: Customer Order Cancellation Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step adds:
+
+Customer cancellation request validation
+Allowed Order and payment states
+Reserved-inventory consistency checks
+A trusted cancelled-Order state builder
+Safe business errors
+
+No cancellation route or database update is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

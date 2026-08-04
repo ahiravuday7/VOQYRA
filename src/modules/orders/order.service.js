@@ -7,6 +7,8 @@ import {
   ORDER_INVENTORY_STATUSES,
   ORDER_PAYMENT_STATUSES,
   ORDER_STATUSES,
+  CUSTOMER_CANCELLABLE_ORDER_STATUS_VALUES,
+  CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -48,6 +50,20 @@ const ORDER_NUMBER_RANDOM_BYTES = 3;
 const MAX_ORDER_NUMBER_GENERATION_ATTEMPTS = 10;
 
 const MAX_ORDER_CREATION_ATTEMPTS = 3;
+
+/*
+|--------------------------------------------------------------------------
+| Customer Cancellation Lookup Sets
+|--------------------------------------------------------------------------
+*/
+
+const CUSTOMER_CANCELLABLE_ORDER_STATUS_SET = new Set(
+  CUSTOMER_CANCELLABLE_ORDER_STATUS_VALUES,
+);
+
+const CUSTOMER_CANCELLABLE_PAYMENT_STATUS_SET = new Set(
+  CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES,
+);
 /*
 |--------------------------------------------------------------------------
 | Order Checkout Errors
@@ -186,6 +202,82 @@ const createOrderCreationConflictError = () => {
       errorCode: "ORDER_CREATION_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Cancellation Errors
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerOrderCancellationNotAllowedError = (order) => {
+  return new AppError(
+    "This Order can no longer be cancelled by the customer",
+    409,
+    {
+      errorCode: "ORDER_CANCELLATION_NOT_ALLOWED",
+
+      details: {
+        status: order.status,
+      },
+    },
+  );
+};
+
+const createPaidOrderCancellationRequiresRefundError = (order) => {
+  return new AppError(
+    "This paid Order requires a refund workflow before it can be cancelled",
+    409,
+    {
+      errorCode: "ORDER_CANCELLATION_REQUIRES_REFUND",
+
+      details: {
+        paymentStatus: order.payment?.status ?? null,
+      },
+    },
+  );
+};
+
+const createOrderInventoryReleaseStateInvalidError = ({
+  orderId,
+  itemId = null,
+  inventoryStatus = null,
+}) => {
+  return new AppError(
+    "The Order inventory cannot be released from its current state",
+    409,
+    {
+      errorCode: "ORDER_INVENTORY_RELEASE_STATE_INVALID",
+
+      details: {
+        orderId: String(orderId),
+
+        itemId: itemId ? String(itemId) : null,
+
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Normalize Order Subdocument
+|--------------------------------------------------------------------------
+|
+| Supports both:
+|
+| - Mongoose subdocuments
+| - Lean database objects
+|--------------------------------------------------------------------------
+*/
+
+const normalizeOrderSubdocument = (value) => {
+  if (value && typeof value.toObject === "function") {
+    return value.toObject();
+  }
+
+  return value;
 };
 
 /*
@@ -1277,4 +1369,190 @@ export const getCustomerOrderById = async (orderId, customerId) => {
   }
 
   return order;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Customer Order Can Be Cancelled
+|--------------------------------------------------------------------------
+*/
+
+export const assertCustomerOrderCanBeCancelled = (order) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Order Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (!CUSTOMER_CANCELLABLE_ORDER_STATUS_SET.has(order.status)) {
+    throw createCustomerOrderCancellationNotAllowedError(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Payment Status
+    |--------------------------------------------------------------------------
+    |
+    | Paid Orders require a refund workflow.
+    |--------------------------------------------------------------------------
+    */
+
+  const paymentStatus = order.payment?.status;
+
+  if (
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID ||
+    paymentStatus === ORDER_PAYMENT_STATUSES.PARTIALLY_REFUNDED ||
+    paymentStatus === ORDER_PAYMENT_STATUSES.REFUNDED
+  ) {
+    throw createPaidOrderCancellationRequiresRefundError(order);
+  }
+
+  if (!CUSTOMER_CANCELLABLE_PAYMENT_STATUS_SET.has(paymentStatus)) {
+    throw createCustomerOrderCancellationNotAllowedError(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Order-Level Inventory State
+    |--------------------------------------------------------------------------
+    */
+
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.RESERVED) {
+    throw createOrderInventoryReleaseStateInvalidError({
+      orderId: order._id,
+
+      inventoryStatus: order.inventoryStatus,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Order Items Must Exist
+    |--------------------------------------------------------------------------
+    */
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createOrderInventoryReleaseStateInvalidError({
+      orderId: order._id,
+
+      inventoryStatus: order.inventoryStatus,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Every Item Must Be Fully Reserved
+    |--------------------------------------------------------------------------
+    */
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const inventoryIsValid =
+      inventory?.status === ORDER_INVENTORY_STATUSES.RESERVED &&
+      inventory.reservedQuantity === item.quantity &&
+      inventory.committedQuantity === 0 &&
+      inventory.releasedQuantity === 0;
+
+    if (!inventoryIsValid) {
+      throw createOrderInventoryReleaseStateInvalidError({
+        orderId: order._id,
+
+        itemId: item._id,
+
+        inventoryStatus: inventory?.status ?? null,
+      });
+    }
+  }
+
+  return true;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Released Order Items
+|--------------------------------------------------------------------------
+|
+| reservedQuantity remains as historical information showing
+| how many units were originally reserved.
+|
+| releasedQuantity records how many units were released.
+|--------------------------------------------------------------------------
+*/
+
+const buildReleasedOrderItems = (orderItems) => {
+  return orderItems.map((item) => {
+    const normalizedItem = normalizeOrderSubdocument(item);
+
+    return {
+      ...normalizedItem,
+
+      inventory: {
+        ...normalizedItem.inventory,
+
+        status: ORDER_INVENTORY_STATUSES.RELEASED,
+
+        reservedQuantity: normalizedItem.quantity,
+
+        committedQuantity: 0,
+
+        releasedQuantity: normalizedItem.quantity,
+      },
+    };
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Customer Cancelled Order State
+|--------------------------------------------------------------------------
+|
+| This function does not write to MongoDB.
+|
+| It prepares the trusted Order state that will be persisted
+| after every Product reservation has been released.
+|--------------------------------------------------------------------------
+*/
+
+export const buildCustomerCancelledOrderState = (
+  order,
+  { reason, customerId, cancelledAt = new Date() },
+) => {
+  assertCustomerOrderCanBeCancelled(order);
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  return {
+    items: buildReleasedOrderItems(order.items),
+
+    status: ORDER_STATUSES.CANCELLED,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.RELEASED,
+
+    cancellation: {
+      reason,
+
+      cancelledBy: customerId,
+
+      cancelledAt,
+    },
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.CANCELLED,
+
+        note: "Order cancelled by customer",
+
+        changedBy: customerId,
+
+        changedAt: cancelledAt,
+      },
+    ],
+
+    updatedBy: customerId,
+  };
 };
