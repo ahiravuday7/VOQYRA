@@ -12,6 +12,7 @@ import {
   updateAdminOrderStatusController,
   shipAdminOrderController,
   deliverAdminOrderController,
+  refundAdminOrderController,
 } from "./order.controller.js";
 
 import {
@@ -20,6 +21,7 @@ import {
   adminOrderStatusUpdateRequestSchema,
   adminOrderShipmentRequestSchema,
   adminOrderDeliveryRequestSchema,
+  adminOrderRefundRequestSchema,
 } from "./order.validation.js";
 
 const router = Router();
@@ -90,6 +92,21 @@ router.post(
   "/:orderId/deliver",
   validateRequest(adminOrderDeliveryRequestSchema),
   deliverAdminOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Refund Admin Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/refund
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/refund",
+  validateRequest(adminOrderRefundRequestSchema),
+  refundAdminOrderController,
 );
 
 /*

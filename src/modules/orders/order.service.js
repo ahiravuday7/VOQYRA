@@ -43,6 +43,8 @@ import {
   findAdminOrderForStatusUpdate,
 } from "./order.repository.js";
 
+import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
+
 /*
 |--------------------------------------------------------------------------
 | Order Number Configuration
@@ -623,6 +625,36 @@ const createOrderRefundTotalInvalidError = (grandTotal, currency) => {
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refund Persistence Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderRefundReferenceConflictError = (referenceId) => {
+  return new AppError("The refund reference ID has already been used", 409, {
+    errorCode: "ORDER_REFUND_REFERENCE_CONFLICT",
+
+    details: {
+      referenceId,
+    },
+  });
+};
+
+const createConcurrentOrderRefundError = (orderId) => {
+  return new AppError("This Order has already been refunded", 409, {
+    errorCode: "ORDER_ALREADY_REFUNDED",
+
+    details: {
+      orderId: String(orderId),
+    },
+  });
+};
+
+const isMongoDuplicateKeyError = (error) => {
+  return error?.code === 11000;
 };
 /*
 |--------------------------------------------------------------------------
@@ -4280,4 +4312,188 @@ export const buildAdminRefundedOrderState = (
   }
 
   return refundedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Order Refund Audit Data
+|--------------------------------------------------------------------------
+*/
+
+const buildOrderRefundAuditData = (order, refundedState) => {
+  return {
+    order: order._id,
+
+    orderNumber: order.orderNumber,
+
+    customer: order.customer,
+
+    paymentMethod: order.payment.method,
+
+    previousPaymentStatus: order.payment.status,
+
+    paymentStatus: refundedState.payment.status,
+
+    amount: refundedState.refund.amount,
+
+    currency: refundedState.refund.currency,
+
+    reason: refundedState.refund.reason,
+
+    referenceId: refundedState.refund.referenceId,
+
+    refundedBy: refundedState.refund.refundedBy,
+
+    refundedAt: refundedState.refund.refundedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Order Refund
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderRefund = async ({
+  orderId,
+  adminId,
+  refundData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let refundedOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(orderId, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Generate One Shared Refund Timestamp
+          |--------------------------------------------------------------------------
+          */
+
+        const refundedAt = new Date();
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Refunded State
+          |--------------------------------------------------------------------------
+          |
+          | This validates:
+          |
+          | - Order status is delivered
+          | - Delivery has completed
+          | - Inventory remains committed
+          | - Payment is paid
+          | - Order has not already been refunded
+          | - Grand total is refundable
+          |--------------------------------------------------------------------------
+          */
+
+        const refundedState = buildAdminRefundedOrderState(order, {
+          refundData,
+          adminId,
+          refundedAt,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Immutable Financial Audit Record
+          |--------------------------------------------------------------------------
+          */
+
+        const refundAuditData = buildOrderRefundAuditData(order, refundedState);
+
+        await createOrderRefundAuditEntry(refundAuditData, {
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Update Order
+          |--------------------------------------------------------------------------
+          */
+
+        order.set(refundedState);
+
+        refundedOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return refundedOrder;
+  } catch (error) {
+    if (!isMongoDuplicateKeyError(error)) {
+      throw error;
+    }
+
+    /*
+     * The same external/manual refund reference
+     * was already used.
+     */
+    if (error.keyPattern?.referenceId || error.keyValue?.referenceId) {
+      throw createOrderRefundReferenceConflictError(refundData.referenceId);
+    }
+
+    /*
+     * A concurrent request already created the
+     * one-refund-per-Order audit record.
+     */
+    if (error.keyPattern?.order || error.keyValue?.order) {
+      throw createConcurrentOrderRefundError(orderId);
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refund Admin Order
+|--------------------------------------------------------------------------
+*/
+
+export const refundAdminOrder = async (orderId, adminId, refundData) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to refund an Order");
+  }
+
+  if (!refundData) {
+    throw new Error("Refund data is required");
+  }
+
+  return executeAtomicAdminOrderRefund({
+    orderId,
+    adminId,
+    refundData,
+  });
 };

@@ -499,6 +499,8 @@ export const listAdminOrders = async (filters) => {
 
         cancellation: 1,
 
+        refund: 1,
+
         customerNote: 1,
 
         adminNote: 1,

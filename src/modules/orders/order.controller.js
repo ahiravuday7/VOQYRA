@@ -15,6 +15,7 @@ import {
   updateAdminOrderStatus,
   shipAdminOrder,
   deliverAdminOrder,
+  refundAdminOrder,
 } from "./order.service.js";
 
 /*
@@ -465,6 +466,58 @@ export const deliverAdminOrderController = async (request, response) => {
     success: true,
 
     message: "Order delivered successfully",
+
+    data: {
+      order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refund Admin Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/refund
+|--------------------------------------------------------------------------
+*/
+
+export const refundAdminOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const refundData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const refundedOrder = await refundAdminOrder(orderId, adminId, refundData);
+
+  const mappedOrder = toAdminOrder(refundedOrder);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      status: mappedOrder.status,
+
+      paymentStatus: mappedOrder.payment.status,
+
+      refundReferenceId: mappedOrder.refund.referenceId,
+
+      refundAmount: mappedOrder.refund.amount,
+
+      refundCurrency: mappedOrder.refund.currency,
+    },
+    "Admin Order refunded",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order refunded successfully",
 
     data: {
       order: mappedOrder,

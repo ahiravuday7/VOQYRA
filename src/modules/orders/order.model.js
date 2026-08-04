@@ -740,6 +740,81 @@ const orderShipmentSchema = new mongoose.Schema(
 
 /*
 |--------------------------------------------------------------------------
+| Order Refund Snapshot
+|--------------------------------------------------------------------------
+|
+| Stores the completed refund summary directly on the Order.
+|
+| The separate OrderRefundAudit model created below provides the
+| immutable financial audit record.
+|--------------------------------------------------------------------------
+*/
+
+const orderRefundSchema = new mongoose.Schema(
+  {
+    reason: {
+      type: String,
+
+      required: true,
+
+      trim: true,
+
+      minlength: 5,
+
+      maxlength: 500,
+    },
+
+    referenceId: {
+      type: String,
+
+      required: true,
+
+      trim: true,
+
+      minlength: 3,
+
+      maxlength: 200,
+    },
+
+    amount: {
+      type: Number,
+
+      required: true,
+
+      min: 0.01,
+    },
+
+    currency: {
+      type: String,
+
+      required: true,
+
+      trim: true,
+
+      uppercase: true,
+    },
+
+    refundedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      required: true,
+    },
+
+    refundedAt: {
+      type: Date,
+
+      required: true,
+    },
+  },
+
+  {
+    _id: false,
+  },
+);
+/*
+|--------------------------------------------------------------------------
 | Order Status History
 |--------------------------------------------------------------------------
 */
@@ -936,6 +1011,12 @@ const orderSchema = new mongoose.Schema(
       },
     },
 
+    refund: {
+      type: orderRefundSchema,
+
+      default: undefined,
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
 
@@ -961,6 +1042,102 @@ const orderSchema = new mongoose.Schema(
     versionKey: false,
   },
 );
+
+/*
+|--------------------------------------------------------------------------
+| Validate Completed Refund State
+|--------------------------------------------------------------------------
+|
+| Mongoose 9 synchronous middleware does not use next().
+|--------------------------------------------------------------------------
+*/
+
+orderSchema.pre("validate", function validateCompletedRefundState() {
+  const hasRefund = Boolean(this.refund);
+
+  const orderIsRefunded = this.status === ORDER_STATUSES.REFUNDED;
+
+  const paymentIsRefunded =
+    this.payment?.status === ORDER_PAYMENT_STATUSES.REFUNDED;
+
+  /*
+   * Normal non-refunded Order.
+   */
+  if (!hasRefund && !orderIsRefunded && !paymentIsRefunded) {
+    return;
+  }
+
+  if (!orderIsRefunded) {
+    this.invalidate(
+      "status",
+      "An Order with refund information must have refunded status",
+    );
+  }
+
+  if (!paymentIsRefunded) {
+    this.invalidate(
+      "payment.status",
+      "A refunded Order must have refunded payment status",
+    );
+  }
+
+  if (!hasRefund) {
+    this.invalidate(
+      "refund",
+      "A refunded Order must contain refund audit information",
+    );
+
+    return;
+  }
+
+  if (!this.payment?.refundedAt) {
+    this.invalidate(
+      "payment.refundedAt",
+      "A refunded payment must contain refundedAt",
+    );
+  }
+
+  const orderGrandTotal = Number(this.totals?.grandTotal);
+
+  const refundAmount = Number(this.refund?.amount);
+
+  if (
+    !Number.isFinite(orderGrandTotal) ||
+    !Number.isFinite(refundAmount) ||
+    refundAmount !== orderGrandTotal
+  ) {
+    this.invalidate(
+      "refund.amount",
+      "Refund amount must match the Order grand total",
+    );
+  }
+
+  if (this.refund?.currency !== this.totals?.currency) {
+    this.invalidate(
+      "refund.currency",
+      "Refund currency must match the Order currency",
+    );
+  }
+
+  const paymentRefundedAt = this.payment?.refundedAt
+    ? new Date(this.payment.refundedAt).getTime()
+    : null;
+
+  const auditRefundedAt = this.refund?.refundedAt
+    ? new Date(this.refund.refundedAt).getTime()
+    : null;
+
+  if (
+    !paymentRefundedAt ||
+    !auditRefundedAt ||
+    paymentRefundedAt !== auditRefundedAt
+  ) {
+    this.invalidate(
+      "refund.refundedAt",
+      "Payment and refund audit timestamps must match",
+    );
+  }
+});
 
 /*
 |--------------------------------------------------------------------------

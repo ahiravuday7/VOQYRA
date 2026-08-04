@@ -256,6 +256,32 @@ const mapCustomerOrderCancellation = (cancellation) => {
 
 /*
 |--------------------------------------------------------------------------
+| Map Admin Order Refund
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminOrderRefund = (refund) => {
+  if (!refund) {
+    return null;
+  }
+
+  return {
+    reason: refund.reason,
+
+    referenceId: refund.referenceId,
+
+    amount: refund.amount,
+
+    currency: refund.currency,
+
+    refundedBy: normalizeIdentifier(refund.refundedBy),
+
+    refundedAt: refund.refundedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Map Customer Order Summary Item
 |--------------------------------------------------------------------------
 */
@@ -487,6 +513,8 @@ export const toAdminOrderSummary = (order) => {
 
     cancellation: mapAdminOrderCancellation(normalizedOrder.cancellation),
 
+    refund: mapAdminOrderRefund(normalizedOrder.refund),
+
     customerNote: normalizedOrder.customerNote ?? null,
 
     adminNote: normalizedOrder.adminNote ?? null,
@@ -551,6 +579,8 @@ export const toAdminOrder = (order) => {
     adminNote: normalizedOrder.adminNote ?? null,
 
     cancellation: mapAdminOrderCancellation(normalizedOrder.cancellation),
+
+    refund: mapAdminOrderRefund(normalizedOrder.refund),
 
     createdBy: normalizeIdentifier(normalizedOrder.createdBy),
 

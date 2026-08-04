@@ -2450,6 +2450,40 @@ UPI refund reference
 Cash-return receipt
 Internal finance refund reference
 |--------------------------------------------------------------------------
+Part 115: Refund Audit Model, Persistence, Controller, and Route
+
+Create/update:
+
+src/modules/orders/order.model.js
+src/modules/orders/order-refund-audit.model.js
+src/modules/orders/order-refund-audit.repository.js
+src/modules/orders/order.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order.mapper.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+
+This exposes:
+
+POST /api/v1/admin/orders/:orderId/refund
+
+The transaction will:
+
+Load delivered Order
+        ↓
+Validate payment, delivery and inventory state
+        ↓
+Build trusted full-refund data
+        ↓
+Create immutable refund audit record
+        ↓
+Update Order and payment state
+        ↓
+Commit both operations together
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
