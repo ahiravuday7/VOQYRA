@@ -534,6 +534,98 @@ const createOrderDeliveryPaymentStateInvalidError = (
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Refund Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderAlreadyRefundedError = (order) => {
+  return new AppError("This Order has already been refunded", 409, {
+    errorCode: "ORDER_ALREADY_REFUNDED",
+
+    details: {
+      status: order.status,
+
+      paymentStatus: order.payment?.status ?? null,
+
+      refundedAt: order.payment?.refundedAt ?? order.refund?.refundedAt ?? null,
+
+      referenceId: order.refund?.referenceId ?? null,
+    },
+  });
+};
+
+const createOrderRefundStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Order cannot be refunded from its current status",
+    409,
+    {
+      errorCode: "ORDER_REFUND_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        requiredStatus: ORDER_STATUSES.DELIVERED,
+      },
+    },
+  );
+};
+
+const createOrderRefundDeliveryStateInvalidError = () => {
+  return new AppError(
+    "The Order must have a completed delivery before it can be refunded",
+    409,
+    {
+      errorCode: "ORDER_REFUND_DELIVERY_STATE_INVALID",
+    },
+  );
+};
+
+const createOrderRefundInventoryStateInvalidError = (inventoryStatus) => {
+  return new AppError(
+    "Order inventory must remain committed before refund completion",
+    409,
+    {
+      errorCode: "ORDER_REFUND_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+const createOrderRefundPaymentStateInvalidError = (
+  paymentMethod,
+  paymentStatus,
+) => {
+  return new AppError("Only a fully paid Order can be refunded", 409, {
+    errorCode: "ORDER_REFUND_PAYMENT_STATE_INVALID",
+
+    details: {
+      paymentMethod,
+      paymentStatus,
+
+      requiredPaymentStatus: ORDER_PAYMENT_STATUSES.PAID,
+    },
+  });
+};
+
+const createOrderRefundTotalInvalidError = (grandTotal, currency) => {
+  return new AppError(
+    "The Order does not contain a valid refundable total",
+    409,
+    {
+      errorCode: "ORDER_REFUND_TOTAL_INVALID",
+
+      details: {
+        grandTotal,
+        currency,
+      },
+    },
+  );
+};
+/*
+|--------------------------------------------------------------------------
 | Order Inventory Commit Errors
 |--------------------------------------------------------------------------
 */
@@ -589,6 +681,75 @@ const createDedicatedShipmentWorkflowRequiredError = () => {
   return new AppError("Order shipment must use the shipment workflow", 409, {
     errorCode: "ORDER_SHIPMENT_WORKFLOW_REQUIRED",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Order Was Already Refunded
+|--------------------------------------------------------------------------
+*/
+
+const orderHasCompletedRefund = (order) => {
+  return Boolean(
+    order.status === ORDER_STATUSES.REFUNDED ||
+    order.payment?.status === ORDER_PAYMENT_STATUSES.REFUNDED ||
+    order.payment?.refundedAt ||
+    order.refund?.refundedAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Delivery Was Completed Before Refund
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderDeliveryCompletedForRefund = (order) => {
+  const shipment = order.shipment;
+
+  const deliveryCompleted = Boolean(
+    shipment?.shippedAt && shipment?.deliveredAt,
+  );
+
+  if (!deliveryCompleted) {
+    throw createOrderRefundDeliveryStateInvalidError();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Refund Inventory Remains Committed
+|--------------------------------------------------------------------------
+|
+| A refund does not automatically restock the Product.
+|
+| Returned goods must be inspected and restocked through a separate
+| customer-return inventory adjustment.
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderInventoryRemainsCommittedForRefund = (order) => {
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.COMMITTED) {
+    throw createOrderRefundInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createOrderRefundInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const fullyCommitted =
+      inventory?.status === ORDER_INVENTORY_STATUSES.COMMITTED &&
+      inventory.reservedQuantity === 0 &&
+      inventory.committedQuantity === item.quantity &&
+      inventory.releasedQuantity === 0;
+
+    if (!fullyCommitted) {
+      throw createOrderRefundInventoryStateInvalidError(order.inventoryStatus);
+    }
+  }
 };
 
 /*
@@ -1038,26 +1199,6 @@ export const getAdminOrderStatusTransitionPlan = (order, targetStatus) => {
   const action =
     ORDER_STATUS_TRANSITION_ACTION_MAP[transitionKey] ??
     ORDER_STATUS_TRANSITION_ACTIONS.NONE;
-
-  /*
-    |--------------------------------------------------------------------------
-    | Cancellation Uses Dedicated Workflow
-    |--------------------------------------------------------------------------
-    */
-
-  if (targetStatus === ORDER_STATUSES.CANCELLED) {
-    throw createDedicatedCancellationWorkflowRequiredError();
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Refund Uses Dedicated Workflow
-    |--------------------------------------------------------------------------
-    */
-
-  if (targetStatus === ORDER_STATUSES.REFUNDED) {
-    throw createDedicatedRefundWorkflowRequiredError();
-  }
 
   /*
     |--------------------------------------------------------------------------
@@ -3933,4 +4074,210 @@ export const deliverAdminOrder = async (
 
     deliveryData: deliveryData ?? {},
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Refund Payment Plan
+|--------------------------------------------------------------------------
+|
+| Both online and cash-on-delivery Orders must currently be paid.
+|
+| This workflow records a completed full refund.
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderRefundPaymentPlan = (order) => {
+  const paymentMethod = order.payment?.method;
+
+  const paymentStatus = order.payment?.status;
+
+  if (paymentStatus !== ORDER_PAYMENT_STATUSES.PAID) {
+    throw createOrderRefundPaymentStateInvalidError(
+      paymentMethod,
+      paymentStatus,
+    );
+  }
+
+  const grandTotal = order.totals?.grandTotal;
+
+  const currency = order.totals?.currency;
+
+  const validGrandTotal =
+    typeof grandTotal === "number" &&
+    Number.isFinite(grandTotal) &&
+    grandTotal > 0;
+
+  if (!validGrandTotal || !currency) {
+    throw createOrderRefundTotalInvalidError(grandTotal, currency);
+  }
+
+  return {
+    paymentMethod,
+
+    currentPaymentStatus: paymentStatus,
+
+    targetPaymentStatus: ORDER_PAYMENT_STATUSES.REFUNDED,
+
+    refundAmount: grandTotal,
+
+    currency,
+
+    preservePaidAt: true,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Order Can Be Refunded
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderCanBeRefunded = (order) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Refund Protection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderHasCompletedRefund(order)) {
+    throw createOrderAlreadyRefundedError(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Current Order Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (order.status !== ORDER_STATUSES.DELIVERED) {
+    throw createOrderRefundStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Transition Plan
+    |--------------------------------------------------------------------------
+    */
+
+  const transitionPlan = getAdminOrderStatusTransitionPlan(
+    order,
+    ORDER_STATUSES.REFUNDED,
+  );
+
+  if (!transitionPlan.requiresRefund) {
+    throw createOrderRefundStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Delivery State
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderDeliveryCompletedForRefund(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inventory Snapshot
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderInventoryRemainsCommittedForRefund(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Payment State and Refund Amount
+    |--------------------------------------------------------------------------
+    */
+
+  const paymentPlan = getAdminOrderRefundPaymentPlan(order);
+
+  return {
+    transitionPlan,
+    paymentPlan,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Refunded Order State
+|--------------------------------------------------------------------------
+|
+| This prepares the trusted state only.
+| Database persistence is added in the next part.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminRefundedOrderState = (
+  order,
+  { refundData, adminId, refundedAt = new Date() },
+) => {
+  const { paymentPlan } = assertAdminOrderCanBeRefunded(order);
+
+  const existingPayment = normalizeOrderSubdocument(order.payment);
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  const refundedState = {
+    status: ORDER_STATUSES.REFUNDED,
+
+    /*
+     * Refunding payment does not automatically restock goods.
+     */
+    inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    payment: {
+      ...existingPayment,
+
+      status: ORDER_PAYMENT_STATUSES.REFUNDED,
+
+      /*
+       * Preserve when the original payment was completed.
+       */
+      paidAt: existingPayment.paidAt,
+
+      refundedAt,
+
+      failedAt: null,
+    },
+
+    refund: {
+      reason: refundData.reason,
+
+      referenceId: refundData.referenceId,
+
+      amount: paymentPlan.refundAmount,
+
+      currency: paymentPlan.currency,
+
+      refundedBy: adminId,
+
+      refundedAt,
+    },
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.REFUNDED,
+
+        note: refundData.note ?? "Order payment fully refunded",
+
+        changedBy: adminId,
+
+        changedAt: refundedAt,
+      },
+    ],
+
+    updatedBy: adminId,
+  };
+
+  if (refundData.adminNote !== undefined) {
+    refundedState.adminNote = refundData.adminNote;
+  }
+
+  return refundedState;
 };

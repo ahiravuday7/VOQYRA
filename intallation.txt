@@ -2377,6 +2377,78 @@ Duplicate-delivery protection
 Invalid shipment, inventory, and payment states
 Generic status endpoint protection
 |--------------------------------------------------------------------------
+Part 114: Admin Refund Request Validation and Business Rules
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares the dedicated refund endpoint:
+
+POST /api/v1/admin/orders/:orderId/refund
+
+The refund workflow will eventually perform:
+
+delivered
+   ↓
+refunded
+
+payment.status     paid → refunded
+payment.refundedAt null → generated timestamp
+
+This implementation handles a full Order refund. The refunded amount will be derived from the trusted Order total—not accepted from the request.
+
+No controller, route, or database persistence is added yet.
+
+Expected online-payment refund state
+
+Before refund:
+
+Order status           = delivered
+Payment method         = online
+Payment status         = paid
+Payment paidAt         = original gateway timestamp
+Payment refundedAt     = null
+
+After refund:
+
+Order status           = refunded
+Payment method         = online
+Payment status         = refunded
+Payment paidAt         = unchanged
+Payment refundedAt     = generated refund timestamp
+
+Refund audit:
+
+refund.referenceId     = payment-provider refund ID
+refund.amount          = Order grand total
+refund.currency        = Order currency
+refund.refundedBy      = admin ID
+refund.refundedAt      = generated timestamp
+13. Expected COD refund state
+
+Before refund:
+
+Order status           = delivered
+Payment method         = cash-on-delivery
+Payment status         = paid
+Payment paidAt         = delivery timestamp
+
+After refund:
+
+Order status           = refunded
+Payment method         = cash-on-delivery
+Payment status         = refunded
+Payment paidAt         = unchanged
+Payment refundedAt     = generated timestamp
+
+The reference ID may represent:
+
+Bank transfer reference
+UPI refund reference
+Cash-return receipt
+Internal finance refund reference
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
