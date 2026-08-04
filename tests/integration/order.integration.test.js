@@ -277,6 +277,32 @@ const createCustomerOrderWithItemsFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Move Order to Processing
+|--------------------------------------------------------------------------
+*/
+
+const moveOrderToProcessing = async ({ adminAgent, orderId }) => {
+  await adminAgent
+    .patch(`/api/v1/admin/orders/${orderId}/status`)
+    .send({
+      status: "confirmed",
+
+      note: "Order confirmed for shipment test.",
+    })
+    .expect(200);
+
+  await adminAgent
+    .patch(`/api/v1/admin/orders/${orderId}/status`)
+    .send({
+      status: "processing",
+
+      note: "Order processing started for shipment test.",
+    })
+    .expect(200);
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -4443,5 +4469,716 @@ describe("PATCH /api/v1/admin/orders/:orderId/status", () => {
         referenceId: createdOrder.orderNumber,
       }),
     ).toBe(2);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Shipment
+|--------------------------------------------------------------------------
+*/
+
+describe("POST /api/v1/admin/orders/:orderId/ship", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when shipping an Order without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/orders/${orderId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD123456789IN",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer uses the admin shipment endpoint", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/orders/${orderId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD123456789IN",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the shipment Order ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post("/api/v1/admin/orders/not-a-valid-object-id/ship")
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD123456789IN",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid shipment request data", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${orderId}/ship`)
+      .send({
+        carrier: "A",
+
+        trackingNumber: "X",
+
+        trackingUrl: "not-a-valid-url",
+
+        status: "shipped",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the shipment Order does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingOrderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${missingOrderId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-MISSING-ORDER",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    expect(response.body.message).toBe("Order was not found");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Shipment
+    |--------------------------------------------------------------------------
+    */
+
+  it("ships a processing Order without changing Product inventory or creating another inventory Ledger entry", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Shipment Integration Shirt",
+
+      slug: "shipment-integration-shirt",
+
+      variants: [
+        {
+          sku: "SHIPMENT-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 899,
+
+            discountPrice: 749,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 12,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 260,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 2,
+    });
+
+    await moveOrderToProcessing({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    /*
+     * Order creation:
+     * stock = 12, reservedStock = 2
+     *
+     * Confirmation:
+     * stock = 10, reservedStock = 0
+     */
+
+    const productBeforeShipment = await Product.findById(product._id).lean();
+
+    const variantBeforeShipment = findProductVariant(
+      productBeforeShipment,
+      variant._id,
+    );
+
+    expect(variantBeforeShipment.inventory.stock).toBe(10);
+
+    expect(variantBeforeShipment.inventory.reservedStock).toBe(0);
+
+    const ledgerCountBeforeShipment =
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+      });
+
+    expect(ledgerCountBeforeShipment).toBe(2);
+
+    const shipmentData = {
+      carrier: "Blue Dart",
+
+      trackingNumber: "BD123456789IN",
+
+      trackingUrl: "https://tracking.example.com/BD123456789IN",
+
+      note: "Order handed over to the delivery partner.",
+
+      adminNote: "Package verified before dispatch.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send(shipmentData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Order shipped successfully");
+
+    const shippedOrder = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Shipment Response
+        |--------------------------------------------------------------------------
+        */
+
+    expect(shippedOrder.id).toBe(createdOrder.id);
+
+    expect(shippedOrder.status).toBe("shipped");
+
+    expect(shippedOrder.inventoryStatus).toBe("committed");
+
+    expect(shippedOrder.shipment).toMatchObject({
+      carrier: "Blue Dart",
+
+      trackingNumber: "BD123456789IN",
+
+      trackingUrl: "https://tracking.example.com/BD123456789IN",
+
+      deliveredAt: null,
+    });
+
+    expect(shippedOrder.shipment.shippedAt).toBeTruthy();
+
+    expect(shippedOrder.adminNote).toBe("Package verified before dispatch.");
+
+    expect(shippedOrder.items[0].inventory).toEqual({
+      status: "committed",
+
+      reservedQuantity: 0,
+
+      committedQuantity: 2,
+
+      releasedQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("shipped");
+
+    expect(storedOrder.shipment.carrier).toBe("Blue Dart");
+
+    expect(storedOrder.shipment.trackingNumber).toBe("BD123456789IN");
+
+    expect(storedOrder.shipment.trackingUrl).toBe(
+      "https://tracking.example.com/BD123456789IN",
+    );
+
+    expect(storedOrder.shipment.shippedAt).toBeTruthy();
+
+    expect(storedOrder.shipment.deliveredAt).toBeNull();
+
+    expect(String(storedOrder.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Status History
+        |--------------------------------------------------------------------------
+        */
+
+    expect(
+      storedOrder.statusHistory.map((entry) => {
+        return entry.status;
+      }),
+    ).toEqual(["pending", "confirmed", "processing", "shipped"]);
+
+    const shipmentHistory = storedOrder.statusHistory.at(-1);
+
+    expect(shipmentHistory.note).toBe(
+      "Order handed over to the delivery partner.",
+    );
+
+    expect(String(shipmentHistory.changedBy)).toBe(String(admin._id));
+
+    expect(shipmentHistory.changedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterShipment = await Product.findById(product._id).lean();
+
+    const variantAfterShipment = findProductVariant(
+      productAfterShipment,
+      variant._id,
+    );
+
+    expect(variantAfterShipment.inventory.stock).toBe(
+      variantBeforeShipment.inventory.stock,
+    );
+
+    expect(variantAfterShipment.inventory.reservedStock).toBe(
+      variantBeforeShipment.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Shipment Inventory Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntriesAfterShipment = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesAfterShipment).toHaveLength(2);
+
+    expect(
+      ledgerEntriesAfterShipment.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects shipping an Order that has not entered processing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    /*
+     * Move only to confirmed.
+     */
+    await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      })
+      .expect(200);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-CONFIRMED-ORDER",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_SHIPMENT_STATUS_INVALID");
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.shipment?.shippedAt ?? null).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Shipment
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects creating shipment information twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToProcessing({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    const shipmentData = {
+      carrier: "Delhivery",
+
+      trackingNumber: "DLV123456789",
+
+      trackingUrl: "https://tracking.example.com/DLV123456789",
+    };
+
+    await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send(shipmentData)
+      .expect(200);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send(shipmentData);
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_SHIPMENT_ALREADY_CREATED");
+
+    expect(response.body.details.trackingNumber).toBe("DLV123456789");
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.statusHistory).toHaveLength(4);
+
+    expect(
+      storedOrder.statusHistory.filter((entry) => {
+        return entry.status === "shipped";
+      }),
+    ).toHaveLength(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Online Payment Rule
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects shipping an online-payment Order when payment is still pending", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await moveOrderToProcessing({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    /*
+     * Simulate an unpaid online-payment state after
+     * the Order entered processing.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "payment.method": "online",
+
+          "payment.status": "pending",
+
+          "payment.paidAt": null,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-ONLINE-PENDING",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_SHIPMENT_PAYMENT_STATE_INVALID",
+    );
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("processing");
+
+    expect(unchangedOrder.shipment?.shippedAt ?? null).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Inventory State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects shipment when Order item inventory is not fully committed", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "SHIP-INVENTORY-INVALID-M",
+
+          size: "M",
+
+          color: {
+            name: "White",
+
+            code: "#FFFFFF",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    await moveOrderToProcessing({
+      adminAgent,
+
+      orderId: createdOrder.id,
+    });
+
+    /*
+     * Corrupt only the Order inventory state.
+     * Product inventory remains committed.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          inventoryStatus: "reserved",
+
+          "items.0.inventory.status": "reserved",
+
+          "items.0.inventory.reservedQuantity": 1,
+
+          "items.0.inventory.committedQuantity": 0,
+
+          "items.0.inventory.releasedQuantity": 0,
+        },
+      },
+    );
+
+    const productBeforeRequest = await Product.findById(product._id).lean();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-INVENTORY-INVALID",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_SHIPMENT_INVENTORY_STATE_INVALID",
+    );
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("processing");
+
+    expect(unchangedOrder.shipment?.shippedAt ?? null).toBeNull();
+
+    const productAfterRequest = await Product.findById(product._id).lean();
+
+    const variantBeforeRequest = findProductVariant(
+      productBeforeRequest,
+      variant._id,
+    );
+
+    const variantAfterRequest = findProductVariant(
+      productAfterRequest,
+      variant._id,
+    );
+
+    expect(variantAfterRequest.inventory.stock).toBe(
+      variantBeforeRequest.inventory.stock,
+    );
+
+    expect(variantAfterRequest.inventory.reservedStock).toBe(
+      variantBeforeRequest.inventory.reservedStock,
+    );
   });
 });

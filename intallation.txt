@@ -2220,6 +2220,29 @@ Admin creates shipment
         ↓
 shipped
 |--------------------------------------------------------------------------
+Part 110: Admin Shipment Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This tests:
+
+POST /api/v1/admin/orders/:orderId/ship
+
+Coverage:
+
+Authentication and admin authorization
+Request validation
+Missing Orders
+Successful shipment
+Shipment audit history
+Product inventory invariants
+No shipment Inventory Ledger entry
+Invalid Order state
+Duplicate shipment protection
+Online-payment rules
+Invalid inventory state
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
