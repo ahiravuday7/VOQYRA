@@ -241,3 +241,31 @@ export const findCustomerOrderById = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Order for Cancellation
+|--------------------------------------------------------------------------
+|
+| Returns a Mongoose document because the Order will be updated
+| and saved inside the same transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderForCancellation = (
+  orderId,
+  customerId,
+  { session = null } = {},
+) => {
+  const query = Order.findOne({
+    _id: orderId,
+
+    customer: customerId,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

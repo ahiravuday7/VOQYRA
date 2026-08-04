@@ -1870,6 +1870,39 @@ Safe business errors
 
 No cancellation route or database update is added yet.
 |--------------------------------------------------------------------------
+Part 96: Atomic Customer Order Cancellation
+
+Update:
+
+src/modules/products/product.repository.js
+src/modules/orders/order.repository.js
+src/modules/orders/order.service.js
+
+This step will execute cancellation in one MongoDB transaction:
+
+Load customer-owned Order
+        ↓
+Validate cancellation rules
+        ↓
+Release every Product reservation
+        ↓
+Create release Ledger entries
+        ↓
+Mark Order inventory as released
+        ↓
+Mark Order as cancelled
+        ↓
+Commit everything together
+
+Cancellation releases temporary reservations only:
+
+stock stays unchanged
+reservedStock decreases
+availableStock increases
+
+That matches the inventory flow already defined for cancelled Orders.
+
+No controller or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

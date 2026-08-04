@@ -23,6 +23,7 @@ import {
   findProductsForCheckout,
   findProductVariantInventorySnapshot,
   reserveVariantStockAtomically,
+  releaseOrderVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import {
@@ -30,6 +31,8 @@ import {
   findExistingOrderNumber,
   findCustomerOrderById,
   listCustomerOrders,
+  findCustomerOrderForCancellation,
+  saveOrderDocument,
 } from "./order.repository.js";
 
 /*
@@ -258,6 +261,167 @@ const createOrderInventoryReleaseStateInvalidError = ({
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Order Inventory Release Conflict
+|--------------------------------------------------------------------------
+*/
+
+const createOrderInventoryReleaseConflictError = (productId, variantId) => {
+  return new AppError(
+    "Order inventory changed while cancellation was being processed",
+    409,
+    {
+      errorCode: "ORDER_INVENTORY_RELEASE_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Released Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedReleasedVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((candidate) => {
+    return String(candidate._id) === String(variantId);
+  });
+
+  if (!variant) {
+    throw createOrderInventoryReleaseStateInvalidError({
+      orderId: product._id,
+
+      itemId: variantId,
+
+      inventoryStatus: null,
+    });
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Order Reservation Release
+|--------------------------------------------------------------------------
+|
+| Called only when the atomic Product update returns null.
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedOrderReservationRelease = async ({
+  orderId,
+  orderItemId,
+  productId,
+  variantId,
+  releaseQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  if (!snapshot || !snapshot.variant) {
+    throw createOrderInventoryReleaseStateInvalidError({
+      orderId,
+      itemId: orderItemId,
+
+      inventoryStatus: "variant-unavailable",
+    });
+  }
+
+  const reservedStock = snapshot.variant.reservedStock;
+
+  if (
+    !Number.isInteger(reservedStock) ||
+    reservedStock < 0 ||
+    reservedStock < releaseQuantity
+  ) {
+    throw createOrderInventoryReleaseStateInvalidError({
+      orderId,
+      itemId: orderItemId,
+
+      inventoryStatus: "insufficient-reserved-stock",
+    });
+  }
+
+  /*
+   * The diagnostic snapshot shows enough reserved stock,
+   * but the atomic update still did not match.
+   */
+  throw createOrderInventoryReleaseConflictError(productId, variantId);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Reservation Release Ledger
+|--------------------------------------------------------------------------
+*/
+
+const createOrderReservationReleaseLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  orderNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReleasedVariant(updatedProduct, variantId);
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * The atomic update has already decreased reservedStock.
+   *
+   * beforeReservedStock =
+   * afterReservedStock + released quantity
+   */
+  const beforeReservedStock = afterReservedStock + quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RELEASE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: -quantity,
+
+      before: buildOrderInventoryState(afterStock, beforeReservedStock),
+
+      after: buildOrderInventoryState(afterStock, afterReservedStock),
+
+      referenceId: orderNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+
+  return updatedVariant;
 };
 
 /*
@@ -1555,4 +1719,223 @@ export const buildCustomerCancelledOrderState = (
 
     updatedBy: customerId,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Release Order Items Inventory in Transaction
+|--------------------------------------------------------------------------
+|
+| The caller owns the transaction.
+|
+| Do not create or commit another transaction here.
+|--------------------------------------------------------------------------
+*/
+
+export const releaseOrderItemsInventoryInTransaction = async (
+  order,
+  { actorUserId, session },
+) => {
+  requireActiveOrderTransaction(session);
+
+  if (!actorUserId) {
+    throw new Error("Order inventory release requires an actor user ID");
+  }
+
+  /*
+   * The validation confirms that every item has a complete
+   * active reservation before database mutations begin.
+   */
+  assertCustomerOrderCanBeCancelled(order);
+
+  for (const orderItem of order.items) {
+    const productId = orderItem.product;
+
+    const variantId = orderItem.variantId;
+
+    const releaseQuantity = orderItem.inventory.reservedQuantity;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Atomic Reservation Release
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedProduct = await releaseOrderVariantStockAtomically({
+      productId,
+      variantId,
+
+      quantity: releaseQuantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedOrderReservationRelease({
+        orderId: order._id,
+
+        orderItemId: orderItem._id,
+
+        productId,
+        variantId,
+        releaseQuantity,
+        session,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Matching Release Ledger Entry
+      |--------------------------------------------------------------------------
+      */
+
+    await createOrderReservationReleaseLedgerEntry({
+      updatedProduct,
+      variantId,
+
+      quantity: releaseQuantity,
+
+      orderNumber: order.orderNumber,
+
+      actorUserId,
+
+      session,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Customer Order Cancellation
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicCustomerOrderCancellation = async ({
+  orderId,
+  customerId,
+  reason,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let cancelledOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Customer-Owned Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findCustomerOrderForCancellation(
+          orderId,
+          customerId,
+          {
+            session,
+          },
+        );
+
+        if (!order) {
+          /*
+           * The same response is used when:
+           *
+           * - The Order does not exist.
+           * - The Order belongs to another customer.
+           */
+          throw createCustomerOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate Cancellation and Inventory State
+          |--------------------------------------------------------------------------
+          */
+
+        assertCustomerOrderCanBeCancelled(order);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Release Product Reservations and Write Ledgers
+          |--------------------------------------------------------------------------
+          */
+
+        await releaseOrderItemsInventoryInTransaction(order, {
+          actorUserId: customerId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Cancelled Order State
+          |--------------------------------------------------------------------------
+          */
+
+        const cancelledState = buildCustomerCancelledOrderState(order, {
+          reason,
+
+          customerId,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Update Order
+          |--------------------------------------------------------------------------
+          */
+
+        order.set(cancelledState);
+
+        cancelledOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return cancelledOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Order
+|--------------------------------------------------------------------------
+*/
+
+export const cancelCustomerOrder = async (
+  orderId,
+  customerId,
+  cancellationData,
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to cancel an Order");
+  }
+
+  const reason = cancellationData?.reason;
+
+  if (!reason) {
+    throw new Error("Cancellation reason is required");
+  }
+
+  return executeAtomicCustomerOrderCancellation({
+    orderId,
+    customerId,
+    reason,
+  });
 };

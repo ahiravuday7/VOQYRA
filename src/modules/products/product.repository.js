@@ -1745,6 +1745,68 @@ export const releaseVariantStockAtomically = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Release Order Variant Reservation Atomically
+|--------------------------------------------------------------------------
+|
+| This query intentionally does not require:
+|
+| - Product status to be active
+| - Product to be publicly visible
+| - Variant to be active
+|
+| A Product or variant may become inactive after the Order was created,
+| but its existing reservation must still be releasable.
+|--------------------------------------------------------------------------
+*/
+
+export const releaseOrderVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+  session,
+}) => {
+  const normalizedProductId = normalizeInventoryObjectId(productId);
+
+  const normalizedVariantId = normalizeInventoryObjectId(variantId);
+
+  return Product.findOneAndUpdate(
+    {
+      _id: normalizedProductId,
+
+      variants: {
+        $elemMatch: {
+          _id: normalizedVariantId,
+
+          "inventory.reservedStock": {
+            $gte: quantity,
+          },
+        },
+      },
+    },
+
+    {
+      $inc: {
+        "variants.$.inventory.reservedStock": -quantity,
+      },
+
+      $set: {
+        updatedBy: actorUserId,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+
+      session,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Commit Reserved Variant Stock Atomically
 |--------------------------------------------------------------------------
 |
