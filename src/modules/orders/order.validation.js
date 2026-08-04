@@ -711,6 +711,84 @@ const adminOrderStatusUpdateBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Shipment Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderShipmentBodySchema = z.strictObject({
+  carrier: z
+    .string({
+      error: "Shipment carrier is required",
+    })
+    .trim()
+    .min(2, {
+      error: "Shipment carrier must contain at least 2 characters",
+    })
+    .max(100, {
+      error: "Shipment carrier cannot exceed 100 characters",
+    }),
+
+  trackingNumber: z
+    .string({
+      error: "Tracking number is required",
+    })
+    .trim()
+    .min(3, {
+      error: "Tracking number must contain at least 3 characters",
+    })
+    .max(100, {
+      error: "Tracking number cannot exceed 100 characters",
+    }),
+
+  trackingUrl: z.preprocess(
+    (value) => {
+      if (typeof value === "string" && value.trim() === "") {
+        return undefined;
+      }
+
+      return value;
+    },
+
+    z
+      .string({
+        error: "Tracking URL must be text",
+      })
+      .trim()
+      .url({
+        error: "Tracking URL must be a valid URL",
+      })
+      .max(2048, {
+        error: "Tracking URL cannot exceed 2048 characters",
+      })
+      .optional(),
+  ),
+
+  note: z
+    .string({
+      error: "Shipment note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Shipment note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Shipment note cannot exceed 500 characters",
+    })
+    .optional(),
+
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Request
 |--------------------------------------------------------------------------
 |
@@ -823,6 +901,23 @@ export const adminOrderDetailsRequestSchema = z.strictObject({
 
 export const adminOrderStatusUpdateRequestSchema = z.strictObject({
   body: adminOrderStatusUpdateBodySchema,
+
+  params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Shipment Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/ship
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderShipmentRequestSchema = z.strictObject({
+  body: adminOrderShipmentBodySchema,
 
   params: customerOrderParamsSchema,
 

@@ -377,6 +377,71 @@ const createDedicatedRefundWorkflowRequiredError = () => {
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Shipment Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderShipmentAlreadyCreatedError = (order) => {
+  return new AppError(
+    "Shipment information already exists for this Order",
+    409,
+    {
+      errorCode: "ORDER_SHIPMENT_ALREADY_CREATED",
+
+      details: {
+        status: order.status,
+
+        trackingNumber: order.shipment?.trackingNumber ?? null,
+      },
+    },
+  );
+};
+
+const createOrderShipmentStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Order cannot be shipped from its current status",
+    409,
+    {
+      errorCode: "ORDER_SHIPMENT_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+        requiredStatus: ORDER_STATUSES.PROCESSING,
+      },
+    },
+  );
+};
+
+const createOrderShipmentInventoryStateInvalidError = (inventoryStatus) => {
+  return new AppError(
+    "Order inventory must be fully committed before shipment",
+    409,
+    {
+      errorCode: "ORDER_SHIPMENT_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+const createOrderShipmentPaymentStateInvalidError = (
+  paymentMethod,
+  paymentStatus,
+) => {
+  return new AppError("Order payment state does not allow shipment", 409, {
+    errorCode: "ORDER_SHIPMENT_PAYMENT_STATE_INVALID",
+
+    details: {
+      paymentMethod,
+      paymentStatus,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Order Inventory Commit Errors
 |--------------------------------------------------------------------------
 */
@@ -434,6 +499,92 @@ const createDedicatedShipmentWorkflowRequiredError = () => {
   });
 };
 
+/*
+|--------------------------------------------------------------------------
+| Check Existing Order Shipment
+|--------------------------------------------------------------------------
+*/
+
+const orderHasShipmentInformation = (order) => {
+  return Boolean(
+    order.shipment?.shippedAt ||
+    order.shipment?.trackingNumber ||
+    order.shipment?.carrier,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Order Items Are Fully Committed
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderItemsAreFullyCommitted = (order) => {
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.COMMITTED) {
+    throw createOrderShipmentInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createOrderShipmentInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const fullyCommitted =
+      inventory?.status === ORDER_INVENTORY_STATUSES.COMMITTED &&
+      inventory.reservedQuantity === 0 &&
+      inventory.committedQuantity === item.quantity &&
+      inventory.releasedQuantity === 0;
+
+    if (!fullyCommitted) {
+      throw createOrderShipmentInventoryStateInvalidError(
+        order.inventoryStatus,
+      );
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Order Payment Allows Shipment
+|--------------------------------------------------------------------------
+|
+| Cash on delivery:
+| - pending or paid is allowed.
+|
+| Online:
+| - payment must be paid.
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderPaymentAllowsShipment = (order) => {
+  const paymentMethod = order.payment?.method;
+
+  const paymentStatus = order.payment?.status;
+
+  if (paymentMethod === ORDER_PAYMENT_METHODS.CASH_ON_DELIVERY) {
+    const validStatus =
+      paymentStatus === ORDER_PAYMENT_STATUSES.PENDING ||
+      paymentStatus === ORDER_PAYMENT_STATUSES.PAID;
+
+    if (validStatus) {
+      return;
+    }
+  }
+
+  if (
+    paymentMethod === ORDER_PAYMENT_METHODS.ONLINE &&
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID
+  ) {
+    return;
+  }
+
+  throw createOrderShipmentPaymentStateInvalidError(
+    paymentMethod,
+    paymentStatus,
+  );
+};
 /*
 |--------------------------------------------------------------------------
 | Admin Order Status Notes
@@ -3042,4 +3193,126 @@ export const updateAdminOrderStatus = async (orderId, adminId, statusData) => {
     adminId,
     statusData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Order Can Be Shipped
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderCanBeShipped = (order) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Shipment Protection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderHasShipmentInformation(order)) {
+    throw createOrderShipmentAlreadyCreatedError(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Status Transition
+    |--------------------------------------------------------------------------
+    */
+
+  if (order.status !== ORDER_STATUSES.PROCESSING) {
+    throw createOrderShipmentStatusInvalidError(order.status);
+  }
+
+  const transitionPlan = getAdminOrderStatusTransitionPlan(
+    order,
+    ORDER_STATUSES.SHIPPED,
+  );
+
+  if (!transitionPlan.requiresShipment) {
+    throw createOrderShipmentStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Already Be Committed
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderItemsAreFullyCommitted(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Payment Must Allow Dispatch
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderPaymentAllowsShipment(order);
+
+  return transitionPlan;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Shipped Order State
+|--------------------------------------------------------------------------
+|
+| This function does not write to MongoDB.
+|
+| It prepares the trusted state that will be persisted
+| by the shipment transaction in the next part.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminShippedOrderState = (
+  order,
+  { shipmentData, adminId, shippedAt = new Date() },
+) => {
+  assertAdminOrderCanBeShipped(order);
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  const shippedState = {
+    shipment: {
+      carrier: shipmentData.carrier,
+
+      trackingNumber: shipmentData.trackingNumber,
+
+      trackingUrl: shipmentData.trackingUrl ?? null,
+
+      shippedAt,
+
+      deliveredAt: null,
+    },
+
+    status: ORDER_STATUSES.SHIPPED,
+
+    /*
+     * Product stock was already committed during confirmation.
+     * Shipping does not modify inventory again.
+     */
+    inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.SHIPPED,
+
+        note: shipmentData.note ?? "Order shipped by admin",
+
+        changedBy: adminId,
+
+        changedAt: shippedAt,
+      },
+    ],
+
+    updatedBy: adminId,
+  };
+
+  if (shipmentData.adminNote !== undefined) {
+    shippedState.adminNote = shipmentData.adminNote;
+  }
+
+  return shippedState;
 };

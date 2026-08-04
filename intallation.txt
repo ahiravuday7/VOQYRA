@@ -2154,6 +2154,27 @@ Shipment workflow                           ❌
 Delivery completion workflow                Partially ready
 Payment/refund workflow                      ❌
 |--------------------------------------------------------------------------
+Part 108: Admin Shipment Request Validation and Business Rules
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares the dedicated shipment workflow:
+
+POST /api/v1/admin/orders/:orderId/ship
+
+It will define:
+
+Required carrier and tracking details
+Valid Order state for shipping
+Inventory-commit requirements
+Payment-state requirements
+Duplicate-shipment protection
+Trusted shipped-Order state generation
+
+No database persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
