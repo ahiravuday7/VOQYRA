@@ -2100,7 +2100,59 @@ Protected dedicated workflows:
 pending    → cancelled   Use cancellation workflow
 processing → shipped     Use shipment workflow
 delivered  → refunded    Use refund workflow
+
+Complete flow
+Customer places order
+        ↓
+     pending
+        ↓ Admin accepts/verifies
+    confirmed
+        ↓ Packaging starts
+   processing
+        ↓ Shipment workflow
+     shipped
+        ↓ Courier delivers
+    delivered
 |--------------------------------------------------------------------------
+Part 107: Admin Order Status Transition Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+PATCH /api/v1/admin/orders/:orderId/status
+
+Coverage includes:
+
+Authentication and admin authorization
+Request and Order-ID validation
+Pending → confirmed
+Atomic physical-stock commit
+Commit Inventory Ledger entries
+Confirmed → processing
+Same and invalid transitions
+Protected cancellation and shipment workflows
+Online-payment confirmation rules
+Complete transaction rollback
+
+Keep all existing Order tests unchanged.
+Current Order implementation:
+Customer Order creation                     ✅
+Customer Order history                      ✅
+Customer Order cancellation                 ✅
+Admin Order list/details                    ✅
+Admin Order confirmation                    ✅
+Atomic physical-stock commit                ✅
+Commit Ledger audit trail                   ✅
+Confirmed-to-processing transition          ✅
+Protected transition workflows              ✅
+Status-transition authorization tests       ✅
+Status-transition rollback tests            ✅
+Shipment workflow                           ❌
+Delivery completion workflow                Partially ready
+Payment/refund workflow                      ❌
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

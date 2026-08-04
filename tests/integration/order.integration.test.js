@@ -3439,3 +3439,1009 @@ describe("GET /api/v1/admin/orders/:orderId", () => {
     expect(order.updatedBy).toBe(String(customer._id));
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Status Transitions
+|--------------------------------------------------------------------------
+*/
+
+describe("PATCH /api/v1/admin/orders/:orderId/status", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when updating an Order status without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .patch(`/api/v1/admin/orders/${orderId}/status`)
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer uses the admin status endpoint", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .patch(`/api/v1/admin/orders/${orderId}/status`)
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the Order ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .patch("/api/v1/admin/orders/not-a-valid-object-id/status")
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Order does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${orderId}/status`)
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Order Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+  it("confirms a pending Order, commits inventory and creates commit Ledger entries", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Confirmation Test Shirt",
+
+      slug: "confirmation-test-shirt",
+
+      variants: [
+        {
+          sku: "CONFIRM-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+     * Order creation reserves two units.
+     */
+    const productAfterOrder = await Product.findById(product._id).lean();
+
+    const variantAfterOrder = findProductVariant(
+      productAfterOrder,
+      variant._id,
+    );
+
+    expect(variantAfterOrder.inventory.stock).toBe(10);
+
+    expect(variantAfterOrder.inventory.reservedStock).toBe(2);
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+
+        note: "Order verified and confirmed.",
+
+        adminNote: "Inventory and address verified.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Order status updated successfully");
+
+    const confirmedOrder = response.body.data.order;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Response Order State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(confirmedOrder.status).toBe("confirmed");
+
+    expect(confirmedOrder.inventoryStatus).toBe("committed");
+
+    expect(confirmedOrder.adminNote).toBe("Inventory and address verified.");
+
+    expect(confirmedOrder.items[0].inventory).toEqual({
+      status: "committed",
+
+      reservedQuantity: 0,
+
+      committedQuantity: 2,
+
+      releasedQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Order Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.inventoryStatus).toBe("committed");
+
+    expect(storedOrder.items[0].inventory.reservedQuantity).toBe(0);
+
+    expect(storedOrder.items[0].inventory.committedQuantity).toBe(2);
+
+    const latestHistoryEntry = storedOrder.statusHistory.at(-1);
+
+    expect(latestHistoryEntry.status).toBe("confirmed");
+
+    expect(latestHistoryEntry.note).toBe("Order verified and confirmed.");
+
+    expect(String(latestHistoryEntry.changedBy)).toBe(String(admin._id));
+
+    expect(String(storedOrder.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Commit
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterConfirmation = await Product.findById(product._id).lean();
+
+    const variantAfterConfirmation = findProductVariant(
+      productAfterConfirmation,
+      variant._id,
+    );
+
+    expect(variantAfterConfirmation.inventory.stock).toBe(8);
+
+    expect(variantAfterConfirmation.inventory.reservedStock).toBe(0);
+
+    expect(
+      variantAfterConfirmation.inventory.stock -
+        variantAfterConfirmation.inventory.reservedStock,
+    ).toBe(8);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Ledger Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+
+      product: product._id,
+
+      variantId: variant._id,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    const reserveLedger = ledgerEntries.find((ledger) => {
+      return ledger.operation === "reserve";
+    });
+
+    const commitLedger = ledgerEntries.find((ledger) => {
+      return ledger.operation === "commit";
+    });
+
+    expect(reserveLedger).toBeTruthy();
+
+    expect(commitLedger).toBeTruthy();
+
+    expect(commitLedger.quantity).toBe(2);
+
+    expect(commitLedger.stockDelta).toBe(-2);
+
+    expect(commitLedger.reservedStockDelta).toBe(-2);
+
+    expect(commitLedger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(commitLedger.after).toMatchObject({
+      stock: 8,
+
+      reservedStock: 0,
+
+      availableStock: 8,
+    });
+
+    expect(String(commitLedger.actor)).toBe(String(admin._id));
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Confirmed to Processing
+    |--------------------------------------------------------------------------
+    */
+
+  it("moves a confirmed Order to processing without changing Product inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "PROCESSING-BLU-L",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 899,
+
+            discountPrice: 799,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 2,
+    });
+
+    await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      })
+      .expect(200);
+
+    const inventoryBeforeProcessing = await Product.findById(
+      product._id,
+    ).lean();
+
+    const variantBeforeProcessing = findProductVariant(
+      inventoryBeforeProcessing,
+      variant._id,
+    );
+
+    expect(variantBeforeProcessing.inventory.stock).toBe(8);
+
+    expect(variantBeforeProcessing.inventory.reservedStock).toBe(0);
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments({
+      referenceId: createdOrder.orderNumber,
+    });
+
+    expect(ledgerCountBefore).toBe(2);
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "processing",
+
+        note: "Warehouse processing started.",
+      });
+
+    expect(response.status).toBe(200);
+
+    const processingOrder = response.body.data.order;
+
+    expect(processingOrder.status).toBe("processing");
+
+    expect(processingOrder.inventoryStatus).toBe("committed");
+
+    expect(processingOrder.items[0].inventory.committedQuantity).toBe(2);
+
+    const productAfterProcessing = await Product.findById(product._id).lean();
+
+    const variantAfterProcessing = findProductVariant(
+      productAfterProcessing,
+      variant._id,
+    );
+
+    expect(variantAfterProcessing.inventory.stock).toBe(8);
+
+    expect(variantAfterProcessing.inventory.reservedStock).toBe(0);
+
+    /*
+     * Processing does not create another inventory Ledger entry.
+     */
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+      }),
+    ).toBe(2);
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.statusHistory.at(-1).status).toBe("processing");
+
+    expect(String(storedOrder.statusHistory.at(-1).changedBy)).toBe(
+      String(admin._id),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Same Status
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects setting the same Order status twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      })
+      .expect(200);
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_STATUS_ALREADY_SET");
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Status Transition
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects skipping directly from pending to processing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "processing",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_STATUS_TRANSITION_NOT_ALLOWED");
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("pending");
+
+    expect(unchangedOrder.inventoryStatus).toBe("reserved");
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(variant.inventory.stock);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Dedicated Cancellation Workflow
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires the dedicated cancellation workflow for pending to cancelled", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "cancelled",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_CANCELLATION_WORKFLOW_REQUIRED",
+    );
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Dedicated Shipment Workflow
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires the shipment workflow when moving processing to shipped", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      })
+      .expect(200);
+
+    await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "processing",
+      })
+      .expect(200);
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "shipped",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_SHIPMENT_WORKFLOW_REQUIRED");
+
+    const storedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(storedOrder.status).toBe("processing");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Online Payment Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects confirmation when an online Order payment is still pending", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+      variant,
+
+      quantity: 1,
+    });
+
+    /*
+     * Prepare an unpaid online-payment Order.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "payment.method": "online",
+
+          "payment.status": "pending",
+
+          "payment.paidAt": null,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_CONFIRMATION_PAYMENT_STATE_INVALID",
+    );
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("pending");
+
+    expect(unchangedOrder.inventoryStatus).toBe("reserved");
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(variant.inventory.stock);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back earlier inventory commits when a later Order item cannot be committed", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const firstProduct = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Commit Rollback Product One",
+
+      slug: "commit-rollback-product-one",
+
+      variants: [
+        {
+          sku: "COMMIT-ROLLBACK-ONE",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const secondProduct = await createActiveProductFixture({
+      category: category._id,
+
+      name: "Commit Rollback Product Two",
+
+      slug: "commit-rollback-product-two",
+
+      variants: [
+        {
+          sku: "COMMIT-ROLLBACK-TWO",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = firstProduct.variants[0];
+
+    const secondVariant = secondProduct.variants[0];
+
+    const createdOrder = await createCustomerOrderWithItemsFixture({
+      customerAgent,
+
+      items: [
+        {
+          product: firstProduct,
+
+          variant: firstVariant,
+
+          quantity: 2,
+        },
+        {
+          product: secondProduct,
+
+          variant: secondVariant,
+
+          quantity: 1,
+        },
+      ],
+    });
+
+    /*
+     * Order creation produced:
+     *
+     * Product One:
+     * stock = 10, reservedStock = 2
+     *
+     * Product Two:
+     * stock = 10, reservedStock = 1
+     */
+
+    /*
+     * Simulate corrupted inventory for the second Product.
+     *
+     * The Order still says one unit is reserved,
+     * but the Product reservation no longer exists.
+     */
+    await Product.updateOne(
+      {
+        _id: secondProduct._id,
+
+        "variants._id": secondVariant._id,
+      },
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .patch(`/api/v1/admin/orders/${createdOrder.id}/status`)
+      .send({
+        status: "confirmed",
+
+        note: "Commit rollback integration test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_INVENTORY_COMMIT_STATE_INVALID",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Product Commit Must Be Rolled Back
+        |--------------------------------------------------------------------------
+        */
+
+    const finalFirstProduct = await Product.findById(firstProduct._id).lean();
+
+    const finalFirstVariant = findProductVariant(
+      finalFirstProduct,
+      firstVariant._id,
+    );
+
+    expect(finalFirstVariant.inventory.stock).toBe(10);
+
+    expect(finalFirstVariant.inventory.reservedStock).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Existing Second-Product Corruption Remains
+        |--------------------------------------------------------------------------
+        */
+
+    const finalSecondProduct = await Product.findById(secondProduct._id).lean();
+
+    const finalSecondVariant = findProductVariant(
+      finalSecondProduct,
+      secondVariant._id,
+    );
+
+    expect(finalSecondVariant.inventory.stock).toBe(10);
+
+    expect(finalSecondVariant.inventory.reservedStock).toBe(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Must Remain Pending and Reserved
+        |--------------------------------------------------------------------------
+        */
+
+    const unchangedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(unchangedOrder.status).toBe("pending");
+
+    expect(unchangedOrder.inventoryStatus).toBe("reserved");
+
+    expect(unchangedOrder.items[0].inventory.status).toBe("reserved");
+
+    expect(unchangedOrder.items[0].inventory.reservedQuantity).toBe(2);
+
+    expect(unchangedOrder.statusHistory).toHaveLength(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Commit Ledger Entry May Remain
+        |--------------------------------------------------------------------------
+        */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+     * The two original reserve entries remain.
+     */
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: createdOrder.orderNumber,
+      }),
+    ).toBe(2);
+  });
+});
