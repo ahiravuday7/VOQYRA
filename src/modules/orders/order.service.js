@@ -9,6 +9,10 @@ import {
   ORDER_STATUSES,
   CUSTOMER_CANCELLABLE_ORDER_STATUS_VALUES,
   CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES,
+  ORDER_PAYMENT_METHODS,
+  ORDER_STATUS_TRANSITIONS,
+  ORDER_STATUS_TRANSITION_ACTION_MAP,
+  ORDER_STATUS_TRANSITION_ACTIONS,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -275,6 +279,300 @@ const createAdminOrderNotFoundError = () => {
   return new AppError("Order was not found", 404, {
     errorCode: "ORDER_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Status Transition Errors
+|--------------------------------------------------------------------------
+*/
+
+const createSameOrderStatusError = (status) => {
+  return new AppError("Order already has the requested status", 409, {
+    errorCode: "ORDER_STATUS_ALREADY_SET",
+
+    details: {
+      status,
+    },
+  });
+};
+
+const createInvalidOrderStatusTransitionError = (
+  currentStatus,
+  targetStatus,
+) => {
+  return new AppError(
+    "The requested Order status transition is not allowed",
+    409,
+    {
+      errorCode: "ORDER_STATUS_TRANSITION_NOT_ALLOWED",
+
+      details: {
+        currentStatus,
+        targetStatus,
+      },
+    },
+  );
+};
+
+const createOrderConfirmationInventoryStateError = (inventoryStatus) => {
+  return new AppError(
+    "Order inventory must be fully reserved before confirmation",
+    409,
+    {
+      errorCode: "ORDER_CONFIRMATION_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+const createOrderConfirmationPaymentStateError = (
+  paymentMethod,
+  paymentStatus,
+) => {
+  return new AppError("Order payment state does not allow confirmation", 409, {
+    errorCode: "ORDER_CONFIRMATION_PAYMENT_STATE_INVALID",
+
+    details: {
+      paymentMethod,
+      paymentStatus,
+    },
+  });
+};
+
+const createOrderProcessingInventoryStateError = (inventoryStatus) => {
+  return new AppError(
+    "Order inventory must be committed before processing begins",
+    409,
+    {
+      errorCode: "ORDER_PROCESSING_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+      },
+    },
+  );
+};
+
+const createDedicatedCancellationWorkflowRequiredError = () => {
+  return new AppError(
+    "Order cancellation must use the cancellation workflow",
+    409,
+    {
+      errorCode: "ORDER_CANCELLATION_WORKFLOW_REQUIRED",
+    },
+  );
+};
+
+const createDedicatedRefundWorkflowRequiredError = () => {
+  return new AppError("A delivered Order must use the refund workflow", 409, {
+    errorCode: "ORDER_REFUND_WORKFLOW_REQUIRED",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Complete Order Reservation
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderItemsAreFullyReserved = (order) => {
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.RESERVED) {
+    throw createOrderConfirmationInventoryStateError(order.inventoryStatus);
+  }
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createOrderConfirmationInventoryStateError(order.inventoryStatus);
+  }
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const fullyReserved =
+      inventory?.status === ORDER_INVENTORY_STATUSES.RESERVED &&
+      inventory.reservedQuantity === item.quantity &&
+      inventory.committedQuantity === 0 &&
+      inventory.releasedQuantity === 0;
+
+    if (!fullyReserved) {
+      throw createOrderConfirmationInventoryStateError(order.inventoryStatus);
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Order Payment Allows Confirmation
+|--------------------------------------------------------------------------
+|
+| Cash on delivery:
+| - pending or paid is acceptable.
+|
+| Online:
+| - payment must already be paid.
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderPaymentAllowsConfirmation = (order) => {
+  const paymentMethod = order.payment?.method;
+
+  const paymentStatus = order.payment?.status;
+
+  if (paymentMethod === ORDER_PAYMENT_METHODS.CASH_ON_DELIVERY) {
+    const validCashOnDeliveryStatus =
+      paymentStatus === ORDER_PAYMENT_STATUSES.PENDING ||
+      paymentStatus === ORDER_PAYMENT_STATUSES.PAID;
+
+    if (validCashOnDeliveryStatus) {
+      return;
+    }
+  }
+
+  if (
+    paymentMethod === ORDER_PAYMENT_METHODS.ONLINE &&
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID
+  ) {
+    return;
+  }
+
+  throw createOrderConfirmationPaymentStateError(paymentMethod, paymentStatus);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Order Can Begin Processing
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderCanBeginProcessing = (order) => {
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.COMMITTED) {
+    throw createOrderProcessingInventoryStateError(order.inventoryStatus);
+  }
+
+  for (const item of order.items) {
+    const inventory = item.inventory;
+
+    const fullyCommitted =
+      inventory?.status === ORDER_INVENTORY_STATUSES.COMMITTED &&
+      inventory.reservedQuantity === 0 &&
+      inventory.committedQuantity === item.quantity &&
+      inventory.releasedQuantity === 0;
+
+    if (!fullyCommitted) {
+      throw createOrderProcessingInventoryStateError(order.inventoryStatus);
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Order Transition Key
+|--------------------------------------------------------------------------
+*/
+
+const buildOrderStatusTransitionKey = (currentStatus, targetStatus) => {
+  return `${currentStatus}:` + `${targetStatus}`;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Status Transition Plan
+|--------------------------------------------------------------------------
+|
+| This validates the requested transition and returns the
+| additional business operation required by that transition.
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderStatusTransitionPlan = (order, targetStatus) => {
+  const currentStatus = order.status;
+
+  if (currentStatus === targetStatus) {
+    throw createSameOrderStatusError(currentStatus);
+  }
+
+  const allowedTargetStatuses = ORDER_STATUS_TRANSITIONS[currentStatus] ?? [];
+
+  if (!allowedTargetStatuses.includes(targetStatus)) {
+    throw createInvalidOrderStatusTransitionError(currentStatus, targetStatus);
+  }
+
+  const transitionKey = buildOrderStatusTransitionKey(
+    currentStatus,
+    targetStatus,
+  );
+
+  const action =
+    ORDER_STATUS_TRANSITION_ACTION_MAP[transitionKey] ??
+    ORDER_STATUS_TRANSITION_ACTIONS.NONE;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancellation Uses Dedicated Workflow
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetStatus === ORDER_STATUSES.CANCELLED) {
+    throw createDedicatedCancellationWorkflowRequiredError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Refund Uses Dedicated Workflow
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetStatus === ORDER_STATUSES.REFUNDED) {
+    throw createDedicatedRefundWorkflowRequiredError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pending → Confirmed
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    currentStatus === ORDER_STATUSES.PENDING &&
+    targetStatus === ORDER_STATUSES.CONFIRMED
+  ) {
+    assertOrderItemsAreFullyReserved(order);
+
+    assertOrderPaymentAllowsConfirmation(order);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Confirmed → Processing
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    currentStatus === ORDER_STATUSES.CONFIRMED &&
+    targetStatus === ORDER_STATUSES.PROCESSING
+  ) {
+    assertOrderCanBeginProcessing(order);
+  }
+
+  return {
+    currentStatus,
+    targetStatus,
+    action,
+
+    requiresInventoryCommit:
+      action === ORDER_STATUS_TRANSITION_ACTIONS.COMMIT_RESERVED_INVENTORY,
+
+    requiresInventoryRelease:
+      action === ORDER_STATUS_TRANSITION_ACTIONS.RELEASE_RESERVED_INVENTORY,
+
+    requiresShipment:
+      action === ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_SHIPMENT,
+
+    requiresRefund: action === ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_REFUND,
+  };
 };
 
 /*

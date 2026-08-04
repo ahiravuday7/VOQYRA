@@ -676,6 +676,41 @@ const customerOrderListQuerySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Status Update Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderStatusUpdateBodySchema = z.strictObject({
+  status: z.enum(ORDER_STATUS_VALUES, {
+    error: "Invalid Order status",
+  }),
+
+  note: z
+    .string({
+      error: "Status note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Status note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Status note cannot exceed 500 characters",
+    })
+    .optional(),
+
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Request
 |--------------------------------------------------------------------------
 |
@@ -771,6 +806,23 @@ export const adminOrderListRequestSchema = z.strictObject({
 
 export const adminOrderDetailsRequestSchema = z.strictObject({
   body: emptyObjectSchema,
+
+  params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Status Update Request
+|--------------------------------------------------------------------------
+|
+| PATCH /api/v1/admin/orders/:orderId/status
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderStatusUpdateRequestSchema = z.strictObject({
+  body: adminOrderStatusUpdateBodySchema,
 
   params: customerOrderParamsSchema,
 

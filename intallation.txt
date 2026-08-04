@@ -2030,6 +2030,19 @@ Cancelled Order audit information
 
 Keep all existing Order tests unchanged.
 |--------------------------------------------------------------------------
+Part 104: Admin Order Status Update Validation and Transition Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step defines the rules for the future endpoint:
+
+PATCH /api/v1/admin/orders/:orderId/status
+
+No Order status is updated yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

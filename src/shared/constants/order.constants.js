@@ -108,9 +108,6 @@ export const MAX_ORDER_ITEM_QUANTITY = 100;
 |--------------------------------------------------------------------------
 | Order Status Transitions
 |--------------------------------------------------------------------------
-|
-| These transitions will later be enforced by the Order service.
-|--------------------------------------------------------------------------
 */
 
 export const ORDER_STATUS_TRANSITIONS = Object.freeze({
@@ -119,15 +116,9 @@ export const ORDER_STATUS_TRANSITIONS = Object.freeze({
     ORDER_STATUSES.CANCELLED,
   ]),
 
-  [ORDER_STATUSES.CONFIRMED]: Object.freeze([
-    ORDER_STATUSES.PROCESSING,
-    ORDER_STATUSES.CANCELLED,
-  ]),
+  [ORDER_STATUSES.CONFIRMED]: Object.freeze([ORDER_STATUSES.PROCESSING]),
 
-  [ORDER_STATUSES.PROCESSING]: Object.freeze([
-    ORDER_STATUSES.SHIPPED,
-    ORDER_STATUSES.CANCELLED,
-  ]),
+  [ORDER_STATUSES.PROCESSING]: Object.freeze([ORDER_STATUSES.SHIPPED]),
 
   [ORDER_STATUSES.SHIPPED]: Object.freeze([ORDER_STATUSES.DELIVERED]),
 
@@ -156,3 +147,47 @@ export const CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES = Object.freeze([
   ORDER_PAYMENT_STATUSES.PENDING,
   ORDER_PAYMENT_STATUSES.FAILED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Order Status Transition Actions
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_STATUS_TRANSITION_ACTIONS = Object.freeze({
+  NONE: "none",
+
+  COMMIT_RESERVED_INVENTORY: "commit-reserved-inventory",
+
+  RELEASE_RESERVED_INVENTORY: "release-reserved-inventory",
+
+  REQUIRE_SHIPMENT: "require-shipment",
+
+  REQUIRE_REFUND: "require-refund",
+});
+
+/*
+|--------------------------------------------------------------------------
+| Order Status Transition Action Map
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_STATUS_TRANSITION_ACTION_MAP = Object.freeze({
+  [`${ORDER_STATUSES.PENDING}:${ORDER_STATUSES.CONFIRMED}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.COMMIT_RESERVED_INVENTORY,
+
+  [`${ORDER_STATUSES.PENDING}:${ORDER_STATUSES.CANCELLED}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.RELEASE_RESERVED_INVENTORY,
+
+  [`${ORDER_STATUSES.CONFIRMED}:${ORDER_STATUSES.PROCESSING}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.NONE,
+
+  [`${ORDER_STATUSES.PROCESSING}:${ORDER_STATUSES.SHIPPED}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_SHIPMENT,
+
+  [`${ORDER_STATUSES.SHIPPED}:${ORDER_STATUSES.DELIVERED}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.NONE,
+
+  [`${ORDER_STATUSES.DELIVERED}:${ORDER_STATUSES.REFUNDED}`]:
+    ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_REFUND,
+});
