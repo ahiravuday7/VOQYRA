@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import { beforeEach, describe, expect, it } from "vitest";
 
 import request from "supertest";
@@ -192,6 +194,40 @@ const createOrderRequestBody = ({ productId, variantId, quantity = 2 }) => {
 
     customerNote: "Please call before delivery",
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Customer Order Through API
+|--------------------------------------------------------------------------
+|
+| Creates a real Order using the public customer endpoint.
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerOrderFixture = async ({
+  customerAgent,
+  product,
+  variant = product.variants[0],
+  quantity = 1,
+  customerNote = "Order history test",
+}) => {
+  const requestBody = createOrderRequestBody({
+    productId: product._id,
+
+    variantId: variant._id,
+
+    quantity,
+  });
+
+  requestBody.customerNote = customerNote;
+
+  const response = await customerAgent
+    .post("/api/v1/orders")
+    .send(requestBody)
+    .expect(201);
+
+  return response.body.data.order;
 };
 
 /*
@@ -815,5 +851,472 @@ describe("POST /api/v1/orders", () => {
     expect(await Order.countDocuments()).toBe(0);
 
     expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order History
+|--------------------------------------------------------------------------
+*/
+
+describe("Customer Order history endpoints", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | List Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when listing Orders without authentication", async () => {
+    const response = await request(app).get("/api/v1/orders");
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | List Only Customer-Owned Orders
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns only Orders owned by the authenticated customer", async () => {
+    const {
+      agent: firstCustomerAgent,
+
+      user: firstCustomer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { agent: secondCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "ORDER-HISTORY-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstCustomerOrder = await createCustomerOrderFixture({
+      customerAgent: firstCustomerAgent,
+
+      product,
+
+      customerNote: "First customer Order",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent: secondCustomerAgent,
+
+      product,
+
+      customerNote: "Second customer Order",
+    });
+
+    const response = await firstCustomerAgent.get("/api/v1/orders");
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.data.orders).toHaveLength(1);
+
+    expect(response.body.data.orders[0].id).toBe(firstCustomerOrder.id);
+
+    expect(response.body.data.orders[0].orderNumber).toBe(
+      firstCustomerOrder.orderNumber,
+    );
+
+    expect(response.body.data.pagination.totalItems).toBe(1);
+
+    /*
+     * Double-check database ownership.
+     */
+    const storedOrder = await Order.findById(firstCustomerOrder.id).lean();
+
+    expect(String(storedOrder.customer)).toBe(String(firstCustomer._id));
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination
+    |--------------------------------------------------------------------------
+    */
+
+  it("paginates customer Orders", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "ORDER-PAGINATION-BLU-L",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 899,
+
+            discountPrice: 799,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 20,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Pagination Order 1",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Pagination Order 2",
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      customerNote: "Pagination Order 3",
+    });
+
+    const firstPageResponse = await customerAgent.get("/api/v1/orders").query({
+      page: 1,
+
+      limit: 2,
+    });
+
+    expect(firstPageResponse.status).toBe(200);
+
+    expect(firstPageResponse.body.data.orders).toHaveLength(2);
+
+    expect(firstPageResponse.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 2,
+
+      totalItems: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: false,
+
+      hasNextPage: true,
+    });
+
+    const secondPageResponse = await customerAgent.get("/api/v1/orders").query({
+      page: 2,
+
+      limit: 2,
+    });
+
+    expect(secondPageResponse.status).toBe(200);
+
+    expect(secondPageResponse.body.data.orders).toHaveLength(1);
+
+    expect(secondPageResponse.body.data.pagination).toEqual({
+      page: 2,
+
+      limit: 2,
+
+      totalItems: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: true,
+
+      hasNextPage: false,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Status Filtering
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters customer Orders by status", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    await createCustomerOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    const pendingResponse = await customerAgent.get("/api/v1/orders").query({
+      status: "pending",
+    });
+
+    expect(pendingResponse.status).toBe(200);
+
+    expect(pendingResponse.body.data.orders).toHaveLength(1);
+
+    expect(pendingResponse.body.data.orders[0].status).toBe("pending");
+
+    expect(pendingResponse.body.data.filters.status).toBe("pending");
+
+    const deliveredResponse = await customerAgent.get("/api/v1/orders").query({
+      status: "delivered",
+    });
+
+    expect(deliveredResponse.status).toBe(200);
+
+    expect(deliveredResponse.body.data.orders).toHaveLength(0);
+
+    expect(deliveredResponse.body.data.pagination.totalItems).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid List Query
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid Order list query parameters", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get("/api/v1/orders").query({
+      page: 0,
+
+      limit: 1000,
+
+      status: "unknown-status",
+
+      sortBy: "unknown-field",
+
+      sortDirection: "newest",
+    });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "query",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Owned Order Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns full Order details to the owning customer", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      quantity: 2,
+
+      customerNote: "Details test Order",
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/${createdOrder.id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    const responseOrder = response.body.data.order;
+
+    expect(responseOrder.id).toBe(createdOrder.id);
+
+    expect(responseOrder.orderNumber).toBe(createdOrder.orderNumber);
+
+    expect(responseOrder.status).toBe("pending");
+
+    expect(responseOrder.inventoryStatus).toBe("reserved");
+
+    expect(responseOrder.items).toHaveLength(1);
+
+    expect(responseOrder.items[0].quantity).toBe(2);
+
+    expect(responseOrder.customerNote).toBe("Details test Order");
+
+    /*
+     * Internal audit information must remain hidden.
+     */
+    expect(responseOrder).not.toHaveProperty("createdBy");
+
+    expect(responseOrder).not.toHaveProperty("updatedBy");
+
+    expect(responseOrder).not.toHaveProperty("adminNote");
+
+    expect(responseOrder.statusHistory[0]).not.toHaveProperty("changedBy");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 for an invalid Order ID", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get(
+      "/api/v1/orders/not-a-valid-object-id",
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Order does not exist", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const missingOrderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/${missingOrderId}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cross-Customer Ownership Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when a customer requests another customer's Order", async () => {
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const ownerOrder = await createCustomerOrderFixture({
+      customerAgent: ownerAgent,
+
+      product,
+    });
+
+    const response = await otherCustomerAgent.get(
+      `/api/v1/orders/${ownerOrder.id}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    /*
+     * The response must not reveal that the
+     * Order belongs to another customer.
+     */
+    expect(response.body.message).toBe("Order was not found");
   });
 });

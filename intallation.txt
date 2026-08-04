@@ -1827,6 +1827,34 @@ GET /api/v1/orders/:orderId
 
 Both endpoints are customer-authenticated and ownership-protected. A customer can never retrieve another customer’s Order.
 |--------------------------------------------------------------------------
+Part 94: Customer Order History Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+We’ll add tests for:
+
+GET /api/v1/orders
+GET /api/v1/orders/:orderId
+
+These tests cover:
+
+Authentication
+Customer-owned Order listing
+Pagination
+Status filtering
+Query validation
+Full Order details
+Invalid Order IDs
+Missing Orders
+Cross-customer ownership protection
+
+Keep the existing seven POST /api/v1/orders tests unchanged.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
