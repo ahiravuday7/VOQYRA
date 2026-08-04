@@ -1938,6 +1938,30 @@ This part adds tests for:
 
 POST /api/v1/orders/:orderId/cancel
 |--------------------------------------------------------------------------
+Part 99: Admin Order List Validation and Repository Queries
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order.repository.js
+
+This step prepares the admin Order-management list:
+
+GET /api/v1/admin/orders
+
+It adds support for:
+
+Pagination
+Search by Order number, customer shipping details, SKU, or Product name
+Order status filters
+Payment filters
+Inventory status filters
+Customer ID filter
+Date-range filters
+Total-price filters
+Sorting
+
+No controller or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

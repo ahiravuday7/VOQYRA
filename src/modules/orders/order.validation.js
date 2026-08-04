@@ -34,6 +34,21 @@ const CUSTOMER_ORDER_SORT_FIELD_VALUES = Object.freeze([
   "grandTotal",
 ]);
 
+/*
+|--------------------------------------------------------------------------
+| Admin Order List Values
+|--------------------------------------------------------------------------
+*/
+
+const ADMIN_ORDER_SORT_FIELD_VALUES = Object.freeze([
+  "createdAt",
+  "updatedAt",
+  "orderNumber",
+  "grandTotal",
+  "status",
+  "paymentStatus",
+]);
+
 const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
 
 /*
@@ -109,6 +124,197 @@ const createQueryIntegerSchema = ({ fieldName, minimum, maximum }) => {
   );
 };
 
+/*
+|--------------------------------------------------------------------------
+| Admin Order Date Query
+|--------------------------------------------------------------------------
+|
+| Supports:
+|
+| 2026-08-01
+| 2026-08-01T10:30:00.000Z
+|--------------------------------------------------------------------------
+*/
+
+const createOrderDateQuerySchema = ({ fieldName, endOfDay = false }) => {
+  return z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+
+      const normalizedValue = value.trim();
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+        return new Date(
+          `${normalizedValue}` +
+            (endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"),
+        );
+      }
+
+      const parsedDate = new Date(normalizedValue);
+
+      if (Number.isNaN(parsedDate.getTime())) {
+        return value;
+      }
+
+      return parsedDate;
+    },
+
+    z.date({
+      error: `${fieldName} must be a valid date`,
+    }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Total Query
+|--------------------------------------------------------------------------
+*/
+
+const createOrderTotalQuerySchema = (fieldName) => {
+  return createQueryIntegerSchema({
+    fieldName,
+
+    minimum: 0,
+
+    maximum: 1_000_000_000,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order List Query
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderListQuerySchema = z
+  .strictObject({
+    page: createQueryIntegerSchema({
+      fieldName: "Page",
+
+      minimum: 1,
+
+      maximum: 100000,
+    })
+      .optional()
+      .default(1),
+
+    limit: createQueryIntegerSchema({
+      fieldName: "Limit",
+
+      minimum: 1,
+
+      maximum: 100,
+    })
+      .optional()
+      .default(20),
+
+    search: z
+      .string({
+        error: "Search must be text",
+      })
+      .trim()
+      .min(1, {
+        error: "Search cannot be empty",
+      })
+      .max(100, {
+        error: "Search cannot exceed 100 characters",
+      })
+      .optional(),
+
+    customerId: objectIdSchema.optional(),
+
+    status: z
+      .enum(ORDER_STATUS_VALUES, {
+        error: "Invalid Order status",
+      })
+      .optional(),
+
+    paymentStatus: z
+      .enum(ORDER_PAYMENT_STATUS_VALUES, {
+        error: "Invalid Order payment status",
+      })
+      .optional(),
+
+    paymentMethod: z
+      .enum(ORDER_PAYMENT_METHOD_VALUES, {
+        error: "Invalid Order payment method",
+      })
+      .optional(),
+
+    inventoryStatus: z
+      .enum(ORDER_INVENTORY_STATUS_VALUES, {
+        error: "Invalid Order inventory status",
+      })
+      .optional(),
+
+    dateFrom: createOrderDateQuerySchema({
+      fieldName: "Date from",
+    }).optional(),
+
+    dateTo: createOrderDateQuerySchema({
+      fieldName: "Date to",
+
+      endOfDay: true,
+    }).optional(),
+
+    minTotal: createOrderTotalQuerySchema("Minimum total").optional(),
+
+    maxTotal: createOrderTotalQuerySchema("Maximum total").optional(),
+
+    sortBy: z
+      .enum(ADMIN_ORDER_SORT_FIELD_VALUES, {
+        error: "Invalid admin Order sorting field",
+      })
+      .optional()
+      .default("createdAt"),
+
+    sortDirection: z
+      .enum(SORT_DIRECTION_VALUES, {
+        error: "Order sort direction must be asc or desc",
+      })
+      .optional()
+      .default("desc"),
+  })
+  .superRefine((query, context) => {
+    /*
+        |--------------------------------------------------------------------------
+        | Validate Date Range
+        |--------------------------------------------------------------------------
+        */
+
+    if (query.dateFrom && query.dateTo && query.dateFrom > query.dateTo) {
+      context.addIssue({
+        code: "custom",
+
+        path: ["dateTo"],
+
+        message: "Date to must be greater than or equal to date from",
+      });
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Validate Total Range
+        |--------------------------------------------------------------------------
+        */
+
+    if (
+      query.minTotal !== undefined &&
+      query.maxTotal !== undefined &&
+      query.minTotal > query.maxTotal
+    ) {
+      context.addIssue({
+        code: "custom",
+
+        path: ["maxTotal"],
+
+        message: "Maximum total must be greater than or equal to minimum total",
+      });
+    }
+  });
 /*
 |--------------------------------------------------------------------------
 | Phone Number Schema
@@ -535,4 +741,21 @@ export const customerOrderDetailsRequestSchema = z.strictObject({
   params: customerOrderParamsSchema,
 
   query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/orders
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminOrderListQuerySchema,
 });
