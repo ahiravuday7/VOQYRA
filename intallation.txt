@@ -1963,6 +1963,21 @@ Sorting
 
 No controller or route is added yet.
 |--------------------------------------------------------------------------
+Part 100: Admin Order List Mapper, Controller, and Route
+
+Create/update:
+
+src/modules/orders/order.mapper.js
+src/modules/orders/order.service.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+src/app.js
+
+This step exposes:
+
+GET /api/v1/admin/orders
+
+Only authenticated admins can access it.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

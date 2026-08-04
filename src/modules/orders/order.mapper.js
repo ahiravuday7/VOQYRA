@@ -393,3 +393,85 @@ export const toCustomerOrder = (order) => {
     updatedAt: normalizedOrder.updatedAt,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Order Cancellation
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminOrderCancellation = (cancellation) => {
+  return {
+    reason: cancellation?.reason ?? null,
+
+    cancelledBy: normalizeIdentifier(cancellation?.cancelledBy),
+
+    cancelledAt: cancellation?.cancelledAt ?? null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Order Summary
+|--------------------------------------------------------------------------
+|
+| Admin responses include:
+|
+| - Customer identifier
+| - Shipping details
+| - Product snapshots
+| - Pricing and inventory states
+| - Customer and admin notes
+| - Internal audit identifiers
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminOrderSummary = (order) => {
+  const normalizedOrder = normalizeOrderObject(order);
+
+  const items = normalizedOrder.items ?? [];
+
+  const totalQuantity = items.reduce((total, item) => {
+    return total + item.quantity;
+  }, 0);
+
+  return {
+    id: normalizeIdentifier(normalizedOrder._id),
+
+    orderNumber: normalizedOrder.orderNumber,
+
+    customerId: normalizeIdentifier(normalizedOrder.customer),
+
+    items: items.map(mapCustomerOrderItem),
+
+    distinctItemCount: items.length,
+
+    totalQuantity,
+
+    shippingAddress: mapOrderShippingAddress(normalizedOrder.shippingAddress),
+
+    totals: mapOrderTotals(normalizedOrder.totals),
+
+    payment: mapCustomerOrderPayment(normalizedOrder.payment),
+
+    shipment: mapCustomerOrderShipment(normalizedOrder.shipment),
+
+    status: normalizedOrder.status,
+
+    inventoryStatus: normalizedOrder.inventoryStatus,
+
+    cancellation: mapAdminOrderCancellation(normalizedOrder.cancellation),
+
+    customerNote: normalizedOrder.customerNote ?? null,
+
+    adminNote: normalizedOrder.adminNote ?? null,
+
+    createdBy: normalizeIdentifier(normalizedOrder.createdBy),
+
+    updatedBy: normalizeIdentifier(normalizedOrder.updatedBy),
+
+    createdAt: normalizedOrder.createdAt,
+
+    updatedAt: normalizedOrder.updatedAt,
+  };
+};

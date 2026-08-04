@@ -33,6 +33,7 @@ import {
   listCustomerOrders,
   findCustomerOrderForCancellation,
   saveOrderDocument,
+  listAdminOrders,
 } from "./order.repository.js";
 
 /*
@@ -1507,6 +1508,15 @@ export const getCustomerOrders = async (customerId, filters) => {
   return listCustomerOrders(customerId, filters);
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Admin Orders
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrders = async (filters) => {
+  return listAdminOrders(filters);
+};
 /*
 |--------------------------------------------------------------------------
 | Get Customer Order by ID

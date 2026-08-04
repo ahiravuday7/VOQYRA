@@ -1,10 +1,15 @@
-import { toCustomerOrder, toCustomerOrderSummary } from "./order.mapper.js";
+import {
+  toCustomerOrder,
+  toCustomerOrderSummary,
+  toAdminOrderSummary,
+} from "./order.mapper.js";
 
 import {
   createCustomerOrder,
   getCustomerOrderById,
   getCustomerOrders,
   cancelCustomerOrder,
+  getAdminOrders,
 } from "./order.service.js";
 
 /*
@@ -174,6 +179,88 @@ export const cancelCustomerOrderController = async (request, response) => {
 
     data: {
       order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Orders
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/orders
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrdersController = async (request, response) => {
+  const filters = request.validated.query;
+
+  const { orders, pagination } = await getAdminOrders(filters);
+
+  const mappedOrders = orders.map((order) => {
+    return toAdminOrderSummary(order);
+  });
+
+  request.log?.info(
+    {
+      adminId: String(request.user._id),
+
+      returnedOrderCount: mappedOrders.length,
+
+      totalOrderCount: pagination.totalItems,
+
+      filters: {
+        search: filters.search ?? null,
+
+        customerId: filters.customerId ?? null,
+
+        status: filters.status ?? null,
+
+        paymentStatus: filters.paymentStatus ?? null,
+
+        paymentMethod: filters.paymentMethod ?? null,
+
+        inventoryStatus: filters.inventoryStatus ?? null,
+      },
+    },
+    "Admin Orders retrieved",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Orders retrieved successfully",
+
+    data: {
+      orders: mappedOrders,
+
+      pagination,
+
+      filters: {
+        search: filters.search ?? null,
+
+        customerId: filters.customerId ?? null,
+
+        status: filters.status ?? null,
+
+        paymentStatus: filters.paymentStatus ?? null,
+
+        paymentMethod: filters.paymentMethod ?? null,
+
+        inventoryStatus: filters.inventoryStatus ?? null,
+
+        dateFrom: filters.dateFrom ?? null,
+
+        dateTo: filters.dateTo ?? null,
+
+        minTotal: filters.minTotal ?? null,
+
+        maxTotal: filters.maxTotal ?? null,
+
+        sortBy: filters.sortBy,
+
+        sortDirection: filters.sortDirection,
+      },
     },
   });
 };
