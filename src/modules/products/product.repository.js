@@ -1869,6 +1869,85 @@ export const commitVariantStockAtomically = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Commit Order Variant Reservation Atomically
+|--------------------------------------------------------------------------
+|
+| Confirmation converts reserved inventory into a completed stock movement.
+|
+| Example:
+|
+| Before:
+| stock         = 10
+| reservedStock = 2
+| available     = 8
+|
+| Commit 2:
+|
+| After:
+| stock         = 8
+| reservedStock = 0
+| available     = 8
+|
+| Existing Orders may still be confirmed even if the Product or variant was
+| made inactive after checkout. Therefore, this query does not require public
+| Product visibility or an active Product lifecycle state.
+|--------------------------------------------------------------------------
+*/
+
+export const commitOrderVariantStockAtomically = async ({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+  session,
+}) => {
+  const normalizedProductId = normalizeInventoryObjectId(productId);
+
+  const normalizedVariantId = normalizeInventoryObjectId(variantId);
+
+  return Product.findOneAndUpdate(
+    {
+      _id: normalizedProductId,
+
+      variants: {
+        $elemMatch: {
+          _id: normalizedVariantId,
+
+          "inventory.stock": {
+            $gte: quantity,
+          },
+
+          "inventory.reservedStock": {
+            $gte: quantity,
+          },
+        },
+      },
+    },
+
+    {
+      $inc: {
+        "variants.$.inventory.stock": -quantity,
+
+        "variants.$.inventory.reservedStock": -quantity,
+      },
+
+      $set: {
+        updatedBy: actorUserId,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+
+      session,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Products for Checkout
 |--------------------------------------------------------------------------
 |

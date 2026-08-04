@@ -28,6 +28,7 @@ import {
   findProductVariantInventorySnapshot,
   reserveVariantStockAtomically,
   releaseOrderVariantStockAtomically,
+  commitOrderVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import {
@@ -39,6 +40,7 @@ import {
   saveOrderDocument,
   listAdminOrders,
   findAdminOrderById,
+  findAdminOrderForStatusUpdate,
 } from "./order.repository.js";
 
 /*
@@ -373,6 +375,198 @@ const createDedicatedRefundWorkflowRequiredError = () => {
   });
 };
 
+/*
+|--------------------------------------------------------------------------
+| Order Inventory Commit Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOrderInventoryCommitStateInvalidError = ({
+  orderId,
+  itemId = null,
+  productId = null,
+  variantId = null,
+}) => {
+  return new AppError(
+    "The Order inventory cannot be committed from its current state",
+    409,
+    {
+      errorCode: "ORDER_INVENTORY_COMMIT_STATE_INVALID",
+
+      details: {
+        orderId: String(orderId),
+
+        itemId: itemId ? String(itemId) : null,
+
+        productId: productId ? String(productId) : null,
+
+        variantId: variantId ? String(variantId) : null,
+      },
+    },
+  );
+};
+
+const createOrderInventoryCommitConflictError = (productId, variantId) => {
+  return new AppError(
+    "Order inventory changed while confirmation was being processed",
+    409,
+    {
+      errorCode: "ORDER_INVENTORY_COMMIT_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Committed Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedCommittedVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((candidate) => {
+    return String(candidate._id) === String(variantId);
+  });
+
+  if (!variant) {
+    throw createOrderInventoryCommitStateInvalidError({
+      orderId: product._id,
+
+      productId: product._id,
+
+      variantId,
+    });
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Order Inventory Commit
+|--------------------------------------------------------------------------
+|
+| Called only when the atomic Product update returns null.
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedOrderInventoryCommit = async ({
+  orderId,
+  orderItemId,
+  productId,
+  variantId,
+  commitQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  if (!snapshot || !snapshot.variant) {
+    throw createOrderInventoryCommitStateInvalidError({
+      orderId,
+
+      itemId: orderItemId,
+
+      productId,
+      variantId,
+    });
+  }
+
+  const { stock, reservedStock } = snapshot.variant;
+
+  if (
+    !Number.isInteger(stock) ||
+    !Number.isInteger(reservedStock) ||
+    stock < 0 ||
+    reservedStock < 0 ||
+    stock < commitQuantity ||
+    reservedStock < commitQuantity
+  ) {
+    throw createOrderInventoryCommitStateInvalidError({
+      orderId,
+
+      itemId: orderItemId,
+
+      productId,
+      variantId,
+    });
+  }
+
+  /*
+   * The diagnostic read still shows enough stock and reservation,
+   * but the atomic update did not match. Treat this as a concurrent
+   * inventory conflict.
+   */
+  throw createOrderInventoryCommitConflictError(productId, variantId);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Inventory Commit Ledger Entry
+|--------------------------------------------------------------------------
+*/
+
+const createOrderInventoryCommitLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  orderNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedCommittedVariant(updatedProduct, variantId);
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * The Product update has already decreased both values.
+   */
+  const beforeStock = afterStock + quantity;
+
+  const beforeReservedStock = afterReservedStock + quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.COMMIT,
+
+      quantity,
+
+      stockDelta: -quantity,
+
+      reservedStockDelta: -quantity,
+
+      before: buildOrderInventoryState(beforeStock, beforeReservedStock),
+
+      after: buildOrderInventoryState(afterStock, afterReservedStock),
+
+      referenceId: orderNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+
+  return updatedVariant;
+};
 /*
 |--------------------------------------------------------------------------
 | Assert Complete Order Reservation
@@ -2012,6 +2206,195 @@ const buildReleasedOrderItems = (orderItems) => {
 
 /*
 |--------------------------------------------------------------------------
+| Build Committed Order Items
+|--------------------------------------------------------------------------
+*/
+
+const buildCommittedOrderItems = (orderItems) => {
+  return orderItems.map((item) => {
+    const normalizedItem = normalizeOrderSubdocument(item);
+
+    return {
+      ...normalizedItem,
+
+      inventory: {
+        ...normalizedItem.inventory,
+
+        status: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+        /*
+         * No quantity remains reserved after commit.
+         */
+        reservedQuantity: 0,
+
+        /*
+         * The complete Order-item quantity has been committed.
+         */
+        committedQuantity: normalizedItem.quantity,
+
+        releasedQuantity: 0,
+      },
+    };
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Confirmed Order State
+|--------------------------------------------------------------------------
+*/
+
+const buildConfirmedOrderState = (
+  order,
+  { adminId, note, adminNote, confirmedAt = new Date() },
+) => {
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  const confirmedState = {
+    items: buildCommittedOrderItems(order.items),
+
+    status: ORDER_STATUSES.CONFIRMED,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.CONFIRMED,
+
+        note: note ?? "Order confirmed by admin",
+
+        changedBy: adminId,
+
+        changedAt: confirmedAt,
+      },
+    ],
+
+    updatedBy: adminId,
+  };
+
+  /*
+   * Do not erase an existing admin note when this request
+   * does not provide a new one.
+   */
+  if (adminNote !== undefined) {
+    confirmedState.adminNote = adminNote;
+  }
+
+  return confirmedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Order Confirmation
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderConfirmation = async ({
+  orderId,
+  adminId,
+  statusData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let confirmedOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(orderId, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate Transition
+          |--------------------------------------------------------------------------
+          */
+
+        const transitionPlan = getAdminOrderStatusTransitionPlan(
+          order,
+          statusData.status,
+        );
+
+        if (!transitionPlan.requiresInventoryCommit) {
+          throw createOrderInventoryCommitStateInvalidError({
+            orderId: order._id,
+          });
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Commit Product Inventory and Write Ledgers
+          |--------------------------------------------------------------------------
+          */
+
+        await commitOrderItemsInventoryInTransaction(order, {
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Confirmed Order State
+          |--------------------------------------------------------------------------
+          */
+
+        const confirmedState = buildConfirmedOrderState(order, {
+          adminId,
+
+          note: statusData.note,
+
+          adminNote: statusData.adminNote,
+        });
+
+        order.set(confirmedState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Order
+          |--------------------------------------------------------------------------
+          */
+
+        confirmedOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return confirmedOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+/*
+|--------------------------------------------------------------------------
 | Build Customer Cancelled Order State
 |--------------------------------------------------------------------------
 |
@@ -2281,5 +2664,110 @@ export const cancelCustomerOrder = async (
     orderId,
     customerId,
     reason,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Commit Order Items Inventory in Transaction
+|--------------------------------------------------------------------------
+|
+| The caller owns the MongoDB transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const commitOrderItemsInventoryInTransaction = async (
+  order,
+  { actorUserId, session },
+) => {
+  requireActiveOrderTransaction(session);
+
+  if (!actorUserId) {
+    throw new Error("Order inventory commit requires an actor user ID");
+  }
+
+  /*
+   * This validates:
+   *
+   * - Pending → confirmed is allowed.
+   * - Payment state allows confirmation.
+   * - Order inventory is fully reserved.
+   */
+  const transitionPlan = getAdminOrderStatusTransitionPlan(
+    order,
+    ORDER_STATUSES.CONFIRMED,
+  );
+
+  if (!transitionPlan.requiresInventoryCommit) {
+    throw createOrderInventoryCommitStateInvalidError({
+      orderId: order._id,
+    });
+  }
+
+  for (const orderItem of order.items) {
+    const productId = orderItem.product;
+
+    const variantId = orderItem.variantId;
+
+    const commitQuantity = orderItem.inventory.reservedQuantity;
+
+    const updatedProduct = await commitOrderVariantStockAtomically({
+      productId,
+      variantId,
+
+      quantity: commitQuantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedOrderInventoryCommit({
+        orderId: order._id,
+
+        orderItemId: orderItem._id,
+
+        productId,
+        variantId,
+        commitQuantity,
+        session,
+      });
+    }
+
+    await createOrderInventoryCommitLedgerEntry({
+      updatedProduct,
+      variantId,
+
+      quantity: commitQuantity,
+
+      orderNumber: order.orderNumber,
+
+      actorUserId,
+
+      session,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Confirm Admin Order
+|--------------------------------------------------------------------------
+*/
+
+export const confirmAdminOrder = async (orderId, adminId, statusData) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to confirm an Order");
+  }
+
+  if (statusData?.status !== ORDER_STATUSES.CONFIRMED) {
+    throw new Error("Admin Order confirmation requires confirmed status");
+  }
+
+  return executeAtomicAdminOrderConfirmation({
+    orderId,
+    adminId,
+    statusData,
   });
 };

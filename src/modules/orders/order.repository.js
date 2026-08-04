@@ -559,3 +559,26 @@ export const findAdminOrderById = (orderId, { session = null } = {}) => {
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Order for Status Update
+|--------------------------------------------------------------------------
+|
+| Returns a Mongoose document because the Order will be modified and saved
+| inside the same transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderForStatusUpdate = (
+  orderId,
+  { session = null } = {},
+) => {
+  const query = Order.findById(orderId);
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

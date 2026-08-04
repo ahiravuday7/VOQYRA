@@ -2044,6 +2044,39 @@ PATCH /api/v1/admin/orders/:orderId/status
 
 No Order status is updated yet.
 |--------------------------------------------------------------------------
+Part 105: Atomic Inventory Commit During Order Confirmation
+
+Update:
+
+src/modules/products/product.repository.js
+src/modules/orders/order.repository.js
+src/modules/orders/order.service.js
+
+This step implements the transaction used when an admin changes an Order from:
+
+pending → confirmed
+
+The transaction will:
+
+Load pending Order
+        ↓
+Validate transition and payment state
+        ↓
+Commit every reserved item
+        ↓
+Decrease physical stock
+        ↓
+Decrease reserved stock
+        ↓
+Create commit Ledger entries
+        ↓
+Mark Order inventory committed
+        ↓
+Mark Order confirmed
+        ↓
+Commit everything together
+
+No controller or route is added yet.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
