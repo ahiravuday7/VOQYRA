@@ -3821,3 +3821,116 @@ export const buildAdminDeliveredOrderState = (
 
   return deliveredState;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Order Delivery
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderDelivery = async ({
+  orderId,
+  adminId,
+  deliveryData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let deliveredOrder;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Load Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(orderId, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Delivery State
+          |--------------------------------------------------------------------------
+          |
+          | This validates:
+          |
+          | - Order is currently shipped
+          | - Delivery was not already completed
+          | - Valid shipment information exists
+          | - Order inventory remains committed
+          | - Payment state permits delivery
+          |--------------------------------------------------------------------------
+          */
+
+        const deliveredState = buildAdminDeliveredOrderState(order, {
+          deliveryData,
+          adminId,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Delivery State
+          |--------------------------------------------------------------------------
+          */
+
+        order.set(deliveredState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Order
+          |--------------------------------------------------------------------------
+          */
+
+        deliveredOrder = await saveOrderDocument(order, {
+          session,
+        });
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return deliveredOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Admin Order
+|--------------------------------------------------------------------------
+*/
+
+export const deliverAdminOrder = async (
+  orderId,
+  adminId,
+  deliveryData = {},
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to deliver an Order");
+  }
+
+  return executeAtomicAdminOrderDelivery({
+    orderId,
+    adminId,
+
+    deliveryData: deliveryData ?? {},
+  });
+};

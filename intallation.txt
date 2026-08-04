@@ -2304,6 +2304,54 @@ Payment paidAt     = unchanged
 
 Delivery must not overwrite the original online-payment timestamp.
 |--------------------------------------------------------------------------
+Part 112: Admin Delivery Persistence, Controller, and Route
+
+Update:
+
+src/modules/orders/order.service.js
+src/modules/orders/order.controller.js
+src/modules/orders/order.admin.routes.js
+
+This step exposes:
+
+POST /api/v1/admin/orders/:orderId/deliver
+
+The dedicated delivery workflow will atomically update:
+
+Order status          shipped → delivered
+Shipment              deliveredAt
+COD payment           pending → paid
+Payment timestamp     paidAt
+Status history        delivered entry
+Audit                  updatedBy
+
+Product inventory remains unchanged.
+
+Complete lifecycle before delivery::
+
+The Order must follow:
+
+Customer creates Order
+        ↓
+pending
+inventory reserved
+        ↓
+Admin confirms Order
+        ↓
+confirmed
+inventory committed
+        ↓
+Admin starts processing
+        ↓
+processing
+        ↓
+Admin ships Order
+        ↓
+shipped
+        ↓
+Admin completes delivery
+        ↓
+delivered
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import {
   getAdminOrderController,
   updateAdminOrderStatusController,
   shipAdminOrderController,
+  deliverAdminOrderController,
 } from "./order.controller.js";
 
 import {
@@ -18,6 +19,7 @@ import {
   adminOrderDetailsRequestSchema,
   adminOrderStatusUpdateRequestSchema,
   adminOrderShipmentRequestSchema,
+  adminOrderDeliveryRequestSchema,
 } from "./order.validation.js";
 
 const router = Router();
@@ -77,6 +79,21 @@ router.post(
 
 /*
 |--------------------------------------------------------------------------
+| Complete Admin Order Delivery
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/deliver
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/deliver",
+  validateRequest(adminOrderDeliveryRequestSchema),
+  deliverAdminOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
 | Get Admin Order Details
 |--------------------------------------------------------------------------
 |
@@ -89,4 +106,5 @@ router.get(
   validateRequest(adminOrderDetailsRequestSchema),
   getAdminOrderController,
 );
+
 export default router;

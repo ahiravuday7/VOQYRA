@@ -14,6 +14,7 @@ import {
   getAdminOrderById,
   updateAdminOrderStatus,
   shipAdminOrder,
+  deliverAdminOrder,
 } from "./order.service.js";
 
 /*
@@ -410,6 +411,60 @@ export const shipAdminOrderController = async (request, response) => {
     success: true,
 
     message: "Order shipped successfully",
+
+    data: {
+      order: mappedOrder,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Admin Order
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/orders/:orderId/deliver
+|--------------------------------------------------------------------------
+*/
+
+export const deliverAdminOrderController = async (request, response) => {
+  const { orderId } = request.validated.params;
+
+  const deliveryData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const deliveredOrder = await deliverAdminOrder(
+    orderId,
+    adminId,
+    deliveryData,
+  );
+
+  const mappedOrder = toAdminOrder(deliveredOrder);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      orderId: mappedOrder.id,
+
+      orderNumber: mappedOrder.orderNumber,
+
+      status: mappedOrder.status,
+
+      paymentMethod: mappedOrder.payment.method,
+
+      paymentStatus: mappedOrder.payment.status,
+
+      deliveredAt: mappedOrder.shipment.deliveredAt,
+    },
+    "Admin Order delivered",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Order delivered successfully",
 
     data: {
       order: mappedOrder,
