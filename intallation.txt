@@ -2817,6 +2817,27 @@ Filter by status, resolution, customer, and Order
 Search by return number, Order number, SKU, or Product name
 View internal approval, rejection, receipt, inspection, and audit fields
 |--------------------------------------------------------------------------
+Part 126: Admin Return List and Details Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This part tests:
+
+GET /api/v1/admin/order-returns
+GET /api/v1/admin/order-returns/:returnRequestId
+
+Coverage includes:
+
+Authentication and admin authorization
+Query validation
+Empty results
+Pagination and sorting
+Status, resolution, customer, and Order filters
+Search by Return number, Order number, SKU, and Product name
+Invalid and missing Return Request IDs
+Internal admin and warehouse audit fields
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

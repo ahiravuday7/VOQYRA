@@ -529,6 +529,173 @@ const createCustomerReturnRequestFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Admin Return Read Fixture
+|--------------------------------------------------------------------------
+|
+| Admin list and details APIs only read Return Request documents.
+|
+| Creating the document directly keeps these tests fast and avoids running
+| the complete Order confirmation, shipment, and delivery lifecycle.
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnReadFixture = async ({
+  customerId,
+
+  updatedBy = customerId,
+
+  orderId = new mongoose.Types.ObjectId(),
+
+  returnRequestNumber,
+
+  orderNumber,
+
+  status = "requested",
+
+  requestedResolution = "refund",
+
+  productName,
+
+  sku,
+
+  quantity = 1,
+
+  customerNote = "Customer requested a product return.",
+
+  adminNote = null,
+
+  approval = {},
+
+  rejection = {},
+
+  receipt = {},
+
+  completion = {},
+
+  cancellation = {},
+
+  inspection = {},
+}) => {
+  const suffix = new mongoose.Types.ObjectId()
+    .toString()
+    .slice(-12)
+    .toUpperCase();
+
+  return OrderReturnRequest.create({
+    returnRequestNumber: returnRequestNumber ?? `RET-20260805-${suffix}`,
+
+    order: orderId,
+
+    orderNumber: orderNumber ?? `ORD-20260805-${suffix}`,
+
+    customer: customerId,
+
+    items: [
+      {
+        orderItemId: new mongoose.Types.ObjectId(),
+
+        product: new mongoose.Types.ObjectId(),
+
+        variantId: new mongoose.Types.ObjectId(),
+
+        sku: sku ?? `ADMIN-RETURN-${suffix}`,
+
+        productName: productName ?? `Admin Return Product ${suffix}`,
+
+        size: "M",
+
+        color: {
+          name: "Black",
+
+          code: "#000000",
+        },
+
+        quantity,
+
+        reason: "defective",
+
+        details: "The product contains a manufacturing defect.",
+
+        inspection: {
+          status: "pending",
+
+          resellableQuantity: 0,
+
+          damagedQuantity: 0,
+
+          rejectedQuantity: 0,
+
+          note: null,
+
+          inspectedBy: null,
+
+          inspectedAt: null,
+
+          ...inspection,
+        },
+      },
+    ],
+
+    requestedResolution,
+
+    status,
+
+    customerNote,
+
+    adminNote,
+
+    approval: {
+      approvedBy: null,
+
+      approvedAt: null,
+
+      ...approval,
+    },
+
+    rejection: {
+      reason: null,
+
+      rejectedBy: null,
+
+      rejectedAt: null,
+
+      ...rejection,
+    },
+
+    receipt: {
+      receivedBy: null,
+
+      receivedAt: null,
+
+      ...receipt,
+    },
+
+    completion: {
+      completedBy: null,
+
+      completedAt: null,
+
+      ...completion,
+    },
+
+    cancellation: {
+      reason: null,
+
+      cancelledBy: null,
+
+      cancelledAt: null,
+
+      ...cancellation,
+    },
+
+    createdBy: customerId,
+
+    updatedBy,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -9421,5 +9588,736 @@ describe("POST /api/v1/orders/returns/:returnRequestId/cancel", () => {
       .lean();
 
     expect(orderAfterCancellation.returnRequestVersion).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return Request List
+|--------------------------------------------------------------------------
+*/
+
+describe("GET /api/v1/admin/order-returns", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when listing Return Requests without authentication", async () => {
+    const response = await request(app).get("/api/v1/admin/order-returns");
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer lists admin Return Requests", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get("/api/v1/admin/order-returns");
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Query Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid admin Return Request filters", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get("/api/v1/admin/order-returns").query({
+      page: 0,
+
+      limit: 101,
+
+      status: "not-a-return-status",
+
+      customerId: "not-an-object-id",
+
+      sortBy: "unknownField",
+
+      sortDirection: "sideways",
+    });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Empty List
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns an empty paginated list when no Return Requests exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get("/api/v1/admin/order-returns");
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Admin Return Requests retrieved successfully",
+    );
+
+    expect(response.body.data.returnRequests).toEqual([]);
+
+    expect(response.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 20,
+
+      total: 0,
+
+      totalPages: 0,
+
+      hasPreviousPage: false,
+
+      hasNextPage: false,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Pagination and Sorting
+    |--------------------------------------------------------------------------
+    */
+
+  it("paginates and sorts admin Return Requests", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const firstReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      returnRequestNumber: "RET-20260805-AAAAAAAAAAAA",
+
+      productName: "First Admin Return Product",
+    });
+
+    const secondReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      returnRequestNumber: "RET-20260805-BBBBBBBBBBBB",
+
+      productName: "Second Admin Return Product",
+    });
+
+    const thirdReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      returnRequestNumber: "RET-20260805-CCCCCCCCCCCC",
+
+      productName: "Third Admin Return Product",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Page One
+        |--------------------------------------------------------------------------
+        */
+
+    const firstPageResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        page: 1,
+
+        limit: 2,
+
+        sortBy: "returnRequestNumber",
+
+        sortDirection: "asc",
+      });
+
+    expect(firstPageResponse.status).toBe(200);
+
+    expect(
+      firstPageResponse.body.data.returnRequests.map((returnRequest) => {
+        return returnRequest.id;
+      }),
+    ).toEqual([
+      String(firstReturnRequest._id),
+
+      String(secondReturnRequest._id),
+    ]);
+
+    expect(firstPageResponse.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 2,
+
+      total: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: false,
+
+      hasNextPage: true,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Admin Summary Fields
+        |--------------------------------------------------------------------------
+        */
+
+    const firstSummary = firstPageResponse.body.data.returnRequests[0];
+
+    expect(firstSummary.customerId).toBe(String(customer._id));
+
+    expect(firstSummary.itemCount).toBe(1);
+
+    expect(firstSummary.totalQuantity).toBe(1);
+
+    expect(firstSummary).not.toHaveProperty("items");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Page Two
+        |--------------------------------------------------------------------------
+        */
+
+    const secondPageResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        page: 2,
+
+        limit: 2,
+
+        sortBy: "returnRequestNumber",
+
+        sortDirection: "asc",
+      });
+
+    expect(secondPageResponse.status).toBe(200);
+
+    expect(
+      secondPageResponse.body.data.returnRequests.map((returnRequest) => {
+        return returnRequest.id;
+      }),
+    ).toEqual([String(thirdReturnRequest._id)]);
+
+    expect(secondPageResponse.body.data.pagination).toEqual({
+      page: 2,
+
+      limit: 2,
+
+      total: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: true,
+
+      hasNextPage: false,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Filters
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters admin Return Requests by status, resolution, customer and Order", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: firstCustomer } = await createAuthenticatedCustomerAgent();
+
+    const { user: secondCustomer } = await createAuthenticatedCustomerAgent();
+
+    const firstOrderId = new mongoose.Types.ObjectId();
+
+    const secondOrderId = new mongoose.Types.ObjectId();
+
+    const firstReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: firstCustomer._id,
+
+      orderId: firstOrderId,
+
+      returnRequestNumber: "RET-20260805-FILTERAAAAAA",
+
+      status: "requested",
+
+      requestedResolution: "refund",
+    });
+
+    const secondReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: secondCustomer._id,
+
+      updatedBy: admin._id,
+
+      orderId: secondOrderId,
+
+      returnRequestNumber: "RET-20260805-FILTERBBBBBB",
+
+      status: "approved",
+
+      requestedResolution: "replacement",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+
+      adminNote: "Replacement Return Request approved.",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Status Filter
+        |--------------------------------------------------------------------------
+        */
+
+    const statusResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        status: "approved",
+      });
+
+    expect(statusResponse.status).toBe(200);
+
+    expect(statusResponse.body.data.returnRequests).toHaveLength(1);
+
+    expect(statusResponse.body.data.returnRequests[0].id).toBe(
+      String(secondReturnRequest._id),
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Resolution Filter
+        |--------------------------------------------------------------------------
+        */
+
+    const resolutionResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        requestedResolution: "refund",
+      });
+
+    expect(resolutionResponse.status).toBe(200);
+
+    expect(resolutionResponse.body.data.returnRequests).toHaveLength(1);
+
+    expect(resolutionResponse.body.data.returnRequests[0].id).toBe(
+      String(firstReturnRequest._id),
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Customer Filter
+        |--------------------------------------------------------------------------
+        */
+
+    const customerResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        customerId: String(secondCustomer._id),
+      });
+
+    expect(customerResponse.status).toBe(200);
+
+    expect(customerResponse.body.data.returnRequests).toHaveLength(1);
+
+    expect(customerResponse.body.data.returnRequests[0].customerId).toBe(
+      String(secondCustomer._id),
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Filter
+        |--------------------------------------------------------------------------
+        */
+
+    const orderResponse = await adminAgent
+      .get("/api/v1/admin/order-returns")
+      .query({
+        orderId: String(firstOrderId),
+      });
+
+    expect(orderResponse.status).toBe(200);
+
+    expect(orderResponse.body.data.returnRequests).toHaveLength(1);
+
+    expect(orderResponse.body.data.returnRequests[0].orderId).toBe(
+      String(firstOrderId),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+
+  it("searches Return Requests by Return number, Order number, SKU and Product name", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const searchableReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      returnRequestNumber: "RET-SEARCH-UNIQUE-001",
+
+      orderNumber: "ORD-SEARCH-UNIQUE-001",
+
+      sku: "SEARCH-LINEN-SHIRT-M",
+
+      productName: "Premium Searchable Linen Shirt",
+    });
+
+    await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      returnRequestNumber: "RET-DECOY-RETURN-002",
+
+      orderNumber: "ORD-DECOY-ORDER-002",
+
+      sku: "DECOY-COTTON-M",
+
+      productName: "Decoy Cotton Product",
+    });
+
+    const searchValues = [
+      "RET-SEARCH-UNIQUE-001",
+      "ORD-SEARCH-UNIQUE-001",
+      "SEARCH-LINEN-SHIRT-M",
+      "searchable linen",
+    ];
+
+    for (const search of searchValues) {
+      const response = await adminAgent
+        .get("/api/v1/admin/order-returns")
+        .query({
+          search,
+        });
+
+      expect(response.status).toBe(200);
+
+      expect(response.body.data.returnRequests).toHaveLength(1);
+
+      expect(response.body.data.returnRequests[0].id).toBe(
+        String(searchableReturnRequest._id),
+      );
+    }
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return Request Details
+|--------------------------------------------------------------------------
+*/
+
+describe("GET /api/v1/admin/order-returns/:returnRequestId", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when retrieving admin Return Request details without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app).get(
+      `/api/v1/admin/order-returns/${returnRequestId}`,
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer retrieves admin Return Request details", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent.get(
+      `/api/v1/admin/order-returns/${returnRequestId}`,
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Return Request ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the admin Return Request ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/not-a-valid-object-id",
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "returnRequestId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the admin Return Request does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/order-returns/${missingReturnRequestId}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+
+    expect(response.body.message).toBe("Return request was not found");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Admin Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns complete Return Request details including internal audit fields", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const approvedAt = new Date("2026-08-05T08:00:00.000Z");
+
+    const receivedAt = new Date("2026-08-05T09:00:00.000Z");
+
+    const inspectedAt = new Date("2026-08-05T10:00:00.000Z");
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      returnRequestNumber: "RET-20260805-INSPECTED001",
+
+      orderNumber: "ORD-20260805-INSPECTED001",
+
+      status: "inspected",
+
+      requestedResolution: "refund",
+
+      quantity: 2,
+
+      productName: "Inspected Linen Return Shirt",
+
+      sku: "INSPECTED-LINEN-M",
+
+      customerNote: "The two delivered shirts were defective.",
+
+      adminNote: "Warehouse inspection completed.",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt,
+      },
+
+      receipt: {
+        receivedBy: admin._id,
+
+        receivedAt,
+      },
+
+      inspection: {
+        status: "inspected",
+
+        resellableQuantity: 1,
+
+        damagedQuantity: 1,
+
+        rejectedQuantity: 0,
+
+        note: "One unit can be resold and one unit is damaged.",
+
+        inspectedBy: admin._id,
+
+        inspectedAt,
+      },
+    });
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/order-returns/${returnRequest._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Admin Return Request retrieved successfully",
+    );
+
+    const returnedDetails = response.body.data.returnRequest;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Main Return Information
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.id).toBe(String(returnRequest._id));
+
+    expect(returnedDetails.returnRequestNumber).toBe(
+      "RET-20260805-INSPECTED001",
+    );
+
+    expect(returnedDetails.orderNumber).toBe("ORD-20260805-INSPECTED001");
+
+    expect(returnedDetails.customerId).toBe(String(customer._id));
+
+    expect(returnedDetails.status).toBe("inspected");
+
+    expect(returnedDetails.requestedResolution).toBe("refund");
+
+    expect(returnedDetails.customerNote).toBe(
+      "The two delivered shirts were defective.",
+    );
+
+    expect(returnedDetails.adminNote).toBe("Warehouse inspection completed.");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Approval Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.approval).toEqual({
+      approvedBy: String(admin._id),
+
+      approvedAt: approvedAt.toISOString(),
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Warehouse Receipt Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.receipt).toEqual({
+      receivedBy: String(admin._id),
+
+      receivedAt: receivedAt.toISOString(),
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Item and Inspection Details
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.items).toHaveLength(1);
+
+    const returnedItem = returnedDetails.items[0];
+
+    expect(returnedItem.sku).toBe("INSPECTED-LINEN-M");
+
+    expect(returnedItem.productName).toBe("Inspected Linen Return Shirt");
+
+    expect(returnedItem.quantity).toBe(2);
+
+    expect(returnedItem.inspection).toEqual({
+      status: "inspected",
+
+      resellableQuantity: 1,
+
+      damagedQuantity: 1,
+
+      rejectedQuantity: 0,
+
+      note: "One unit can be resold and one unit is damaged.",
+
+      inspectedBy: String(admin._id),
+
+      inspectedAt: inspectedAt.toISOString(),
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Internal Audit Actors
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.createdBy).toBe(String(customer._id));
+
+    expect(returnedDetails.updatedBy).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Empty Terminal-State Audits
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnedDetails.rejection).toEqual({
+      reason: null,
+
+      rejectedBy: null,
+
+      rejectedAt: null,
+    });
+
+    expect(returnedDetails.completion).toEqual({
+      completedBy: null,
+
+      completedAt: null,
+    });
+
+    expect(returnedDetails.cancellation).toEqual({
+      reason: null,
+
+      cancelledBy: null,
+
+      cancelledAt: null,
+    });
   });
 });
