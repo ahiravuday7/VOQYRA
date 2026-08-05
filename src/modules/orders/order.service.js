@@ -58,6 +58,8 @@ import {
   findExistingReturnRequestNumber,
   findCustomerOrderReturnRequestById,
   listCustomerOrderReturnRequests,
+  findCustomerOrderReturnRequestForCancellation,
+  saveOrderReturnRequestDocument,
 } from "./order-return.repository.js";
 
 /*
@@ -445,6 +447,26 @@ const createCustomerReturnCancellationStateInvalidError = (currentStatus) => {
 
       details: {
         currentStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Request Order Reference Error
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnOrderStateInvalidError = (orderId) => {
+  return new AppError(
+    "The return request is connected to an invalid Order state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_ORDER_STATE_INVALID",
+
+      details: {
+        orderId: String(orderId),
       },
     },
   );
@@ -5451,4 +5473,157 @@ export const buildCustomerCancelledOrderReturnState = (
 
     updatedBy: customerId,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Customer Return Cancellation
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicCustomerOrderReturnCancellation = async ({
+  returnRequestId,
+  customerId,
+  cancellationData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let cancelledReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Customer-Owned Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest =
+          await findCustomerOrderReturnRequestForCancellation(
+            returnRequestId,
+            customerId,
+            {
+              session,
+            },
+          );
+
+        if (!returnRequest) {
+          throw createCustomerReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate and Build Trusted Cancellation State
+          |--------------------------------------------------------------------------
+          */
+
+        const cancelledAt = new Date();
+
+        const cancelledState = buildCustomerCancelledOrderReturnState(
+          returnRequest,
+          {
+            cancellationData,
+            customerId,
+            cancelledAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Synchronize Return Quantity State
+          |--------------------------------------------------------------------------
+          |
+          | Cancellation releases previously consumed return quantity.
+          |
+          | Updating the Order returnRequestVersion creates a shared write
+          | boundary with concurrent return-request creation transactions.
+          |--------------------------------------------------------------------------
+          */
+
+        const orderMatched = await bumpOrderReturnRequestVersion(
+          returnRequest.order,
+          customerId,
+          {
+            session,
+          },
+        );
+
+        if (!orderMatched) {
+          throw createCustomerReturnOrderStateInvalidError(returnRequest.order);
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Cancellation
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(cancelledState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        cancelledReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return cancelledReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createCustomerReturnConcurrencyError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const cancelCustomerOrderReturnRequest = async (
+  returnRequestId,
+  customerId,
+  cancellationData,
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to cancel a return request");
+  }
+
+  if (!cancellationData) {
+    throw new Error("Return cancellation data is required");
+  }
+
+  return executeAtomicCustomerOrderReturnCancellation({
+    returnRequestId,
+    customerId,
+    cancellationData,
+  });
 };

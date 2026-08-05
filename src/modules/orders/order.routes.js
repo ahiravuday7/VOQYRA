@@ -21,12 +21,14 @@ import {
   customerOrderReturnRequestSchema,
   customerOrderReturnDetailsRequestSchema,
   customerOrderReturnListRequestSchema,
+  customerOrderReturnCancellationRequestSchema,
 } from "./order.validation.js";
 
 import {
   createCustomerOrderReturnRequestController,
   getCustomerOrderReturnRequestController,
   getCustomerOrderReturnRequestsController,
+  cancelCustomerOrderReturnRequestController,
 } from "./order-return.controller.js";
 
 const router = Router();
@@ -89,6 +91,21 @@ router.get(
   "/returns",
   validateRequest(customerOrderReturnListRequestSchema),
   getCustomerOrderReturnRequestsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/returns/:returnRequestId/cancel
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/returns/:returnRequestId/cancel",
+  validateRequest(customerOrderReturnCancellationRequestSchema),
+  cancelCustomerOrderReturnRequestController,
 );
 
 /*

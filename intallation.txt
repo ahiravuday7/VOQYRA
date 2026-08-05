@@ -2740,6 +2740,36 @@ Cancellation will also release the return quantity so the customer may create an
 
 No repository write, controller, or route is added yet.
 |--------------------------------------------------------------------------
+Part 123: Atomic Customer Return Cancellation Persistence, Controller, and Route
+
+Update:
+
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order.routes.js
+
+This step exposes:
+
+POST /api/v1/orders/returns/:returnRequestId/cancel
+
+The workflow will:
+
+Load the customer-owned Return Request
+        ↓
+Validate cancellation rules
+        ↓
+Synchronize the Order return-quantity version
+        ↓
+Change status to cancelled
+        ↓
+Record cancellation reason, customer and timestamp
+        ↓
+Release the consumed return quantity
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

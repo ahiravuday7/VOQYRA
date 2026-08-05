@@ -2,6 +2,7 @@ import {
   createCustomerOrderReturnRequest,
   getCustomerOrderReturnRequestById,
   getCustomerOrderReturnRequests,
+  cancelCustomerOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -133,6 +134,63 @@ export const getCustomerOrderReturnRequestController = async (
     success: true,
 
     message: "Return request retrieved successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Customer Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/returns/:returnRequestId/cancel
+|--------------------------------------------------------------------------
+*/
+
+export const cancelCustomerOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const cancellationData = request.validated.body;
+
+  const customerId = request.user._id;
+
+  const cancelledReturnRequest = await cancelCustomerOrderReturnRequest(
+    returnRequestId,
+    customerId,
+    cancellationData,
+  );
+
+  const mappedReturnRequest = toCustomerOrderReturnRequest(
+    cancelledReturnRequest,
+  );
+
+  request.log?.info(
+    {
+      customerId: String(customerId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      orderId: mappedReturnRequest.orderId,
+
+      status: mappedReturnRequest.status,
+
+      cancelledAt: mappedReturnRequest.cancellation.cancelledAt,
+    },
+    "Customer Order return request cancelled",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return request cancelled successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

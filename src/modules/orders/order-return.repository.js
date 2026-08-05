@@ -262,3 +262,54 @@ export const findCustomerOrderReturnRequestById = (
     .select(CUSTOMER_ORDER_RETURN_PROJECTION)
     .lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Return Request for Cancellation
+|--------------------------------------------------------------------------
+|
+| Returns a Mongoose document because the cancellation workflow must
+| update and save it.
+|
+| Ownership is included directly in the database query.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderReturnRequestForCancellation = (
+  returnRequestId,
+  customerId,
+  { session = null } = {},
+) => {
+  const query = OrderReturnRequest.findOne({
+    _id: returnRequestId,
+
+    customer: customerId,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Save Order Return Request Document
+|--------------------------------------------------------------------------
+*/
+
+export const saveOrderReturnRequestDocument = (
+  returnRequest,
+  { session = null } = {},
+) => {
+  const options = {
+    validateBeforeSave: true,
+  };
+
+  if (session) {
+    options.session = session;
+  }
+
+  return returnRequest.save(options);
+};
