@@ -2767,6 +2767,31 @@ Record cancellation reason, customer and timestamp
         ↓
 Release the consumed return quantity
 |--------------------------------------------------------------------------
+Part 124: Customer Return Cancellation Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+POST /api/v1/orders/returns/:returnRequestId/cancel
+
+Coverage includes:
+
+Authentication
+Request validation
+Ownership protection
+Successful cancellation
+Cancellation audit fields
+Approved Return Request cancellation
+Duplicate cancellation
+Invalid statuses
+Physical-processing protection
+Return quantity reuse
+Transaction rollback
+Product inventory invariants
+Inventory Ledger invariants
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

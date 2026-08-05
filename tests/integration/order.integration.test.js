@@ -452,6 +452,83 @@ const createDeliveredOrderReturnFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  orderedQuantity = 1,
+
+  returnQuantity = 1,
+
+  requestedResolution = "refund",
+
+  reason = "defective",
+
+  details = "The product contains a manufacturing defect.",
+
+  customerNote,
+
+  productOverrides = {},
+}) => {
+  const deliveryFixture = await createDeliveredOrderReturnFixture({
+    adminAgent,
+    customerAgent,
+
+    quantity: orderedQuantity,
+
+    productOverrides,
+  });
+
+  const { createdOrder, orderItem } = deliveryFixture;
+
+  const requestBody = {
+    requestedResolution,
+
+    items: [
+      {
+        orderItemId: String(orderItem._id),
+
+        quantity: returnQuantity,
+
+        reason,
+
+        details,
+      },
+    ],
+
+    ...(customerNote !== undefined
+      ? {
+          customerNote,
+        }
+      : {}),
+  };
+
+  const response = await customerAgent
+    .post(`/api/v1/orders/${createdOrder.id}/returns`)
+    .send(requestBody)
+    .expect(201);
+
+  const returnRequest = response.body.data.returnRequest;
+
+  const storedReturnRequest = await OrderReturnRequest.findById(
+    returnRequest.id,
+  ).lean();
+
+  return {
+    ...deliveryFixture,
+
+    requestBody,
+    returnRequest,
+    storedReturnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -8468,5 +8545,881 @@ describe("POST /api/v1/orders/:orderId/returns", () => {
       .lean();
 
     expect(orderWithVersion.returnRequestVersion).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Request Cancellation
+|--------------------------------------------------------------------------
+*/
+
+describe("POST /api/v1/orders/returns/:returnRequestId/cancel", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when cancelling a return request without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/orders/returns/${returnRequestId}/cancel`)
+      .send({
+        reason: "I no longer want to return this item.",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Return Request ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the Return Request ID is invalid", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent
+      .post("/api/v1/orders/returns/not-a-valid-object-id/cancel")
+      .send({
+        reason: "I no longer want to return this item.",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "returnRequestId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects an invalid cancellation reason and backend-controlled fields", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequestId}/cancel`)
+      .send({
+        reason: "No",
+
+        status: "cancelled",
+
+        cancelledBy: new mongoose.Types.ObjectId().toString(),
+
+        cancelledAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Return Request does not exist", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${missingReturnRequestId}/cancel`)
+      .send({
+        reason: "I no longer want to return this item.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+
+    expect(response.body.message).toBe("Return request was not found");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Ownership Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when a customer cancels another customer's Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+
+      customerAgent: ownerAgent,
+    });
+
+    const response = await otherCustomerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Attempting to cancel another customer return.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("requested");
+
+    expect(unchangedReturnRequest.cancellation.cancelledAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Requested Return Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("cancels a requested Return Request and records trusted audit information", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 1,
+
+        productOverrides: {
+          name: "Return Cancellation Test Shirt",
+
+          slug: "return-cancellation-test-shirt",
+
+          variants: [
+            {
+              sku: "RETURN-CANCEL-BLK-M",
+
+              size: "M",
+
+              color: {
+                name: "Black",
+
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 350,
+
+                sellingPrice: 899,
+
+                discountPrice: 749,
+
+                currency: "INR",
+              },
+
+              inventory: {
+                stock: 12,
+
+                reservedStock: 0,
+
+                lowStockThreshold: 3,
+              },
+
+              shipping: {
+                weightInGrams: 260,
+              },
+
+              isActive: true,
+            },
+          ],
+        },
+      });
+
+    const productBeforeCancellation = await Product.findById(
+      product._id,
+    ).lean();
+
+    const variantBeforeCancellation = findProductVariant(
+      productBeforeCancellation,
+      variant._id,
+    );
+
+    const ledgerEntriesBeforeCancellation = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesBeforeCancellation).toHaveLength(2);
+
+    const orderBeforeCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeCancellation.returnRequestVersion).toBe(1);
+
+    const cancellationReason = "I no longer want to return this product.";
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: cancellationReason,
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return request cancelled successfully");
+
+    const cancelledReturnRequest = response.body.data.returnRequest;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Customer Response
+        |--------------------------------------------------------------------------
+        */
+
+    expect(cancelledReturnRequest.id).toBe(returnRequest.id);
+
+    expect(cancelledReturnRequest.status).toBe("cancelled");
+
+    expect(cancelledReturnRequest.cancellation.reason).toBe(cancellationReason);
+
+    expect(cancelledReturnRequest.cancellation.cancelledAt).toBeTruthy();
+
+    expect(cancelledReturnRequest.cancellation).not.toHaveProperty(
+      "cancelledBy",
+    );
+
+    expect(cancelledReturnRequest).not.toHaveProperty("updatedBy");
+
+    expect(cancelledReturnRequest).not.toHaveProperty("adminNote");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Cancellation Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("cancelled");
+
+    expect(storedReturnRequest.cancellation.reason).toBe(cancellationReason);
+
+    expect(storedReturnRequest.cancellation.cancelledAt).toBeTruthy();
+
+    expect(String(storedReturnRequest.cancellation.cancelledBy)).toBe(
+      String(customer._id),
+    );
+
+    expect(String(storedReturnRequest.updatedBy)).toBe(String(customer._id));
+
+    expect(storedReturnRequest.cancellation.cancelledAt.toISOString()).toBe(
+      cancelledReturnRequest.cancellation.cancelledAt,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Version Synchronization
+        |--------------------------------------------------------------------------
+        |
+        | Creation incremented it to 1.
+        | Cancellation increments it to 2.
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterCancellation.returnRequestVersion).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterCancellation = await Product.findById(product._id).lean();
+
+    const variantAfterCancellation = findProductVariant(
+      productAfterCancellation,
+      variant._id,
+    );
+
+    expect(variantAfterCancellation.inventory.stock).toBe(
+      variantBeforeCancellation.inventory.stock,
+    );
+
+    expect(variantAfterCancellation.inventory.reservedStock).toBe(
+      variantBeforeCancellation.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntriesAfterCancellation = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesAfterCancellation).toHaveLength(2);
+
+    expect(
+      ledgerEntriesAfterCancellation.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approved Return Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows a customer to cancel an approved Return Request before physical processing starts", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    await OrderReturnRequest.updateOne(
+      {
+        _id: returnRequest.id,
+      },
+      {
+        $set: {
+          status: "approved",
+
+          "approval.approvedBy": admin._id,
+
+          "approval.approvedAt": new Date(),
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "I decided to keep the approved return item.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.status).toBe("cancelled");
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("cancelled");
+
+    /*
+     * Existing approval audit should remain.
+     */
+    expect(String(storedReturnRequest.approval.approvedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReturnRequest.approval.approvedAt).toBeTruthy();
+
+    expect(storedReturnRequest.cancellation.cancelledAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects cancelling the same Return Request twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "First cancellation request.",
+      })
+      .expect(200);
+
+    const orderAfterFirstCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterFirstCancellation.returnRequestVersion).toBe(2);
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Second cancellation request.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_ALREADY_CANCELLED");
+
+    expect(response.body.details.status).toBe("cancelled");
+
+    expect(response.body.details.cancelledAt).toBeTruthy();
+
+    const orderAfterSecondCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    /*
+     * Failed duplicate cancellation must not
+     * increment the version.
+     */
+    expect(orderAfterSecondCancellation.returnRequestVersion).toBe(2);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Rejected Return
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects cancellation when the Return Request is already rejected", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    await OrderReturnRequest.updateOne(
+      {
+        _id: returnRequest.id,
+      },
+      {
+        $set: {
+          status: "rejected",
+
+          "rejection.reason":
+            "The Return Request did not meet the return policy.",
+
+          "rejection.rejectedBy": admin._id,
+
+          "rejection.rejectedAt": new Date(),
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Attempting to cancel a rejected request.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_CANCELLATION_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("rejected");
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("rejected");
+
+    expect(storedReturnRequest.cancellation.cancelledAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | In-Transit Return
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects cancellation after the Return Request enters transit", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    await OrderReturnRequest.updateOne(
+      {
+        _id: returnRequest.id,
+      },
+      {
+        $set: {
+          status: "in-transit",
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Attempting cancellation after return shipment.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_CANCELLATION_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("in-transit");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approved but Receipt Evidence Exists
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects cancellation when an approved Return Request already contains receipt evidence", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const receivedAt = new Date();
+
+    await OrderReturnRequest.updateOne(
+      {
+        _id: returnRequest.id,
+      },
+      {
+        $set: {
+          status: "approved",
+
+          "approval.approvedBy": admin._id,
+
+          "approval.approvedAt": new Date(),
+
+          "receipt.receivedBy": admin._id,
+
+          "receipt.receivedAt": receivedAt,
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Attempting cancellation after warehouse receipt.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_CANCELLATION_STATE_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("approved");
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("approved");
+
+    expect(storedReturnRequest.receipt.receivedAt.getTime()).toBe(
+      receivedAt.getTime(),
+    );
+
+    expect(storedReturnRequest.cancellation.cancelledAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Quantity Reuse After Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  it("releases consumed return quantity so it can be used by a new Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const orderItemId = String(orderItem._id);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Quantity Fully Consumed
+        |--------------------------------------------------------------------------
+        */
+
+    const exhaustedResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 1,
+
+            reason: "size-issue",
+
+            details: "Attempt before cancelling the first Return Request.",
+          },
+        ],
+      });
+
+    expect(exhaustedResponse.status).toBe(409);
+
+    expect(exhaustedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Cancel Existing Return Request
+        |--------------------------------------------------------------------------
+        */
+
+    await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Cancelling this Return Request to submit a corrected one.",
+      })
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Full Quantity Becomes Available Again
+        |--------------------------------------------------------------------------
+        */
+
+    const newResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 2,
+
+            reason: "size-issue",
+
+            details: "Submitting a corrected Return Request.",
+          },
+        ],
+      });
+
+    expect(newResponse.status).toBe(201);
+
+    expect(newResponse.body.data.returnRequest.items[0].quantity).toBe(2);
+
+    const returnRequests = await OrderReturnRequest.find({
+      order: createdOrder.id,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(returnRequests).toHaveLength(2);
+
+    expect(returnRequests[0].status).toBe("cancelled");
+
+    expect(returnRequests[1].status).toBe("requested");
+
+    expect(returnRequests[1].items[0].quantity).toBe(2);
+
+    /*
+     * Creation = 1
+     * Cancellation = 2
+     * Second creation = 3
+     */
+    const orderWithVersion = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderWithVersion.returnRequestVersion).toBe(3);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back the Order version increment when saving the cancellation fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    /*
+|--------------------------------------------------------------------------
+| Introduce Invalid Stored Data
+|--------------------------------------------------------------------------
+|
+| returnRequestNumber is immutable, so Model.updateOne() may ignore it.
+|
+| Native collection access intentionally bypasses Mongoose validation
+| and immutable-field protection for this rollback test.
+|--------------------------------------------------------------------------
+*/
+
+    const returnRequestObjectId = new mongoose.Types.ObjectId(returnRequest.id);
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequestObjectId,
+      },
+      {
+        $set: {
+          returnRequestNumber: "",
+        },
+      },
+    );
+
+    /*
+|--------------------------------------------------------------------------
+| Confirm Test Data Was Actually Corrupted
+|--------------------------------------------------------------------------
+*/
+    const corruptedReturnRequest = await OrderReturnRequest.collection.findOne({
+      _id: returnRequestObjectId,
+    });
+
+    expect(corruptedReturnRequest.returnRequestNumber).toBe("");
+
+    const orderBeforeCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeCancellation.returnRequestVersion).toBe(1);
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/returns/${returnRequest.id}/cancel`)
+      .send({
+        reason: "Cancellation transaction rollback integration test.",
+      });
+
+    expect(response.status).toBe(400);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Request Cancellation Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("requested");
+
+    expect(unchangedReturnRequest.cancellation.reason).toBeNull();
+
+    expect(unchangedReturnRequest.cancellation.cancelledBy).toBeNull();
+
+    expect(unchangedReturnRequest.cancellation.cancelledAt).toBeNull();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Version Increment Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterCancellation = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterCancellation.returnRequestVersion).toBe(1);
   });
 });
