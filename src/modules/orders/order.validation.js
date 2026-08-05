@@ -7,6 +7,8 @@ import {
   ORDER_INVENTORY_STATUS_VALUES,
   ORDER_PAYMENT_STATUS_VALUES,
   ORDER_STATUS_VALUES,
+  ORDER_RETURN_REASON_VALUES,
+  ORDER_RETURN_RESOLUTION_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 /*
@@ -596,6 +598,106 @@ const createOrderBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Customer Order Return Item
+|--------------------------------------------------------------------------
+|
+| Only orderItemId is accepted from the customer.
+|
+| Product ID, variant ID, SKU and product name will be copied from
+| the trusted Order item snapshot by the service layer.
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnItemSchema = z.strictObject({
+  orderItemId: objectIdSchema,
+
+  quantity: z.coerce
+    .number({
+      error: "Return quantity must be a number",
+    })
+    .int({
+      error: "Return quantity must be a whole number",
+    })
+    .min(1, {
+      error: "Return quantity must be at least 1",
+    })
+    .max(MAX_ORDER_ITEM_QUANTITY, {
+      error: `Return quantity cannot exceed ${MAX_ORDER_ITEM_QUANTITY}`,
+    }),
+
+  reason: z.enum(ORDER_RETURN_REASON_VALUES, {
+    error: "Invalid return reason",
+  }),
+
+  details: z
+    .string({
+      error: "Return details must be text",
+    })
+    .trim()
+    .min(5, {
+      error: "Return details must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Return details cannot exceed 500 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Return Body
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnBodySchema = z
+  .strictObject({
+    requestedResolution: z.enum(ORDER_RETURN_RESOLUTION_VALUES, {
+      error: "Invalid requested return resolution",
+    }),
+
+    items: z
+      .array(customerOrderReturnItemSchema, {
+        error: "Return items are required",
+      })
+      .min(1, {
+        error: "At least one return item is required",
+      })
+      .max(MAX_ORDER_ITEMS, {
+        error: `A return request cannot contain more than ${MAX_ORDER_ITEMS} items`,
+      }),
+
+    customerNote: z
+      .string({
+        error: "Customer note must be text",
+      })
+      .trim()
+      .max(1000, {
+        error: "Customer note cannot exceed 1000 characters",
+      })
+      .optional(),
+  })
+  .superRefine((value, context) => {
+    const seenOrderItemIds = new Set();
+
+    value.items.forEach((item, index) => {
+      if (seenOrderItemIds.has(item.orderItemId)) {
+        context.addIssue({
+          code: "custom",
+
+          path: ["items", index, "orderItemId"],
+
+          message: "The same Order item cannot appear more than once",
+        });
+
+        return;
+      }
+
+      seenOrderItemIds.add(item.orderItemId);
+    });
+  });
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order Cancellation Body
 |--------------------------------------------------------------------------
 */
@@ -1044,6 +1146,23 @@ export const adminOrderDeliveryRequestSchema = z.strictObject({
 
 export const adminOrderRefundRequestSchema = z.strictObject({
   body: adminOrderRefundBodySchema,
+
+  params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/:orderId/returns
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnRequestSchema = z.strictObject({
+  body: customerOrderReturnBodySchema,
 
   params: customerOrderParamsSchema,
 

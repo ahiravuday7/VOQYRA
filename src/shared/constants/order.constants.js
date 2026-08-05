@@ -193,3 +193,98 @@ export const ORDER_STATUS_TRANSITION_ACTION_MAP = Object.freeze({
   [`${ORDER_STATUSES.DELIVERED}:${ORDER_STATUSES.REFUNDED}`]:
     ORDER_STATUS_TRANSITION_ACTIONS.REQUIRE_REFUND,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Order Return Statuses
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_STATUSES = Object.freeze({
+  REQUESTED: "requested",
+
+  APPROVED: "approved",
+
+  REJECTED: "rejected",
+
+  IN_TRANSIT: "in-transit",
+
+  RECEIVED: "received",
+
+  INSPECTED: "inspected",
+
+  COMPLETED: "completed",
+
+  CANCELLED: "cancelled",
+});
+
+export const ORDER_RETURN_STATUS_VALUES = Object.freeze(
+  Object.values(ORDER_RETURN_STATUSES),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Order Return Reasons
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_REASONS = Object.freeze({
+  DAMAGED: "damaged",
+
+  DEFECTIVE: "defective",
+
+  WRONG_ITEM: "wrong-item",
+
+  SIZE_ISSUE: "size-issue",
+
+  COLOR_ISSUE: "color-issue",
+
+  QUALITY_ISSUE: "quality-issue",
+
+  NOT_AS_DESCRIBED: "not-as-described",
+
+  CHANGED_MIND: "changed-mind",
+
+  OTHER: "other",
+});
+
+export const ORDER_RETURN_REASON_VALUES = Object.freeze(
+  Object.values(ORDER_RETURN_REASONS),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Order Return Requested Resolutions
+|--------------------------------------------------------------------------
+|
+| This value records what the customer wants.
+|
+| It does not automatically grant a refund or replacement.
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_RESOLUTIONS = Object.freeze({
+  REFUND: "refund",
+
+  REPLACEMENT: "replacement",
+});
+
+export const ORDER_RETURN_RESOLUTION_VALUES = Object.freeze(
+  Object.values(ORDER_RETURN_RESOLUTIONS),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Order Return Item Inspection Statuses
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_ITEM_INSPECTION_STATUSES = Object.freeze({
+  PENDING: "pending",
+
+  INSPECTED: "inspected",
+});
+
+export const ORDER_RETURN_ITEM_INSPECTION_STATUS_VALUES = Object.freeze(
+  Object.values(ORDER_RETURN_ITEM_INSPECTION_STATUSES),
+);

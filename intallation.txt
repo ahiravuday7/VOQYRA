@@ -2561,6 +2561,56 @@ Refund transaction rollback                 ✅
 Automatic returned-stock restoration        Not implemented intentionally
 Return inspection workflow                  ❌
 |--------------------------------------------------------------------------
+Part 117: Product Return Request Model and Validation
+
+Create/update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order-return.model.js
+src/modules/orders/order.validation.js
+
+This part separates two different business operations:
+
+Refund  → Money returned to the customer
+Return  → Physical product sent back for inspection
+
+A returned product will not automatically increase sellable stock. Warehouse inspection must first decide whether it is:
+
+Resellable
+Damaged
+Rejected
+
+The future customer endpoint will be:
+
+POST /api/v1/orders/:orderId/returns
+
+No service, controller, or route is added yet.
+
+Return versus refund behavior:
+Return request:
+Customer reports physical goods being returned
+Warehouse receives and inspects goods
+Sellable stock may be restored after inspection
+Refund:
+Money is returned
+Payment status changes to refunded
+Product stock does not automatically change
+
+These workflows can be connected later, but they remain separate operations.
+
+Example:
+
+Refund completed
+        ↓
+Returned item received
+        ↓
+Warehouse inspection
+        ↓
+1 unit resellable
+        ↓
+Inventory adjustment:
+reason = customer-return
+stockDelta = +1
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
