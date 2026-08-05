@@ -20,6 +20,8 @@ import { createAuthenticatedAgent } from "../helpers/auth-test.helper.js";
 
 import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 
+import OrderReturnRequest from "../../src/modules/orders/order-return.model.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -381,6 +383,71 @@ const moveOrderToDelivered = async ({
         : {}),
     })
     .expect(200);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Delivered Order for Return Tests
+|--------------------------------------------------------------------------
+*/
+
+const createDeliveredOrderReturnFixture = async ({
+  adminAgent,
+  customerAgent,
+  quantity = 1,
+  productOverrides = {},
+  shipmentData = {},
+}) => {
+  const uniqueSuffix = new mongoose.Types.ObjectId().toString().slice(-10);
+
+  const category = await createActiveCategoryFixture();
+
+  const product = await createActiveProductFixture({
+    category: category._id,
+
+    name: `Return Test Product ${uniqueSuffix}`,
+
+    slug: `return-test-product-${uniqueSuffix}`,
+
+    ...productOverrides,
+  });
+
+  const variant = product.variants[0];
+
+  const createdOrder = await createCustomerOrderFixture({
+    customerAgent,
+    product,
+    variant,
+    quantity,
+  });
+
+  await moveOrderToDelivered({
+    adminAgent,
+
+    orderId: createdOrder.id,
+
+    shipmentData: {
+      carrier: "Blue Dart",
+
+      trackingNumber: `RET-${uniqueSuffix.toUpperCase()}`,
+
+      trackingUrl: `https://tracking.example.com/${uniqueSuffix}`,
+
+      ...shipmentData,
+    },
+  });
+
+  const storedOrder = await Order.findById(createdOrder.id).lean();
+
+  return {
+    category,
+    product,
+    variant,
+    createdOrder,
+    storedOrder,
+
+    orderItem: storedOrder.items[0],
+  };
 };
 
 /*
@@ -7319,5 +7386,1087 @@ describe("POST /api/v1/admin/orders/:orderId/refund", () => {
         return entry.status === "refunded";
       }),
     ).toHaveLength(0);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Return Requests
+|--------------------------------------------------------------------------
+*/
+
+describe("POST /api/v1/orders/:orderId/returns", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when creating a return request without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const orderItemId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/orders/${orderId}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 400 when the return Order ID is invalid", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent
+      .post("/api/v1/orders/not-a-valid-object-id/returns")
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "orderId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Strict Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects customer-controlled Product snapshot fields", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const orderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${orderId}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+
+            productId: new mongoose.Types.ObjectId().toString(),
+
+            variantId: new mongoose.Types.ObjectId().toString(),
+
+            sku: "FAKE-CUSTOMER-SKU",
+
+            productName: "Customer Modified Product",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Ownership Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when a customer creates a return request for another customer's Order", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+
+        customerAgent: ownerAgent,
+      },
+    );
+
+    const response = await otherCustomerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Order
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Order does not exist", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const missingOrderId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${missingOrderId}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Order Status
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects a return request before the Order is delivered", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const createdOrder = await createCustomerOrderFixture({
+      customerAgent,
+      product,
+
+      variant: product.variants[0],
+
+      quantity: 1,
+    });
+
+    const pendingOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(pendingOrder.status).toBe("pending");
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(pendingOrder.items[0]._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_STATUS_INVALID");
+
+    expect(response.body.details.currentStatus).toBe("pending");
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Delivery State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects a return request when delivery evidence is missing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    /*
+     * Keep status delivered, but remove
+     * the trusted delivery timestamp.
+     */
+    await Order.updateOne(
+      {
+        _id: createdOrder.id,
+      },
+      {
+        $set: {
+          "shipment.deliveredAt": null,
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The product contains a manufacturing defect.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_DELIVERY_STATE_INVALID");
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates a return request using trusted Order-item snapshots without changing inventory", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, storedOrder, orderItem } =
+      await createDeliveredOrderReturnFixture({
+        adminAgent,
+        customerAgent,
+
+        quantity: 2,
+
+        productOverrides: {
+          name: "Trusted Return Snapshot Shirt",
+
+          slug: "trusted-return-snapshot-shirt",
+
+          variants: [
+            {
+              sku: "RETURN-SNAPSHOT-BLK-M",
+
+              size: "M",
+
+              color: {
+                name: "Black",
+
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 350,
+
+                sellingPrice: 899,
+
+                discountPrice: 749,
+
+                currency: "INR",
+              },
+
+              inventory: {
+                stock: 12,
+
+                reservedStock: 0,
+
+                lowStockThreshold: 3,
+              },
+
+              shipping: {
+                weightInGrams: 260,
+              },
+
+              isActive: true,
+            },
+          ],
+        },
+      });
+
+    const productBeforeReturn = await Product.findById(product._id).lean();
+
+    const variantBeforeReturn = findProductVariant(
+      productBeforeReturn,
+      variant._id,
+    );
+
+    expect(variantBeforeReturn.inventory.stock).toBe(10);
+
+    expect(variantBeforeReturn.inventory.reservedStock).toBe(0);
+
+    const ledgerEntriesBeforeReturn = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesBeforeReturn).toHaveLength(2);
+
+    expect(
+      ledgerEntriesBeforeReturn.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The stitching near the sleeve is damaged.",
+          },
+        ],
+
+        customerNote: "Please arrange pickup from the delivery address.",
+      });
+
+    expect(response.status).toBe(201);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return request created successfully");
+
+    const returnRequest = response.body.data.returnRequest;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Public Return Response
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnRequest.returnRequestNumber).toMatch(
+      /^RET-\d{8}-[A-F0-9]{12}$/,
+    );
+
+    expect(returnRequest.orderId).toBe(createdOrder.id);
+
+    expect(returnRequest.orderNumber).toBe(createdOrder.orderNumber);
+
+    expect(returnRequest.requestedResolution).toBe("refund");
+
+    expect(returnRequest.status).toBe("requested");
+
+    expect(returnRequest.customerNote).toBe(
+      "Please arrange pickup from the delivery address.",
+    );
+
+    expect(returnRequest).not.toHaveProperty("adminNote");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Trusted Item Snapshot
+        |--------------------------------------------------------------------------
+        */
+
+    const returnedItem = returnRequest.items[0];
+
+    expect(returnedItem.orderItemId).toBe(String(orderItem._id));
+
+    expect(returnedItem.productId).toBe(String(orderItem.product));
+
+    expect(returnedItem.variantId).toBe(String(orderItem.variantId));
+
+    expect(returnedItem.sku).toBe(orderItem.sku);
+
+    expect(returnedItem.productName).toBe(orderItem.productName);
+
+    expect(returnedItem.size).toBe(orderItem.size);
+
+    expect(returnedItem.color).toEqual({
+      name: orderItem.color.name,
+
+      code: orderItem.color.code,
+    });
+
+    expect(returnedItem.quantity).toBe(1);
+
+    expect(returnedItem.reason).toBe("defective");
+
+    expect(returnedItem.details).toBe(
+      "The stitching near the sleeve is damaged.",
+    );
+
+    expect(returnedItem.inspection).toEqual({
+      status: "pending",
+
+      resellableQuantity: 0,
+
+      damagedQuantity: 0,
+
+      rejectedQuantity: 0,
+
+      note: null,
+
+      inspectedAt: null,
+    });
+
+    expect(returnedItem.inspection).not.toHaveProperty("inspectedBy");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Return Request
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest).toBeTruthy();
+
+    expect(String(storedReturnRequest.order)).toBe(createdOrder.id);
+
+    expect(String(storedReturnRequest.customer)).toBe(String(customer._id));
+
+    expect(String(storedReturnRequest.createdBy)).toBe(String(customer._id));
+
+    expect(String(storedReturnRequest.updatedBy)).toBe(String(customer._id));
+
+    const storedReturnedItem = storedReturnRequest.items[0];
+
+    expect(String(storedReturnedItem.orderItemId)).toBe(String(orderItem._id));
+
+    expect(String(storedReturnedItem.product)).toBe(String(orderItem.product));
+
+    expect(String(storedReturnedItem.variantId)).toBe(
+      String(orderItem.variantId),
+    );
+
+    expect(storedReturnedItem.sku).toBe(orderItem.sku);
+
+    expect(storedReturnedItem.productName).toBe(orderItem.productName);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Version Increment
+        |--------------------------------------------------------------------------
+        */
+
+    const orderWithReturnVersion = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderWithReturnVersion.returnRequestVersion).toBe(1);
+
+    expect(orderWithReturnVersion.status).toBe(storedOrder.status);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterReturn = await Product.findById(product._id).lean();
+
+    const variantAfterReturn = findProductVariant(
+      productAfterReturn,
+      variant._id,
+    );
+
+    expect(variantAfterReturn.inventory.stock).toBe(
+      variantBeforeReturn.inventory.stock,
+    );
+
+    expect(variantAfterReturn.inventory.reservedStock).toBe(
+      variantBeforeReturn.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No New Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntriesAfterReturn = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntriesAfterReturn).toHaveLength(2);
+
+    expect(
+      ledgerEntriesAfterReturn.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Refunded Order Eligibility
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows a customer to create a physical return request for a refunded Order", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    await adminAgent
+      .post(`/api/v1/admin/orders/${createdOrder.id}/refund`)
+      .send({
+        reason: "Financial refund completed before physical item return.",
+
+        referenceId: createRefundReference("RFND-RETURN"),
+
+        note: "Customer must return the physical product.",
+      })
+      .expect(200);
+
+    const refundedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(refundedOrder.status).toBe("refunded");
+
+    expect(refundedOrder.payment.status).toBe("refunded");
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "The refunded product is being physically returned.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(201);
+
+    expect(response.body.data.returnRequest.status).toBe("requested");
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Other Reason Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires return details when the reason is other", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "other",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_DETAILS_REQUIRED");
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Partial Returns and Quantity Exhaustion
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows partial returns up to the purchased quantity and rejects any excess", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        quantity: 3,
+      },
+    );
+
+    const orderItemId = String(orderItem._id);
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Partial Return: 1 of 3
+        |--------------------------------------------------------------------------
+        */
+
+    const firstResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 1,
+
+            reason: "size-issue",
+
+            details: "One item has an incorrect size.",
+          },
+        ],
+      });
+
+    expect(firstResponse.status).toBe(201);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Second Partial Return: Remaining 2 of 3
+        |--------------------------------------------------------------------------
+        */
+
+    const secondResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 2,
+
+            reason: "quality-issue",
+
+            details: "The remaining two items have quality problems.",
+          },
+        ],
+      });
+
+    expect(secondResponse.status).toBe(201);
+
+    const returnRequests = await OrderReturnRequest.find({
+      order: createdOrder.id,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(returnRequests).toHaveLength(2);
+
+    const totalConsumedQuantity = returnRequests.reduce(
+      (total, returnRequest) => {
+        return total + returnRequest.items[0].quantity;
+      },
+      0,
+    );
+
+    expect(totalConsumedQuantity).toBe(3);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Third Return Must Be Rejected
+        |--------------------------------------------------------------------------
+        */
+
+    const thirdResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "Attempt to return more than the purchased quantity.",
+          },
+        ],
+      });
+
+    expect(thirdResponse.status).toBe(409);
+
+    expect(thirdResponse.body.errorCode).toBe("ORDER_RETURN_QUANTITY_EXCEEDED");
+
+    expect(thirdResponse.body.details).toMatchObject({
+      orderItemId,
+
+      orderedQuantity: 3,
+
+      consumedQuantity: 3,
+
+      requestedQuantity: 1,
+
+      remainingQuantity: 0,
+    });
+
+    expect(
+      await OrderReturnRequest.countDocuments({
+        order: createdOrder.id,
+      }),
+    ).toBe(2);
+
+    /*
+     * The failed transaction must not increment
+     * the Order version.
+     */
+    const orderWithVersion = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderWithVersion.returnRequestVersion).toBe(2);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Rejected Return Quantity Reuse
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows return quantity to be reused after a previous request is rejected", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        quantity: 2,
+      },
+    );
+
+    const orderItemId = String(orderItem._id);
+
+    const firstResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 2,
+
+            reason: "defective",
+
+            details: "Initial full-quantity return request.",
+          },
+        ],
+      });
+
+    expect(firstResponse.status).toBe(201);
+
+    const firstReturnRequestId = firstResponse.body.data.returnRequest.id;
+
+    /*
+     * Admin rejection endpoint does not exist yet.
+     * Simulate the future admin rejection workflow.
+     */
+    await OrderReturnRequest.updateOne(
+      {
+        _id: firstReturnRequestId,
+      },
+      {
+        $set: {
+          status: "rejected",
+
+          "rejection.reason":
+            "Return request did not satisfy the return policy.",
+
+          "rejection.rejectedAt": new Date(),
+        },
+      },
+    );
+
+    const secondResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId,
+
+            quantity: 2,
+
+            reason: "size-issue",
+
+            details: "A new return request after the earlier rejection.",
+          },
+        ],
+      });
+
+    expect(secondResponse.status).toBe(201);
+
+    const returnRequests = await OrderReturnRequest.find({
+      order: createdOrder.id,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(returnRequests).toHaveLength(2);
+
+    expect(returnRequests[0].status).toBe("rejected");
+
+    expect(returnRequests[1].status).toBe("requested");
+
+    expect(returnRequests[1].items[0].quantity).toBe(2);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Return Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("prevents concurrent return requests from exceeding the purchased quantity", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, orderItem } = await createDeliveredOrderReturnFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        quantity: 1,
+      },
+    );
+
+    const requestBody = {
+      requestedResolution: "refund",
+
+      items: [
+        {
+          orderItemId: String(orderItem._id),
+
+          quantity: 1,
+
+          reason: "defective",
+
+          details: "Concurrent return-request protection test.",
+        },
+      ],
+    };
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      customerAgent
+        .post(`/api/v1/orders/${createdOrder.id}/returns`)
+        .send(requestBody),
+
+      customerAgent
+        .post(`/api/v1/orders/${createdOrder.id}/returns`)
+        .send(requestBody),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter((response) => {
+      return response.status === 201;
+    });
+
+    const rejectedResponses = responses.filter((response) => {
+      return response.status === 409;
+    });
+
+    /*
+     * Exactly one request may consume the one
+     * purchased unit.
+     */
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(rejectedResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+      "ORDER_RETURN_CONCURRENT_REQUEST",
+    ]).toContain(rejectedResponses[0].body.errorCode);
+
+    const storedReturnRequests = await OrderReturnRequest.find({
+      order: createdOrder.id,
+    }).lean();
+
+    expect(storedReturnRequests).toHaveLength(1);
+
+    expect(storedReturnRequests[0].items[0].quantity).toBe(1);
+
+    const consumedQuantity = storedReturnRequests.reduce(
+      (total, returnRequest) => {
+        return (
+          total +
+          returnRequest.items.reduce((itemTotal, item) => {
+            return itemTotal + item.quantity;
+          }, 0)
+        );
+      },
+      0,
+    );
+
+    expect(consumedQuantity).toBe(1);
+
+    /*
+     * The failed transaction's version increment
+     * must be rolled back.
+     */
+    const orderWithVersion = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderWithVersion.returnRequestVersion).toBe(1);
   });
 });

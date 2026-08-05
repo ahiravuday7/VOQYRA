@@ -2671,6 +2671,29 @@ Create return request
         ↓
 Commit everything atomically
 |--------------------------------------------------------------------------
+Part 120: Customer Return Request Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This step tests:
+
+POST /api/v1/orders/:orderId/returns
+
+Coverage includes:
+
+Authentication
+Order ownership
+Request validation
+Delivered and refunded Order eligibility
+Trusted Order-item snapshots
+Partial returns
+Return quantity exhaustion
+Rejected-request quantity reuse
+Concurrent return protection
+Product inventory invariants
+Inventory Ledger invariants
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
