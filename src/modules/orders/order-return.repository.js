@@ -91,3 +91,51 @@ export const findConsumedOrderReturnQuantities = async ({
 
   return aggregation;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Existing Return Request Number
+|--------------------------------------------------------------------------
+*/
+
+export const findExistingReturnRequestNumber = (
+  returnRequestNumber,
+  { session = null } = {},
+) => {
+  const query = OrderReturnRequest.exists({
+    returnRequestNumber,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Order Return Request Document
+|--------------------------------------------------------------------------
+|
+| Array-based Model.create() ensures the transaction session is applied.
+|--------------------------------------------------------------------------
+*/
+
+export const createOrderReturnRequestDocument = async (
+  returnRequestData,
+  { session } = {},
+) => {
+  const options = {};
+
+  if (session) {
+    options.session = session;
+  }
+
+  const [returnRequest] = await OrderReturnRequest.create(
+    [returnRequestData],
+    options,
+  );
+
+  return returnRequest;
+};

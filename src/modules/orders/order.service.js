@@ -17,6 +17,7 @@ import {
   ORDER_RETURN_ITEM_INSPECTION_STATUS_VALUES,
   ORDER_RETURN_REASONS,
   ORDER_RETURN_STATUSES,
+  ORDER_RETURN_ITEM_INSPECTION_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -50,7 +51,11 @@ import {
 } from "./order.repository.js";
 
 import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
-import { findConsumedOrderReturnQuantities } from "./order-return.repository.js";
+import {
+  findConsumedOrderReturnQuantities,
+  createOrderReturnRequestDocument,
+  findExistingReturnRequestNumber,
+} from "./order-return.repository.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -84,6 +89,17 @@ const CUSTOMER_CANCELLABLE_ORDER_STATUS_SET = new Set(
 const CUSTOMER_CANCELLABLE_PAYMENT_STATUS_SET = new Set(
   CUSTOMER_CANCELLABLE_PAYMENT_STATUS_VALUES,
 );
+
+/*
+|--------------------------------------------------------------------------
+| Return Request Number Configuration
+|--------------------------------------------------------------------------
+*/
+
+const ORDER_RETURN_REQUEST_NUMBER_PREFIX = "RET";
+
+const MAX_RETURN_REQUEST_NUMBER_ATTEMPTS = 10;
+
 /*
 |--------------------------------------------------------------------------
 | Order Checkout Errors
@@ -341,6 +357,32 @@ const createCustomerReturnDetailsRequiredError = (orderItemId) => {
       details: {
         orderItemId: String(orderItemId),
       },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Persistence Errors
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnNumberConflictError = () => {
+  return new AppError(
+    "A unique return request number could not be generated",
+    409,
+    {
+      errorCode: "ORDER_RETURN_NUMBER_CONFLICT",
+    },
+  );
+};
+
+const createCustomerReturnConcurrencyError = () => {
+  return new AppError(
+    "The Order return information changed while the request was being processed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_CONCURRENT_REQUEST",
     },
   );
 };
@@ -1051,6 +1093,68 @@ const buildTrustedCustomerReturnItems = ({
       },
     };
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Return Request Number Candidate
+|--------------------------------------------------------------------------
+*/
+
+const createReturnRequestNumberCandidate = () => {
+  const datePart = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+
+  const randomPart = new mongoose.Types.ObjectId()
+    .toString()
+    .slice(-12)
+    .toUpperCase();
+
+  return (
+    `${ORDER_RETURN_REQUEST_NUMBER_PREFIX}-` + `${datePart}-` + `${randomPart}`
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Generate Unique Return Request Number
+|--------------------------------------------------------------------------
+*/
+
+const generateUniqueReturnRequestNumber = async ({ session } = {}) => {
+  for (
+    let attempt = 0;
+    attempt < MAX_RETURN_REQUEST_NUMBER_ATTEMPTS;
+    attempt += 1
+  ) {
+    const candidate = createReturnRequestNumberCandidate();
+
+    const existingReturnRequest = await findExistingReturnRequestNumber(
+      candidate,
+      {
+        session,
+      },
+    );
+
+    if (!existingReturnRequest) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Unable to generate a unique return request number");
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Transaction Conflict
+|--------------------------------------------------------------------------
+*/
+
+const isOrderReturnTransactionConflict = (error) => {
+  return Boolean(
+    error?.errorLabels?.includes?.("TransientTransactionError") ||
+    error?.code === 112 ||
+    error?.codeName === "WriteConflict",
+  );
 };
 
 /*
@@ -4946,4 +5050,150 @@ export const prepareCustomerOrderReturnRequest = async ({
     order,
     returnRequestData,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Customer Return Request
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicCustomerOrderReturnRequest = async ({
+  orderId,
+  customerId,
+  returnData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let createdReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Shared Order Write Boundary
+          |--------------------------------------------------------------------------
+          |
+          | Concurrent return requests for the same Order must update the same
+          | document before calculating consumed quantities.
+          |--------------------------------------------------------------------------
+          */
+
+        const orderMatched = await bumpOrderReturnRequestVersion(
+          orderId,
+          customerId,
+          {
+            session,
+          },
+        );
+
+        if (!orderMatched) {
+          throw createCustomerReturnOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate and Build Trusted Return Data
+          |--------------------------------------------------------------------------
+          |
+          | Because the version write happened first, a retried transaction
+          | will observe the latest committed return-request quantities.
+          |--------------------------------------------------------------------------
+          */
+
+        const { returnRequestData } = await prepareCustomerOrderReturnRequest({
+          orderId,
+          customerId,
+          returnData,
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Generate Return Request Number
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequestNumber = await generateUniqueReturnRequestNumber({
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        createdReturnRequest = await createOrderReturnRequestDocument(
+          {
+            ...returnRequestData,
+
+            returnRequestNumber,
+          },
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return createdReturnRequest;
+  } catch (error) {
+    if (
+      isMongoDuplicateKeyError(error) &&
+      (error.keyPattern?.returnRequestNumber ||
+        error.keyValue?.returnRequestNumber)
+    ) {
+      throw createCustomerReturnNumberConflictError();
+    }
+
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createCustomerReturnConcurrencyError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Customer Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const createCustomerOrderReturnRequest = async (
+  orderId,
+  customerId,
+  returnData,
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to create a return request");
+  }
+
+  if (!returnData) {
+    throw new Error("Return request data is required");
+  }
+
+  return executeAtomicCustomerOrderReturnRequest({
+    orderId,
+    customerId,
+    returnData,
+  });
 };

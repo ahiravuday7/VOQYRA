@@ -18,7 +18,10 @@ import {
   customerOrderDetailsRequestSchema,
   customerOrderListRequestSchema,
   cancelCustomerOrderRequestSchema,
+  customerOrderReturnRequestSchema,
 } from "./order.validation.js";
+
+import { createCustomerOrderReturnRequestController } from "./order-return.controller.js";
 
 const router = Router();
 
@@ -38,6 +41,22 @@ router.use(authenticate, authorizeRoles(USER_ROLES.CUSTOMER));
 
 /*
 |--------------------------------------------------------------------------
+| Create Customer Order
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/orders
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/",
+  validateRequest(createOrderRequestSchema),
+  createCustomerOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
 | List Customer Orders
 |--------------------------------------------------------------------------
 |
@@ -49,6 +68,21 @@ router.get(
   "/",
   validateRequest(customerOrderListRequestSchema),
   getCustomerOrdersController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Create Customer Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/:orderId/returns
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/returns",
+  validateRequest(customerOrderReturnRequestSchema),
+  createCustomerOrderReturnRequestController,
 );
 
 /*
@@ -79,21 +113,6 @@ router.get(
   "/:orderId",
   validateRequest(customerOrderDetailsRequestSchema),
   getCustomerOrderController,
-);
-/*
-|--------------------------------------------------------------------------
-| Create Customer Order
-|--------------------------------------------------------------------------
-|
-| POST
-| /api/v1/orders
-|--------------------------------------------------------------------------
-*/
-
-router.post(
-  "/",
-  validateRequest(createOrderRequestSchema),
-  createCustomerOrderController,
 );
 
 export default router;
