@@ -2885,6 +2885,31 @@ Return Request is approved or rejected atomically
         ↓
 Rejection releases consumed return quantity
 |--------------------------------------------------------------------------
+Part 129: Admin Return Approval and Rejection Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This part tests:
+
+POST /api/v1/admin/order-returns/:returnRequestId/approve
+POST /api/v1/admin/order-returns/:returnRequestId/reject
+
+Coverage:
+
+Authentication and admin authorization
+Request validation
+Missing Return Requests
+Trusted approval and rejection audits
+Duplicate and conflicting decisions
+Cancelled and inconsistent Return Requests
+Approval quantity retention
+Rejection quantity release
+Transaction rollback
+Concurrent approval/rejection protection
+Product inventory invariants
+Inventory Ledger invariants
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

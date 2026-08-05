@@ -10321,3 +10321,1034 @@ describe("GET /api/v1/admin/order-returns/:returnRequestId", () => {
     });
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return Approval and Rejection
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Order Return approval and rejection", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when approval or rejection is attempted without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const approvalResponse = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/approve`)
+      .send({});
+
+    expect(approvalResponse.status).toBe(401);
+
+    const rejectionResponse = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/reject`)
+      .send({
+        reason: "The Return Request does not satisfy the return policy.",
+      });
+
+    expect(rejectionResponse.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer attempts to approve or reject a Return Request", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const approvalResponse = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/approve`)
+      .send({});
+
+    expect(approvalResponse.status).toBe(403);
+
+    const rejectionResponse = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/reject`)
+      .send({
+        reason: "The Return Request does not satisfy the return policy.",
+      });
+
+    expect(rejectionResponse.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid Return Request IDs and backend-controlled decision fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const invalidApprovalIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-a-valid-object-id/approve")
+      .send({});
+
+    expect(invalidApprovalIdResponse.status).toBe(400);
+
+    expect(invalidApprovalIdResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const invalidRejectionIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-a-valid-object-id/reject")
+      .send({
+        reason: "The Return Request does not satisfy the return policy.",
+      });
+
+    expect(invalidRejectionIdResponse.status).toBe(400);
+
+    expect(invalidRejectionIdResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const invalidApprovalBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/approve`)
+      .send({
+        status: "approved",
+
+        approvedBy: new mongoose.Types.ObjectId().toString(),
+
+        approvedAt: new Date().toISOString(),
+      });
+
+    expect(invalidApprovalBodyResponse.status).toBe(400);
+
+    expect(invalidApprovalBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const invalidRejectionBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/reject`)
+      .send({
+        reason: "No",
+
+        status: "rejected",
+
+        rejectedBy: new mongoose.Types.ObjectId().toString(),
+      });
+
+    expect(invalidRejectionBodyResponse.status).toBe(400);
+
+    expect(invalidRejectionBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Return Request does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const approvalResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/approve`)
+      .send({});
+
+    expect(approvalResponse.status).toBe(404);
+
+    expect(approvalResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REQUEST_NOT_FOUND",
+    );
+
+    const rejectionResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/reject`)
+      .send({
+        reason: "The Return Request does not satisfy the return policy.",
+      });
+
+    expect(rejectionResponse.status).toBe(404);
+
+    expect(rejectionResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REQUEST_NOT_FOUND",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Approval
+    |--------------------------------------------------------------------------
+    */
+
+  it("approves a requested Return Request without releasing quantity or changing inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const productBeforeApproval = await Product.findById(product._id).lean();
+
+    const variantBeforeApproval = findProductVariant(
+      productBeforeApproval,
+      variant._id,
+    );
+
+    const ledgerBeforeApproval = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerBeforeApproval.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    const orderBeforeApproval = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeApproval.returnRequestVersion).toBe(1);
+
+    const adminNote = "The Return Request was reviewed and approved.";
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/approve`)
+      .send({
+        adminNote,
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return Request approved successfully");
+
+    const approvedReturnRequest = response.body.data.returnRequest;
+
+    expect(approvedReturnRequest.id).toBe(returnRequest.id);
+
+    expect(approvedReturnRequest.status).toBe("approved");
+
+    expect(approvedReturnRequest.adminNote).toBe(adminNote);
+
+    expect(approvedReturnRequest.approval.approvedBy).toBe(String(admin._id));
+
+    expect(approvedReturnRequest.approval.approvedAt).toBeTruthy();
+
+    expect(approvedReturnRequest.updatedBy).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Approval Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("approved");
+
+    expect(storedReturnRequest.adminNote).toBe(adminNote);
+
+    expect(String(storedReturnRequest.approval.approvedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReturnRequest.approval.approvedAt).toBeTruthy();
+
+    expect(String(storedReturnRequest.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Approval Must Not Release Return Quantity
+        |--------------------------------------------------------------------------
+        */
+
+    const exhaustedQuantityResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "Attempting another return after approval.",
+          },
+        ],
+      });
+
+    expect(exhaustedQuantityResponse.status).toBe(409);
+
+    expect(exhaustedQuantityResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    expect(exhaustedQuantityResponse.body.details).toMatchObject({
+      orderedQuantity: 2,
+
+      consumedQuantity: 2,
+
+      requestedQuantity: 1,
+
+      remainingQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Approval Must Not Increment Return Quantity Version
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterApproval = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterApproval.returnRequestVersion).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterApproval = await Product.findById(product._id).lean();
+
+    const variantAfterApproval = findProductVariant(
+      productAfterApproval,
+      variant._id,
+    );
+
+    expect(variantAfterApproval.inventory.stock).toBe(
+      variantBeforeApproval.inventory.stock,
+    );
+
+    expect(variantAfterApproval.inventory.reservedStock).toBe(
+      variantBeforeApproval.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No New Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerAfterApproval = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfterApproval.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Rejection and Quantity Release
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects a Return Request and releases its consumed quantity", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const productBeforeRejection = await Product.findById(product._id).lean();
+
+    const variantBeforeRejection = findProductVariant(
+      productBeforeRejection,
+      variant._id,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Quantity Is Fully Consumed Before Rejection
+        |--------------------------------------------------------------------------
+        */
+
+    const exhaustedResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "size-issue",
+
+            details: "Attempt before rejection.",
+          },
+        ],
+      });
+
+    expect(exhaustedResponse.status).toBe(409);
+
+    expect(exhaustedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    const rejectionReason =
+      "The Return Request does not satisfy the return policy.";
+
+    const adminNote = "The submitted evidence was insufficient.";
+
+    const rejectionResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/reject`)
+      .send({
+        reason: rejectionReason,
+
+        adminNote,
+      });
+
+    expect(rejectionResponse.status).toBe(200);
+
+    expect(rejectionResponse.body.message).toBe(
+      "Return Request rejected successfully",
+    );
+
+    const rejectedReturnRequest = rejectionResponse.body.data.returnRequest;
+
+    expect(rejectedReturnRequest.status).toBe("rejected");
+
+    expect(rejectedReturnRequest.adminNote).toBe(adminNote);
+
+    expect(rejectedReturnRequest.rejection.reason).toBe(rejectionReason);
+
+    expect(rejectedReturnRequest.rejection.rejectedBy).toBe(String(admin._id));
+
+    expect(rejectedReturnRequest.rejection.rejectedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Rejection Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedRejectedRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedRejectedRequest.status).toBe("rejected");
+
+    expect(storedRejectedRequest.rejection.reason).toBe(rejectionReason);
+
+    expect(String(storedRejectedRequest.rejection.rejectedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(String(storedRejectedRequest.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Rejection Releases the Full Quantity
+        |--------------------------------------------------------------------------
+        */
+
+    const replacementResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 2,
+
+            reason: "size-issue",
+
+            details: "New Return Request after the previous rejection.",
+          },
+        ],
+      });
+
+    expect(replacementResponse.status).toBe(201);
+
+    expect(replacementResponse.body.data.returnRequest.items[0].quantity).toBe(
+      2,
+    );
+
+    const returnRequests = await OrderReturnRequest.find({
+      order: createdOrder.id,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(returnRequests).toHaveLength(2);
+
+    expect(returnRequests[0].status).toBe("rejected");
+
+    expect(returnRequests[1].status).toBe("requested");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Request Version
+        |--------------------------------------------------------------------------
+        |
+        | Initial creation = 1
+        | Rejection       = 2
+        | New creation    = 3
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterReplacement = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterReplacement.returnRequestVersion).toBe(3);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Remains Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterRejection = await Product.findById(product._id).lean();
+
+    const variantAfterRejection = findProductVariant(
+      productAfterRejection,
+      variant._id,
+    );
+
+    expect(variantAfterRejection.inventory.stock).toBe(
+      variantBeforeRejection.inventory.stock,
+    );
+
+    expect(variantAfterRejection.inventory.reservedStock).toBe(
+      variantBeforeRejection.inventory.reservedStock,
+    );
+
+    const ledgerAfterRejection = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfterRejection.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Approval
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects approving an already approved Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+    });
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/approve`)
+      .send({})
+      .expect(200);
+
+    const secondResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/approve`)
+      .send({});
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe("ORDER_RETURN_ALREADY_APPROVED");
+
+    expect(secondResponse.body.details.status).toBe("approved");
+
+    expect(secondResponse.body.details.approvedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Rejection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects rejecting an already rejected Return Request", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const rejectedAt = new Date();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "rejected",
+
+      rejection: {
+        reason: "The Return Request was previously rejected.",
+
+        rejectedBy: admin._id,
+
+        rejectedAt,
+      },
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/reject`)
+      .send({
+        reason: "Attempting to reject the Return Request again.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_ALREADY_REJECTED");
+
+    expect(response.body.details.status).toBe("rejected");
+
+    expect(response.body.details.rejectedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Conflicting Decisions
+    |--------------------------------------------------------------------------
+    */
+
+  it("prevents rejecting an approved request and approving a rejected request", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const approvedReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "approved",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    const rejectApprovedResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${approvedReturnRequest._id}/reject`)
+      .send({
+        reason: "Attempting to reject an approved request.",
+      });
+
+    expect(rejectApprovedResponse.status).toBe(409);
+
+    expect(rejectApprovedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_ALREADY_APPROVED",
+    );
+
+    const rejectedReturnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "rejected",
+
+      rejection: {
+        reason: "The Return Request was rejected.",
+
+        rejectedBy: admin._id,
+
+        rejectedAt: new Date(),
+      },
+    });
+
+    const approveRejectedResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${rejectedReturnRequest._id}/approve`)
+      .send({});
+
+    expect(approveRejectedResponse.status).toBe(409);
+
+    expect(approveRejectedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_ALREADY_REJECTED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancelled Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("prevents approving or rejecting a cancelled Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const cancelledAt = new Date();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      status: "cancelled",
+
+      cancellation: {
+        reason: "The customer cancelled the Return Request.",
+
+        cancelledBy: customer._id,
+
+        cancelledAt,
+      },
+    });
+
+    const approvalResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/approve`)
+      .send({});
+
+    expect(approvalResponse.status).toBe(409);
+
+    expect(approvalResponse.body.errorCode).toBe(
+      "ORDER_RETURN_APPROVAL_STATUS_INVALID",
+    );
+
+    const rejectionResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/reject`)
+      .send({
+        reason: "Attempting to reject a cancelled request.",
+      });
+
+    expect(rejectionResponse.status).toBe(409);
+
+    expect(rejectionResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REJECTION_STATUS_INVALID",
+    );
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("cancelled");
+
+    expect(unchangedReturnRequest.cancellation.cancelledAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inconsistent Physical Processing State
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects admin decisions when a requested Return Request already contains receipt evidence", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+    });
+
+    /*
+     * Native collection update intentionally creates an inconsistent
+     * stored state without Mongoose validation.
+     */
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequest._id,
+      },
+      {
+        $set: {
+          "receipt.receivedBy": admin._id,
+
+          "receipt.receivedAt": new Date(),
+        },
+      },
+    );
+
+    const approvalResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/approve`)
+      .send({});
+
+    expect(approvalResponse.status).toBe(409);
+
+    expect(approvalResponse.body.errorCode).toBe(
+      "ORDER_RETURN_DECISION_STATE_INVALID",
+    );
+
+    const rejectionResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/reject`)
+      .send({
+        reason: "Attempting a decision after receipt evidence exists.",
+      });
+
+    expect(rejectionResponse.status).toBe(409);
+
+    expect(rejectionResponse.body.errorCode).toBe(
+      "ORDER_RETURN_DECISION_STATE_INVALID",
+    );
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("requested");
+
+    expect(unchangedReturnRequest.approval.approvedAt).toBeNull();
+
+    expect(unchangedReturnRequest.rejection.rejectedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Rejection Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back the Order version increment when rejection persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Corrupt Stored Data
+        |--------------------------------------------------------------------------
+        |
+        | Native collection access bypasses:
+        |
+        | - Mongoose enum validation
+        | - schema middleware
+        | - normal document validation
+        |--------------------------------------------------------------------------
+        */
+
+    const returnRequestObjectId = new mongoose.Types.ObjectId(returnRequest.id);
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequestObjectId,
+      },
+      {
+        $set: {
+          requestedResolution: "invalid-resolution",
+        },
+      },
+    );
+
+    const corruptedReturnRequest = await OrderReturnRequest.collection.findOne({
+      _id: returnRequestObjectId,
+    });
+
+    expect(corruptedReturnRequest.requestedResolution).toBe(
+      "invalid-resolution",
+    );
+
+    const orderBeforeRejection = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeRejection.returnRequestVersion).toBe(1);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/reject`)
+      .send({
+        reason: "Rejection transaction rollback integration test.",
+      });
+
+    expect(response.status).toBe(400);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Request Decision Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("requested");
+
+    expect(unchangedReturnRequest.rejection.reason).toBeNull();
+
+    expect(unchangedReturnRequest.rejection.rejectedBy).toBeNull();
+
+    expect(unchangedReturnRequest.rejection.rejectedAt).toBeNull();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Linked Order Version Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterRejection = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterRejection.returnRequestVersion).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Approval and Rejection
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one decision when approval and rejection happen concurrently", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    const [approvalResponse, rejectionResponse] = await Promise.all([
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/approve`)
+        .send({
+          adminNote: "Concurrent approval attempt.",
+        }),
+
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/reject`)
+        .send({
+          reason: "Concurrent rejection attempt.",
+        }),
+    ]);
+
+    const responses = [approvalResponse, rejectionResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_DECISION_CONFLICT",
+      "ORDER_RETURN_ALREADY_APPROVED",
+      "ORDER_RETURN_ALREADY_REJECTED",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Final State Must Contain Exactly One Decision
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(["approved", "rejected"]).toContain(storedReturnRequest.status);
+
+    if (storedReturnRequest.status === "approved") {
+      expect(storedReturnRequest.approval.approvedAt).toBeTruthy();
+
+      expect(storedReturnRequest.rejection.rejectedAt).toBeNull();
+    }
+
+    if (storedReturnRequest.status === "rejected") {
+      expect(storedReturnRequest.rejection.rejectedAt).toBeTruthy();
+
+      expect(storedReturnRequest.approval.approvedAt).toBeNull();
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Version Depends on Winning Decision
+        |--------------------------------------------------------------------------
+        |
+        | Approval does not release quantity: version remains 1.
+        | Rejection releases quantity: version becomes 2.
+        |--------------------------------------------------------------------------
+        */
+
+    const linkedOrder = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    if (storedReturnRequest.status === "approved") {
+      expect(linkedOrder.returnRequestVersion).toBe(1);
+    }
+
+    if (storedReturnRequest.status === "rejected") {
+      expect(linkedOrder.returnRequestVersion).toBe(2);
+    }
+  });
+});
