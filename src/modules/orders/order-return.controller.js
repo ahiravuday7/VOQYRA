@@ -1,6 +1,13 @@
-import { createCustomerOrderReturnRequest } from "./order.service.js";
+import {
+  createCustomerOrderReturnRequest,
+  getCustomerOrderReturnRequestById,
+  getCustomerOrderReturnRequests,
+} from "./order.service.js";
 
-import { toCustomerOrderReturnRequest } from "./order-return.mapper.js";
+import {
+  toCustomerOrderReturnRequest,
+  toCustomerOrderReturnRequestSummary,
+} from "./order-return.mapper.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -52,6 +59,80 @@ export const createCustomerOrderReturnRequestController = async (
     success: true,
 
     message: "Return request created successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order Return Requests
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnRequestsController = async (
+  request,
+  response,
+) => {
+  const customerId = request.user._id;
+
+  const filters = request.validated.query;
+
+  const { returnRequests, pagination } = await getCustomerOrderReturnRequests(
+    customerId,
+    filters,
+  );
+
+  const mappedReturnRequests = returnRequests.map(
+    toCustomerOrderReturnRequestSummary,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return requests retrieved successfully",
+
+    data: {
+      returnRequests: mappedReturnRequests,
+
+      pagination,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order Return Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns/:returnRequestId
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const customerId = request.user._id;
+
+  const returnRequest = await getCustomerOrderReturnRequestById(
+    returnRequestId,
+    customerId,
+  );
+
+  const mappedReturnRequest = toCustomerOrderReturnRequest(returnRequest);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return request retrieved successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

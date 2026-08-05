@@ -9,6 +9,7 @@ import {
   ORDER_STATUS_VALUES,
   ORDER_RETURN_REASON_VALUES,
   ORDER_RETURN_RESOLUTION_VALUES,
+  ORDER_RETURN_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 /*
@@ -317,6 +318,70 @@ const adminOrderListQuerySchema = z
       });
     }
   });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return List Query
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnListQuerySchema = z.strictObject({
+  page: z.coerce
+    .number({
+      error: "Page must be a number",
+    })
+    .int({
+      error: "Page must be a whole number",
+    })
+    .min(1, {
+      error: "Page must be at least 1",
+    })
+    .default(1),
+
+  limit: z.coerce
+    .number({
+      error: "Limit must be a number",
+    })
+    .int({
+      error: "Limit must be a whole number",
+    })
+    .min(1, {
+      error: "Limit must be at least 1",
+    })
+    .max(100, {
+      error: "Limit cannot exceed 100",
+    })
+    .default(20),
+
+  status: z
+    .enum(ORDER_RETURN_STATUS_VALUES, {
+      error: "Invalid return-request status",
+    })
+    .optional(),
+
+  requestedResolution: z
+    .enum(ORDER_RETURN_RESOLUTION_VALUES, {
+      error: "Invalid requested return resolution",
+    })
+    .optional(),
+
+  sortDirection: z
+    .enum(["asc", "desc"], {
+      error: "Sort direction must be asc or desc",
+    })
+    .default("desc"),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Request Parameters
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnParamsSchema = z.strictObject({
+  returnRequestId: objectIdSchema,
+});
+
 /*
 |--------------------------------------------------------------------------
 | Phone Number Schema
@@ -1165,6 +1230,40 @@ export const customerOrderReturnRequestSchema = z.strictObject({
   body: customerOrderReturnBodySchema,
 
   params: customerOrderParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: customerOrderReturnListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Details Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns/:returnRequestId
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: customerOrderReturnParamsSchema,
 
   query: emptyObjectSchema,
 });

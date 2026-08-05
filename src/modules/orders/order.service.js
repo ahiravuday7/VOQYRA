@@ -55,6 +55,8 @@ import {
   findConsumedOrderReturnQuantities,
   createOrderReturnRequestDocument,
   findExistingReturnRequestNumber,
+  findCustomerOrderReturnRequestById,
+  listCustomerOrderReturnRequests,
 } from "./order-return.repository.js";
 
 /*
@@ -359,6 +361,18 @@ const createCustomerReturnDetailsRequiredError = (orderItemId) => {
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Request Not Found
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnRequestNotFoundError = () => {
+  return new AppError("Return request was not found", 404, {
+    errorCode: "ORDER_RETURN_REQUEST_NOT_FOUND",
+  });
 };
 
 /*
@@ -1737,6 +1751,78 @@ export const getAdminOrderById = async (orderId) => {
   }
 
   return order;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order Return Requests
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnRequests = async (
+  customerId,
+  filters = {},
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to list return requests");
+  }
+
+  const {
+    page = 1,
+
+    limit = 20,
+  } = filters;
+
+  const { returnRequests, total } = await listCustomerOrderReturnRequests(
+    customerId,
+    filters,
+  );
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  return {
+    returnRequests,
+
+    pagination: {
+      page,
+
+      limit,
+
+      total,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Order Return Request by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnRequestById = async (
+  returnRequestId,
+  customerId,
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to retrieve a return request");
+  }
+
+  const returnRequest = await findCustomerOrderReturnRequestById(
+    returnRequestId,
+    customerId,
+  );
+
+  if (!returnRequest) {
+    throw createCustomerReturnRequestNotFoundError();
+  }
+
+  return returnRequest;
 };
 
 /*

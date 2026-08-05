@@ -2695,6 +2695,29 @@ Concurrent return protection
 Product inventory invariants
 Inventory Ledger invariants
 |--------------------------------------------------------------------------
+Part 121: Customer Return History and Return Details APIs
+
+Update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order-return.mapper.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order.routes.js
+
+This part exposes two customer APIs:
+
+GET /api/v1/orders/returns
+GET /api/v1/orders/returns/:returnRequestId
+
+These APIs will:
+
+Show only the authenticated customer’s return requests
+Support pagination and basic filters
+Protect return-request ownership
+Hide admin and warehouse actor information
+Return full item and inspection details when requested
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -19,9 +19,15 @@ import {
   customerOrderListRequestSchema,
   cancelCustomerOrderRequestSchema,
   customerOrderReturnRequestSchema,
+  customerOrderReturnDetailsRequestSchema,
+  customerOrderReturnListRequestSchema,
 } from "./order.validation.js";
 
-import { createCustomerOrderReturnRequestController } from "./order-return.controller.js";
+import {
+  createCustomerOrderReturnRequestController,
+  getCustomerOrderReturnRequestController,
+  getCustomerOrderReturnRequestsController,
+} from "./order-return.controller.js";
 
 const router = Router();
 
@@ -68,6 +74,36 @@ router.get(
   "/",
   validateRequest(customerOrderListRequestSchema),
   getCustomerOrdersController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Request History
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/returns",
+  validateRequest(customerOrderReturnListRequestSchema),
+  getCustomerOrderReturnRequestsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Request Details
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/orders/returns/:returnRequestId
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/returns/:returnRequestId",
+  validateRequest(customerOrderReturnDetailsRequestSchema),
+  getCustomerOrderReturnRequestController,
 );
 
 /*

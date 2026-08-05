@@ -91,6 +91,44 @@ const mapCustomerReturnItem = (item) => {
 
 /*
 |--------------------------------------------------------------------------
+| Map Customer Return Request Summary
+|--------------------------------------------------------------------------
+*/
+
+export const toCustomerOrderReturnRequestSummary = (returnRequest) => {
+  const normalizedReturnRequest = normalizeReturnRequest(returnRequest);
+
+  const items = normalizedReturnRequest.items ?? [];
+
+  const totalQuantity = items.reduce((total, item) => {
+    return total + Number(item.quantity ?? 0);
+  }, 0);
+
+  return {
+    id: normalizeIdentifier(normalizedReturnRequest._id),
+
+    returnRequestNumber: normalizedReturnRequest.returnRequestNumber,
+
+    orderId: normalizeIdentifier(normalizedReturnRequest.order),
+
+    orderNumber: normalizedReturnRequest.orderNumber,
+
+    requestedResolution: normalizedReturnRequest.requestedResolution,
+
+    status: normalizedReturnRequest.status,
+
+    itemCount: items.length,
+
+    totalQuantity,
+
+    createdAt: normalizedReturnRequest.createdAt,
+
+    updatedAt: normalizedReturnRequest.updatedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Map Customer Return Request
 |--------------------------------------------------------------------------
 |

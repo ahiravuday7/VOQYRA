@@ -20,6 +20,50 @@ const normalizeReturnObjectId = (value) => {
 
 /*
 |--------------------------------------------------------------------------
+| Customer Return Projection
+|--------------------------------------------------------------------------
+|
+| Internal admin and warehouse actor fields are intentionally excluded.
+|--------------------------------------------------------------------------
+*/
+
+const CUSTOMER_ORDER_RETURN_PROJECTION = Object.freeze({
+  _id: 1,
+
+  returnRequestNumber: 1,
+
+  order: 1,
+
+  orderNumber: 1,
+
+  items: 1,
+
+  requestedResolution: 1,
+
+  status: 1,
+
+  customerNote: 1,
+
+  "approval.approvedAt": 1,
+
+  "rejection.reason": 1,
+
+  "rejection.rejectedAt": 1,
+
+  "receipt.receivedAt": 1,
+
+  "completion.completedAt": 1,
+
+  "cancellation.reason": 1,
+
+  "cancellation.cancelledAt": 1,
+
+  createdAt: 1,
+
+  updatedAt: 1,
+});
+/*
+|--------------------------------------------------------------------------
 | Find Consumed Return Quantities
 |--------------------------------------------------------------------------
 |
@@ -138,4 +182,83 @@ export const createOrderReturnRequestDocument = async (
   );
 
   return returnRequest;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Customer Order Return Requests
+|--------------------------------------------------------------------------
+*/
+
+export const listCustomerOrderReturnRequests = async (
+  customerId,
+  {
+    page = 1,
+
+    limit = 20,
+
+    status,
+
+    requestedResolution,
+
+    sortDirection = "desc",
+  } = {},
+) => {
+  const filter = {
+    customer: customerId,
+  };
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (requestedResolution) {
+    filter.requestedResolution = requestedResolution;
+  }
+
+  const skip = (page - 1) * limit;
+
+  const sortValue = sortDirection === "asc" ? 1 : -1;
+
+  const [returnRequests, total] = await Promise.all([
+    OrderReturnRequest.find(filter)
+      .select(CUSTOMER_ORDER_RETURN_PROJECTION)
+      .sort({
+        createdAt: sortValue,
+
+        _id: sortValue,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    OrderReturnRequest.countDocuments(filter),
+  ]);
+
+  return {
+    returnRequests,
+    total,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Order Return Request by ID
+|--------------------------------------------------------------------------
+|
+| Ownership is part of the database query.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderReturnRequestById = (
+  returnRequestId,
+  customerId,
+) => {
+  return OrderReturnRequest.findOne({
+    _id: returnRequestId,
+
+    customer: customerId,
+  })
+    .select(CUSTOMER_ORDER_RETURN_PROJECTION)
+    .lean();
 };
