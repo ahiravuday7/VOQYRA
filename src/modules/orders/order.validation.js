@@ -859,6 +859,64 @@ const customerOrderReturnCancellationBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Return Approval Body
+|--------------------------------------------------------------------------
+|
+| Approval itself does not require customer-controlled data.
+|
+| The backend generates:
+|
+| - status
+| - approvedBy
+| - approvedAt
+| - updatedBy
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnApprovalBodySchema = z.strictObject({
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Rejection Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnRejectionBodySchema = z.strictObject({
+  reason: z
+    .string({
+      error: "Rejection reason is required",
+    })
+    .trim()
+    .min(5, {
+      error: "Rejection reason must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Rejection reason cannot exceed 500 characters",
+    }),
+
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order Cancellation Body
 |--------------------------------------------------------------------------
 */
@@ -1409,6 +1467,40 @@ export const adminOrderReturnListRequestSchema = z.strictObject({
 
 export const adminOrderReturnDetailsRequestSchema = z.strictObject({
   body: emptyObjectSchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Approval Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/approve
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnApprovalRequestSchema = z.strictObject({
+  body: adminOrderReturnApprovalBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Rejection Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/reject
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnRejectionRequestSchema = z.strictObject({
+  body: adminOrderReturnRejectionBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

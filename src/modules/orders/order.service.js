@@ -19,6 +19,7 @@ import {
   ORDER_RETURN_STATUSES,
   ORDER_RETURN_ITEM_INSPECTION_STATUSES,
   CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES,
+  ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -390,6 +391,82 @@ const createAdminOrderReturnRequestNotFoundError = () => {
   return new AppError("Return request was not found", 404, {
     errorCode: "ORDER_RETURN_REQUEST_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Decision Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyApprovedError = (returnRequest) => {
+  return new AppError("This Return Request has already been approved", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_APPROVED",
+
+    details: {
+      status: returnRequest.status,
+
+      approvedAt: returnRequest.approval?.approvedAt ?? null,
+    },
+  });
+};
+
+const createAdminOrderReturnAlreadyRejectedError = (returnRequest) => {
+  return new AppError("This Return Request has already been rejected", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_REJECTED",
+
+    details: {
+      status: returnRequest.status,
+
+      rejectedAt: returnRequest.rejection?.rejectedAt ?? null,
+    },
+  });
+};
+
+const createAdminOrderReturnApprovalStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be approved from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_APPROVAL_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRejectionStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be rejected from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REJECTION_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnDecisionStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Return Request contains state that prevents an administrative decision",
+    409,
+    {
+      errorCode: "ORDER_RETURN_DECISION_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
+    },
+  );
 };
 
 /*
@@ -1240,6 +1317,172 @@ const generateUniqueReturnRequestNumber = async ({ session } = {}) => {
   }
 
   throw new Error("Unable to generate a unique return request number");
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Approved
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyApproved = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.APPROVED ||
+    returnRequest.approval?.approvedAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Rejected
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyRejected = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.REJECTED ||
+    returnRequest.rejection?.rejectedAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Return Request Has Clean Decision State
+|--------------------------------------------------------------------------
+|
+| Approval or rejection must not proceed when physical processing,
+| cancellation, receipt, inspection, or completion evidence exists.
+|--------------------------------------------------------------------------
+*/
+
+const assertAdminOrderReturnDecisionStateIsClean = (returnRequest) => {
+  const cancellationExists = Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.CANCELLED ||
+    returnRequest.cancellation?.cancelledAt,
+  );
+
+  const physicalProcessingStarted =
+    orderReturnPhysicalProcessingHasStarted(returnRequest);
+
+  if (cancellationExists || physicalProcessingStarted) {
+    throw createAdminOrderReturnDecisionStateInvalidError(returnRequest.status);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Approved
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeApproved = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Approval
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyApproved(returnRequest)) {
+    throw createAdminOrderReturnAlreadyApprovedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Existing Rejection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyRejected(returnRequest)) {
+    throw createAdminOrderReturnAlreadyRejectedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Current Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES.includes(returnRequest.status)
+  ) {
+    throw createAdminOrderReturnApprovalStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | State Consistency
+    |--------------------------------------------------------------------------
+    */
+
+  assertAdminOrderReturnDecisionStateIsClean(returnRequest);
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.APPROVED,
+
+    releasesReturnQuantity: false,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Rejected
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeRejected = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Rejection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyRejected(returnRequest)) {
+    throw createAdminOrderReturnAlreadyRejectedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Existing Approval
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyApproved(returnRequest)) {
+    throw createAdminOrderReturnAlreadyApprovedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Current Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES.includes(returnRequest.status)
+  ) {
+    throw createAdminOrderReturnRejectionStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | State Consistency
+    |--------------------------------------------------------------------------
+    */
+
+  assertAdminOrderReturnDecisionStateIsClean(returnRequest);
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.REJECTED,
+
+    releasesReturnQuantity: true,
+  };
 };
 
 /*
@@ -5692,4 +5935,80 @@ export const cancelCustomerOrderReturnRequest = async (
     customerId,
     cancellationData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Approved Return Request State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminApprovedOrderReturnState = (
+  returnRequest,
+  {
+    approvalData = {},
+
+    adminId,
+
+    approvedAt = new Date(),
+  },
+) => {
+  assertAdminOrderReturnCanBeApproved(returnRequest);
+
+  const approvedState = {
+    status: ORDER_RETURN_STATUSES.APPROVED,
+
+    approval: {
+      approvedBy: adminId,
+
+      approvedAt,
+    },
+
+    updatedBy: adminId,
+  };
+
+  if (approvalData.adminNote !== undefined) {
+    approvedState.adminNote = approvalData.adminNote;
+  }
+
+  return approvedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Rejected Return Request State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminRejectedOrderReturnState = (
+  returnRequest,
+  { rejectionData, adminId, rejectedAt = new Date() },
+) => {
+  assertAdminOrderReturnCanBeRejected(returnRequest);
+
+  const rejectedState = {
+    status: ORDER_RETURN_STATUSES.REJECTED,
+
+    rejection: {
+      reason: rejectionData.reason,
+
+      rejectedBy: adminId,
+
+      rejectedAt,
+    },
+
+    updatedBy: adminId,
+  };
+
+  if (rejectionData.adminNote !== undefined) {
+    rejectedState.adminNote = rejectionData.adminNote;
+  }
+
+  return rejectedState;
 };

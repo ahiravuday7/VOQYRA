@@ -340,3 +340,17 @@ export const CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.REQUESTED,
   ORDER_RETURN_STATUSES.APPROVED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Decision Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| Approval or rejection is allowed only while the Return Request is
+| waiting for an administrative decision.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.REQUESTED,
+]);

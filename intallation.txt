@@ -2839,6 +2839,25 @@ Search by Return number, Order number, SKU, and Product name
 Invalid and missing Return Request IDs
 Internal admin and warehouse audit fields
 |--------------------------------------------------------------------------
+Part 127: Admin Return Approval and Rejection Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares:
+
+POST /api/v1/admin/order-returns/:returnRequestId/approve
+POST /api/v1/admin/order-returns/:returnRequestId/reject
+
+The workflows will support:
+
+requested → approved
+requested → rejected
+
+No persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
