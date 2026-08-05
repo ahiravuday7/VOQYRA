@@ -584,3 +584,71 @@ export const findAdminOrderForStatusUpdate = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Order for Return Request
+|--------------------------------------------------------------------------
+|
+| Ownership is included in the database query.
+|
+| A customer must never be able to create a return request against
+| another customer's Order.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderForReturnRequest = (
+  orderId,
+  customerId,
+  { session = null } = {},
+) => {
+  const query = Order.findOne({
+    _id: orderId,
+
+    customer: customerId,
+  }).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Bump Order Return Request Version
+|--------------------------------------------------------------------------
+|
+| Must be called inside the return-request transaction.
+|
+| This shared Order write protects against concurrent return requests
+| exceeding the originally purchased quantity.
+|--------------------------------------------------------------------------
+*/
+
+export const bumpOrderReturnRequestVersion = async (
+  orderId,
+  customerId,
+  { session },
+) => {
+  const result = await Order.updateOne(
+    {
+      _id: orderId,
+
+      customer: customerId,
+    },
+
+    {
+      $inc: {
+        returnRequestVersion: 1,
+      },
+    },
+
+    {
+      session,
+    },
+  );
+
+  return result.matchedCount === 1;
+};

@@ -13,6 +13,10 @@ import {
   ORDER_STATUS_TRANSITIONS,
   ORDER_STATUS_TRANSITION_ACTION_MAP,
   ORDER_STATUS_TRANSITION_ACTIONS,
+  ORDER_RETURN_ELIGIBLE_ORDER_STATUS_VALUES,
+  ORDER_RETURN_ITEM_INSPECTION_STATUS_VALUES,
+  ORDER_RETURN_REASONS,
+  ORDER_RETURN_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -41,9 +45,12 @@ import {
   listAdminOrders,
   findAdminOrderById,
   findAdminOrderForStatusUpdate,
+  bumpOrderReturnRequestVersion,
+  findCustomerOrderForReturnRequest,
 } from "./order.repository.js";
 
 import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
+import { findConsumedOrderReturnQuantities } from "./order-return.repository.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -213,6 +220,127 @@ const createOrderCreationConflictError = () => {
     409,
     {
       errorCode: "ORDER_CREATION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Order Return Errors
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnOrderNotFoundError = () => {
+  return new AppError("Order was not found", 404, {
+    errorCode: "ORDER_NOT_FOUND",
+  });
+};
+
+const createCustomerReturnStatusInvalidError = (currentStatus) => {
+  return new AppError("This Order is not eligible for a return request", 409, {
+    errorCode: "ORDER_RETURN_STATUS_INVALID",
+
+    details: {
+      currentStatus,
+
+      eligibleStatuses: ORDER_RETURN_ELIGIBLE_ORDER_STATUS_VALUES,
+    },
+  });
+};
+
+const createCustomerReturnDeliveryStateInvalidError = () => {
+  return new AppError(
+    "The Order must have a completed delivery before items can be returned",
+    409,
+    {
+      errorCode: "ORDER_RETURN_DELIVERY_STATE_INVALID",
+    },
+  );
+};
+
+const createCustomerReturnInventoryStateInvalidError = (inventoryStatus) => {
+  return new AppError(
+    "The Order inventory state does not allow a return request",
+    409,
+    {
+      errorCode: "ORDER_RETURN_INVENTORY_STATE_INVALID",
+
+      details: {
+        inventoryStatus,
+
+        requiredInventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+      },
+    },
+  );
+};
+
+const createCustomerReturnItemNotFoundError = (orderItemId) => {
+  return new AppError(
+    "A requested return item was not found in this Order",
+    400,
+    {
+      errorCode: "ORDER_RETURN_ITEM_NOT_FOUND",
+
+      details: {
+        orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+const createCustomerReturnOrderItemStateInvalidError = (orderItemId) => {
+  return new AppError(
+    "The requested Order item has an invalid inventory state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_ITEM_STATE_INVALID",
+
+      details: {
+        orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+const createCustomerReturnQuantityExceededError = ({
+  orderItemId,
+  orderedQuantity,
+  consumedQuantity,
+  requestedQuantity,
+}) => {
+  const remainingQuantity = Math.max(orderedQuantity - consumedQuantity, 0);
+
+  return new AppError(
+    "The requested return quantity exceeds the remaining returnable quantity",
+    409,
+    {
+      errorCode: "ORDER_RETURN_QUANTITY_EXCEEDED",
+
+      details: {
+        orderItemId: String(orderItemId),
+
+        orderedQuantity,
+
+        consumedQuantity,
+
+        requestedQuantity,
+
+        remainingQuantity,
+      },
+    },
+  );
+};
+
+const createCustomerReturnDetailsRequiredError = (orderItemId) => {
+  return new AppError(
+    "Return details are required when the reason is other",
+    400,
+    {
+      errorCode: "ORDER_RETURN_DETAILS_REQUIRED",
+
+      details: {
+        orderItemId: String(orderItemId),
+      },
     },
   );
 };
@@ -712,6 +840,216 @@ const createOrderInventoryCommitConflictError = (productId, variantId) => {
 const createDedicatedShipmentWorkflowRequiredError = () => {
   return new AppError("Order shipment must use the shipment workflow", 409, {
     errorCode: "ORDER_SHIPMENT_WORKFLOW_REQUIRED",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Customer Order Is Return Eligible
+|--------------------------------------------------------------------------
+*/
+
+const assertCustomerOrderIsReturnEligible = (order) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Order Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (!ORDER_RETURN_ELIGIBLE_ORDER_STATUS_VALUES.includes(order.status)) {
+    throw createCustomerReturnStatusInvalidError(order.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Delivery Must Be Completed
+    |--------------------------------------------------------------------------
+    */
+
+  if (!order.shipment?.deliveredAt) {
+    throw createCustomerReturnDeliveryStateInvalidError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Order Inventory Must Remain Committed
+    |--------------------------------------------------------------------------
+    */
+
+  if (order.inventoryStatus !== ORDER_INVENTORY_STATUSES.COMMITTED) {
+    throw createCustomerReturnInventoryStateInvalidError(order.inventoryStatus);
+  }
+
+  if (!Array.isArray(order.items) || order.items.length === 0) {
+    throw createCustomerReturnInventoryStateInvalidError(order.inventoryStatus);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Trusted Order Item Map
+|--------------------------------------------------------------------------
+*/
+
+const buildTrustedOrderItemMap = (orderItems) => {
+  return new Map(
+    orderItems.map((item) => {
+      return [String(item._id), item];
+    }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Consumed Return Quantity Map
+|--------------------------------------------------------------------------
+*/
+
+const buildConsumedReturnQuantityMap = (consumedQuantities) => {
+  return new Map(
+    consumedQuantities.map((entry) => {
+      return [String(entry.orderItemId), Number(entry.consumedQuantity)];
+    }),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Trusted Customer Return Items
+|--------------------------------------------------------------------------
+*/
+
+const buildTrustedCustomerReturnItems = ({
+  order,
+  requestedItems,
+  consumedQuantities,
+}) => {
+  const trustedOrderItemMap = buildTrustedOrderItemMap(order.items);
+
+  const consumedQuantityMap =
+    buildConsumedReturnQuantityMap(consumedQuantities);
+
+  return requestedItems.map((requestedItem) => {
+    const orderItemId = String(requestedItem.orderItemId);
+
+    const trustedOrderItem = trustedOrderItemMap.get(orderItemId);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Item Must Belong to the Order
+        |--------------------------------------------------------------------------
+        */
+
+    if (!trustedOrderItem) {
+      throw createCustomerReturnItemNotFoundError(requestedItem.orderItemId);
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Item Inventory Must Be Committed
+        |--------------------------------------------------------------------------
+        */
+
+    const itemInventory = trustedOrderItem.inventory;
+
+    const orderedQuantity = Number(trustedOrderItem.quantity);
+
+    const itemIsCommitted =
+      itemInventory?.status === ORDER_INVENTORY_STATUSES.COMMITTED &&
+      itemInventory.reservedQuantity === 0 &&
+      itemInventory.committedQuantity === orderedQuantity &&
+      itemInventory.releasedQuantity === 0;
+
+    if (!itemIsCommitted) {
+      throw createCustomerReturnOrderItemStateInvalidError(
+        trustedOrderItem._id,
+      );
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Details Required for "Other"
+        |--------------------------------------------------------------------------
+        */
+
+    if (
+      requestedItem.reason === ORDER_RETURN_REASONS.OTHER &&
+      !requestedItem.details
+    ) {
+      throw createCustomerReturnDetailsRequiredError(trustedOrderItem._id);
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Protect Return Quantity
+        |--------------------------------------------------------------------------
+        */
+
+    const consumedQuantity = consumedQuantityMap.get(orderItemId) ?? 0;
+
+    const requestedQuantity = requestedItem.quantity;
+
+    const remainingQuantity = orderedQuantity - consumedQuantity;
+
+    if (requestedQuantity > remainingQuantity) {
+      throw createCustomerReturnQuantityExceededError({
+        orderItemId: trustedOrderItem._id,
+
+        orderedQuantity,
+
+        consumedQuantity,
+
+        requestedQuantity,
+      });
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Build Trusted Snapshot
+        |--------------------------------------------------------------------------
+        */
+
+    return {
+      orderItemId: trustedOrderItem._id,
+
+      product: trustedOrderItem.product,
+
+      variantId: trustedOrderItem.variantId,
+
+      sku: trustedOrderItem.sku,
+
+      productName: trustedOrderItem.productName,
+
+      size: trustedOrderItem.size ?? null,
+
+      color: {
+        name: trustedOrderItem.color?.name ?? null,
+
+        code: trustedOrderItem.color?.code ?? null,
+      },
+
+      quantity: requestedQuantity,
+
+      reason: requestedItem.reason,
+
+      details: requestedItem.details ?? null,
+
+      inspection: {
+        status: ORDER_RETURN_ITEM_INSPECTION_STATUSES.PENDING,
+
+        resellableQuantity: 0,
+
+        damagedQuantity: 0,
+
+        rejectedQuantity: 0,
+
+        note: null,
+
+        inspectedBy: null,
+
+        inspectedAt: null,
+      },
+    };
   });
 };
 
@@ -4496,4 +4834,116 @@ export const refundAdminOrder = async (orderId, adminId, refundData) => {
     adminId,
     refundData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Prepare Customer Order Return Request
+|--------------------------------------------------------------------------
+|
+| This function validates and builds trusted return data.
+|
+| It does not create the return-request document yet.
+|--------------------------------------------------------------------------
+*/
+
+export const prepareCustomerOrderReturnRequest = async ({
+  orderId,
+  customerId,
+  returnData,
+  session = null,
+}) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to create a return request");
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Load Customer-Owned Order
+    |--------------------------------------------------------------------------
+    */
+
+  const order = await findCustomerOrderForReturnRequest(orderId, customerId, {
+    session,
+  });
+
+  if (!order) {
+    throw createCustomerReturnOrderNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Order Eligibility
+    |--------------------------------------------------------------------------
+    */
+
+  assertCustomerOrderIsReturnEligible(order);
+
+  const requestedOrderItemIds = returnData.items.map((item) => {
+    return item.orderItemId;
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Calculate Previously Consumed Quantities
+    |--------------------------------------------------------------------------
+    */
+
+  const consumedQuantities = await findConsumedOrderReturnQuantities({
+    orderId: order._id,
+
+    orderItemIds: requestedOrderItemIds,
+
+    session,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Build Trusted Return Items
+    |--------------------------------------------------------------------------
+    */
+
+  const trustedItems = buildTrustedCustomerReturnItems({
+    order,
+
+    requestedItems: returnData.items,
+
+    consumedQuantities,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Build Return-Request Draft
+    |--------------------------------------------------------------------------
+    |
+    | returnRequestNumber will be generated during persistence.
+    |--------------------------------------------------------------------------
+    */
+
+  const returnRequestData = {
+    order: order._id,
+
+    orderNumber: order.orderNumber,
+
+    customer: customerId,
+
+    items: trustedItems,
+
+    requestedResolution: returnData.requestedResolution,
+
+    status: ORDER_RETURN_STATUSES.REQUESTED,
+
+    customerNote: returnData.customerNote ?? null,
+
+    adminNote: null,
+
+    createdBy: customerId,
+
+    updatedBy: customerId,
+  };
+
+  return {
+    order,
+    returnRequestData,
+  };
 };

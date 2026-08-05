@@ -288,3 +288,40 @@ export const ORDER_RETURN_ITEM_INSPECTION_STATUSES = Object.freeze({
 export const ORDER_RETURN_ITEM_INSPECTION_STATUS_VALUES = Object.freeze(
   Object.values(ORDER_RETURN_ITEM_INSPECTION_STATUSES),
 );
+
+/*
+|--------------------------------------------------------------------------
+| Return-Eligible Order Statuses
+|--------------------------------------------------------------------------
+|
+| A delivered Order may have a physical return request.
+|
+| A refunded Order may also require the customer to physically return
+| the goods after the financial refund was completed.
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_ELIGIBLE_ORDER_STATUS_VALUES = Object.freeze([
+  ORDER_STATUSES.DELIVERED,
+  ORDER_STATUSES.REFUNDED,
+]);
+
+/*
+|--------------------------------------------------------------------------
+| Return Quantity-Consuming Statuses
+|--------------------------------------------------------------------------
+|
+| These statuses reserve part of the originally purchased quantity.
+|
+| Rejected and cancelled requests do not consume return capacity.
+|--------------------------------------------------------------------------
+*/
+
+export const ORDER_RETURN_QUANTITY_CONSUMING_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.REQUESTED,
+  ORDER_RETURN_STATUSES.APPROVED,
+  ORDER_RETURN_STATUSES.IN_TRANSIT,
+  ORDER_RETURN_STATUSES.RECEIVED,
+  ORDER_RETURN_STATUSES.INSPECTED,
+  ORDER_RETURN_STATUSES.COMPLETED,
+]);

@@ -1011,6 +1011,16 @@ const orderSchema = new mongoose.Schema(
       },
     },
 
+    returnRequestVersion: {
+      type: Number,
+
+      default: 0,
+
+      min: 0,
+
+      select: false,
+    },
+
     refund: {
       type: orderRefundSchema,
 

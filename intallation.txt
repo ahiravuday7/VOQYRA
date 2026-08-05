@@ -2612,6 +2612,36 @@ Inventory adjustment:
 reason = customer-return
 stockDelta = +1
 |--------------------------------------------------------------------------
+Part 118: Customer Return Eligibility, Trusted Snapshot, and Quantity Protection
+
+Create/update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.model.js
+src/modules/orders/order.repository.js
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+
+This step prepares the business logic for:
+
+POST /api/v1/orders/:orderId/returns
+
+It will validate:
+
+Order belongs to the customer
+Order was delivered
+Order status allows returns
+Order inventory remains committed
+Requested Order item exists
+Requested quantity does not exceed purchased quantity
+Existing return requests do not overlap quantities
+Product details come from the trusted Order snapshot
+
+No controller or route is added yet.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
