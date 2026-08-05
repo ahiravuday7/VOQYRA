@@ -11,6 +11,20 @@ import {
 
 /*
 |--------------------------------------------------------------------------
+| Integer Quantity Validator
+|--------------------------------------------------------------------------
+*/
+
+const integerQuantityValidator = {
+  validator(value) {
+    return Number.isInteger(value);
+  },
+
+  message: "Quantity must be a whole number",
+};
+
+/*
+|--------------------------------------------------------------------------
 | Order Return Item Inspection
 |--------------------------------------------------------------------------
 |
@@ -44,6 +58,8 @@ const orderReturnItemInspectionSchema = new mongoose.Schema(
       default: 0,
 
       required: true,
+
+      validate: integerQuantityValidator,
     },
 
     damagedQuantity: {
@@ -54,6 +70,8 @@ const orderReturnItemInspectionSchema = new mongoose.Schema(
       default: 0,
 
       required: true,
+
+      validate: integerQuantityValidator,
     },
 
     rejectedQuantity: {
@@ -64,6 +82,8 @@ const orderReturnItemInspectionSchema = new mongoose.Schema(
       default: 0,
 
       required: true,
+
+      validate: integerQuantityValidator,
     },
 
     note: {
@@ -194,6 +214,8 @@ const orderReturnItemSchema = new mongoose.Schema(
 
       min: 1,
 
+      validate: integerQuantityValidator,
+
       immutable: true,
     },
 
@@ -241,6 +263,72 @@ const orderReturnItemSchema = new mongoose.Schema(
   },
 );
 
+/*
+|--------------------------------------------------------------------------
+| Return Shipment Schema
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnShipmentSchema = new mongoose.Schema(
+  {
+    carrier: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 100,
+    },
+
+    trackingNumber: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 100,
+    },
+
+    trackingUrl: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 500,
+    },
+
+    note: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 1000,
+    },
+
+    markedInTransitBy: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      default: null,
+    },
+
+    markedInTransitAt: {
+      type: Date,
+
+      default: null,
+    },
+  },
+  {
+    _id: false,
+  },
+);
 /*
 |--------------------------------------------------------------------------
 | Order Return Request
@@ -389,7 +477,23 @@ const orderReturnRequestSchema = new mongoose.Schema(
       },
     },
 
+    shipment: {
+      type: orderReturnShipmentSchema,
+
+      default: () => ({}),
+    },
+
     receipt: {
+      note: {
+        type: String,
+
+        trim: true,
+
+        default: null,
+
+        maxlength: 1000,
+      },
+
       receivedBy: {
         type: mongoose.Schema.Types.ObjectId,
 
@@ -543,6 +647,21 @@ orderReturnRequestSchema.pre("validate", function validateOrderReturnRequest() {
 
     const inspectionCompleted =
       inspection.status === ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED;
+
+    const inspectionPending =
+      inspection.status === ORDER_RETURN_ITEM_INSPECTION_STATUSES.PENDING;
+
+    if (
+      inspectionPending &&
+      (inspectedQuantity !== 0 ||
+        inspection.inspectedBy ||
+        inspection.inspectedAt)
+    ) {
+      this.invalidate(
+        `items.${index}.inspection`,
+        "Pending inspection must not contain inspected quantities or inspection audit fields",
+      );
+    }
 
     if (inspectionCompleted && inspectedQuantity !== item.quantity) {
       this.invalidate(

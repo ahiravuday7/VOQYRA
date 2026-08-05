@@ -2911,6 +2911,35 @@ Concurrent approval/rejection protection
 Product inventory invariants
 Inventory Ledger invariants
 |--------------------------------------------------------------------------
+Part 130: Return Shipment and Warehouse Receipt Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order-return.model.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares:
+
+POST /api/v1/admin/order-returns/:returnRequestId/mark-in-transit
+POST /api/v1/admin/order-returns/:returnRequestId/receive
+
+Return lifecycle:
+
+requested
+   ↓
+approved
+   ↓
+in-transit
+   ↓
+received
+   ↓
+inspected
+   ↓
+completed
+
+No repository persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

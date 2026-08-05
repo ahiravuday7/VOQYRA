@@ -859,6 +859,79 @@ const customerOrderReturnCancellationBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Return Mark-In-Transit Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnMarkInTransitBodySchema = z.strictObject({
+  carrier: z
+    .string({
+      error: "Return carrier is required",
+    })
+    .trim()
+    .min(2, {
+      error: "Return carrier must contain at least 2 characters",
+    })
+    .max(100, {
+      error: "Return carrier cannot exceed 100 characters",
+    }),
+
+  trackingNumber: z
+    .string({
+      error: "Return tracking number is required",
+    })
+    .trim()
+    .min(3, {
+      error: "Return tracking number must contain at least 3 characters",
+    })
+    .max(100, {
+      error: "Return tracking number cannot exceed 100 characters",
+    }),
+
+  trackingUrl: z
+    .string({
+      error: "Return tracking URL must be text",
+    })
+    .trim()
+    .url({
+      error: "Return tracking URL must be valid",
+    })
+    .max(500, {
+      error: "Return tracking URL cannot exceed 500 characters",
+    })
+    .optional(),
+
+  note: z
+    .string({
+      error: "Return shipment note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Return shipment note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Warehouse Receipt Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnReceiptBodySchema = z.strictObject({
+  note: z
+    .string({
+      error: "Warehouse receipt note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Warehouse receipt note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Admin Return Approval Body
 |--------------------------------------------------------------------------
 |
@@ -1501,6 +1574,40 @@ export const adminOrderReturnApprovalRequestSchema = z.strictObject({
 
 export const adminOrderReturnRejectionRequestSchema = z.strictObject({
   body: adminOrderReturnRejectionBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Mark-In-Transit Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/mark-in-transit
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnMarkInTransitRequestSchema = z.strictObject({
+  body: adminOrderReturnMarkInTransitBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Warehouse Receipt Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/receive
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnReceiptRequestSchema = z.strictObject({
+  body: adminOrderReturnReceiptBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

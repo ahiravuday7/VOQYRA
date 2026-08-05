@@ -20,6 +20,8 @@ import {
   ORDER_RETURN_ITEM_INSPECTION_STATUSES,
   CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES,
   ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES,
+  ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES,
+  ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -498,6 +500,110 @@ const createAdminOrderReturnDecisionStateInvalidError = (currentStatus) => {
     409,
     {
       errorCode: "ORDER_RETURN_DECISION_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Shipment Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyInTransitError = (returnRequest) => {
+  return new AppError(
+    "This Return Request has already been marked as in transit",
+    409,
+    {
+      errorCode: "ORDER_RETURN_ALREADY_IN_TRANSIT",
+
+      details: {
+        status: returnRequest.status,
+
+        markedInTransitAt: returnRequest.shipment?.markedInTransitAt ?? null,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnShipmentStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be marked as in transit from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_SHIPMENT_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnShipmentStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Return Request contains invalid shipment-processing state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_SHIPMENT_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Receipt Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyReceivedError = (returnRequest) => {
+  return new AppError(
+    "This Return Request has already been received by the warehouse",
+    409,
+    {
+      errorCode: "ORDER_RETURN_ALREADY_RECEIVED",
+
+      details: {
+        status: returnRequest.status,
+
+        receivedAt: returnRequest.receipt?.receivedAt ?? null,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnReceiptStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be received from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_RECEIPT_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnReceiptStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Return Request contains invalid warehouse-receipt state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_RECEIPT_STATE_INVALID",
 
       details: {
         currentStatus,
@@ -1358,6 +1464,96 @@ const generateUniqueReturnRequestNumber = async ({ session } = {}) => {
 
 /*
 |--------------------------------------------------------------------------
+| Check Whether Return Shipment Evidence Exists
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnShipmentEvidenceExists = (returnRequest) => {
+  const shipment = returnRequest.shipment;
+
+  if (!shipment) {
+    return false;
+  }
+
+  return Boolean(
+    shipment.carrier ||
+    shipment.trackingNumber ||
+    shipment.trackingUrl ||
+    shipment.note ||
+    shipment.markedInTransitBy ||
+    shipment.markedInTransitAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Shipment Evidence Is Complete
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnShipmentEvidenceIsComplete = (returnRequest) => {
+  const shipment = returnRequest.shipment;
+
+  return Boolean(
+    shipment?.carrier &&
+    shipment?.trackingNumber &&
+    shipment?.markedInTransitBy &&
+    shipment?.markedInTransitAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Received
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyReceived = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.RECEIVED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.INSPECTED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
+    returnRequest.receipt?.receivedAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already In Transit
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyInTransit = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.IN_TRANSIT ||
+    returnRequest.shipment?.markedInTransitAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Inspection or Completion Has Started
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnPostReceiptProcessingHasStarted = (returnRequest) => {
+  const itemInspectionStarted = (returnRequest.items ?? []).some((item) => {
+    return (
+      item.inspection?.status ===
+      ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED
+    );
+  });
+
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.INSPECTED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
+    returnRequest.completion?.completedAt ||
+    itemInspectionStarted,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Check Whether Return Request Is Already Approved
 |--------------------------------------------------------------------------
 */
@@ -1734,6 +1930,178 @@ export const assertAdminOrderReturnCanBeRejected = (returnRequest) => {
     targetStatus: ORDER_RETURN_STATUSES.REJECTED,
 
     releasesReturnQuantity: true,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Marked In Transit
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeMarkedInTransit = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Already Received
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyReceived(returnRequest)) {
+    throw createAdminOrderReturnAlreadyReceivedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate In-Transit Operation
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyInTransit(returnRequest)) {
+    throw createAdminOrderReturnAlreadyInTransitError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Allowed Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES.includes(
+      returnRequest.status,
+    )
+  ) {
+    throw createAdminOrderReturnShipmentStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approval Evidence Is Required
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !returnRequest.approval?.approvedBy ||
+    !returnRequest.approval?.approvedAt
+  ) {
+    throw createAdminOrderReturnShipmentStateInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Terminal and Physical State Must Be Clean
+    |--------------------------------------------------------------------------
+    */
+
+  const terminalEvidenceExists = Boolean(
+    returnRequest.rejection?.rejectedAt ||
+    returnRequest.cancellation?.cancelledAt ||
+    returnRequest.receipt?.receivedAt ||
+    returnRequest.completion?.completedAt,
+  );
+
+  if (
+    terminalEvidenceExists ||
+    orderReturnPostReceiptProcessingHasStarted(returnRequest)
+  ) {
+    throw createAdminOrderReturnShipmentStateInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Partial Existing Shipment Evidence Is Invalid
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnShipmentEvidenceExists(returnRequest)) {
+    throw createAdminOrderReturnShipmentStateInvalidError(returnRequest.status);
+  }
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.IN_TRANSIT,
+
+    changesReturnQuantity: false,
+
+    changesProductInventory: false,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Received
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeReceived = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Warehouse Receipt
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyReceived(returnRequest)) {
+    throw createAdminOrderReturnAlreadyReceivedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Allowed Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES.includes(returnRequest.status)
+  ) {
+    throw createAdminOrderReturnReceiptStatusInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Evidence Must Be Complete
+    |--------------------------------------------------------------------------
+    */
+
+  if (!orderReturnShipmentEvidenceIsComplete(returnRequest)) {
+    throw createAdminOrderReturnReceiptStateInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Return Must Not Be Cancelled or Rejected
+    |--------------------------------------------------------------------------
+    */
+
+  const invalidTerminalEvidenceExists = Boolean(
+    returnRequest.rejection?.rejectedAt ||
+    returnRequest.cancellation?.cancelledAt,
+  );
+
+  if (invalidTerminalEvidenceExists) {
+    throw createAdminOrderReturnReceiptStateInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inspection and Completion Must Not Have Started
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnPostReceiptProcessingHasStarted(returnRequest)) {
+    throw createAdminOrderReturnReceiptStateInvalidError(returnRequest.status);
+  }
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.RECEIVED,
+
+    changesReturnQuantity: false,
+
+    changesProductInventory: false,
   };
 };
 
@@ -6311,4 +6679,76 @@ export const rejectAdminOrderReturnRequest = async (
     adminId,
     rejectionData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin In-Transit Return State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminOrderReturnInTransitState = (
+  returnRequest,
+  { shipmentData, adminId, markedInTransitAt = new Date() },
+) => {
+  assertAdminOrderReturnCanBeMarkedInTransit(returnRequest);
+
+  return {
+    status: ORDER_RETURN_STATUSES.IN_TRANSIT,
+
+    shipment: {
+      carrier: shipmentData.carrier,
+
+      trackingNumber: shipmentData.trackingNumber,
+
+      trackingUrl: shipmentData.trackingUrl ?? null,
+
+      note: shipmentData.note ?? null,
+
+      markedInTransitBy: adminId,
+
+      markedInTransitAt,
+    },
+
+    updatedBy: adminId,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Received Return State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminOrderReturnReceivedState = (
+  returnRequest,
+  {
+    receiptData = {},
+
+    adminId,
+
+    receivedAt = new Date(),
+  },
+) => {
+  assertAdminOrderReturnCanBeReceived(returnRequest);
+
+  return {
+    status: ORDER_RETURN_STATUSES.RECEIVED,
+
+    receipt: {
+      note: receiptData.note ?? null,
+
+      receivedBy: adminId,
+
+      receivedAt,
+    },
+
+    updatedBy: adminId,
+  };
 };

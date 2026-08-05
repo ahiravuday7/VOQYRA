@@ -354,3 +354,30 @@ export const CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES = Object.freeze([
 export const ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.REQUESTED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Shipment Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| A physical return can enter transit only after admin approval.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES = Object.freeze(
+  [ORDER_RETURN_STATUSES.APPROVED],
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Receipt Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| The warehouse can receive a Return Request only after the physical
+| product has entered transit.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.IN_TRANSIT,
+]);
