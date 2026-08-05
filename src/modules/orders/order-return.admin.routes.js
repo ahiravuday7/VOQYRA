@@ -11,11 +11,15 @@ import { USER_ROLES } from "../../shared/constants/user.constants.js";
 import {
   getAdminOrderReturnRequestController,
   getAdminOrderReturnRequestsController,
+  approveAdminOrderReturnRequestController,
+  rejectAdminOrderReturnRequestController,
 } from "./order-return.controller.js";
 
 import {
   adminOrderReturnDetailsRequestSchema,
   adminOrderReturnListRequestSchema,
+  adminOrderReturnApprovalRequestSchema,
+  adminOrderReturnRejectionRequestSchema,
 } from "./order.validation.js";
 
 const router = express.Router();
@@ -40,6 +44,36 @@ router.get(
   "/",
   validateRequest(adminOrderReturnListRequestSchema),
   getAdminOrderReturnRequestsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Approve Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/approve
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/approve",
+  validateRequest(adminOrderReturnApprovalRequestSchema),
+  approveAdminOrderReturnRequestController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Reject Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/reject
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/reject",
+  validateRequest(adminOrderReturnRejectionRequestSchema),
+  rejectAdminOrderReturnRequestController,
 );
 
 /*

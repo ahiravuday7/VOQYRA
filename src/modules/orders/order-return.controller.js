@@ -5,6 +5,8 @@ import {
   cancelCustomerOrderReturnRequest,
   getAdminOrderReturnRequestById,
   getAdminOrderReturnRequests,
+  approveAdminOrderReturnRequest,
+  rejectAdminOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -260,6 +262,116 @@ export const getAdminOrderReturnRequestController = async (
     success: true,
 
     message: "Admin Return Request retrieved successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Approve Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/approve
+|--------------------------------------------------------------------------
+*/
+
+export const approveAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const approvalData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const approvedReturnRequest = await approveAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    approvalData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(approvedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      orderId: mappedReturnRequest.orderId,
+
+      status: mappedReturnRequest.status,
+
+      approvedAt: mappedReturnRequest.approval.approvedAt,
+    },
+    "Admin approved Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request approved successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reject Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/reject
+|--------------------------------------------------------------------------
+*/
+
+export const rejectAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const rejectionData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const rejectedReturnRequest = await rejectAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    rejectionData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(rejectedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      orderId: mappedReturnRequest.orderId,
+
+      status: mappedReturnRequest.status,
+
+      rejectedAt: mappedReturnRequest.rejection.rejectedAt,
+    },
+    "Admin rejected Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request rejected successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

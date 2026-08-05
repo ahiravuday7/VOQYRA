@@ -2859,6 +2859,36 @@ requested → rejected
 
 No persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
+Part 128: Atomic Admin Return Approval and Rejection Persistence, Controllers, and Routes
+
+Update:
+
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+
+This step exposes:
+
+POST /api/v1/admin/order-returns/:returnRequestId/approve
+POST /api/v1/admin/order-returns/:returnRequestId/reject
+
+Workflow:
+
+Admin loads Return Request
+        ↓
+Backend validates current state
+        ↓
+Backend creates trusted decision audit
+        ↓
+Return Request is approved or rejected atomically
+        ↓
+Rejection releases consumed return quantity
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

@@ -474,3 +474,25 @@ export const listAdminOrderReturnRequests = async ({
 export const findAdminOrderReturnRequestById = (returnRequestId) => {
   return OrderReturnRequest.findById(returnRequestId).lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Return Request for Decision
+|--------------------------------------------------------------------------
+|
+| Returns a Mongoose document because approval and rejection update it.
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderReturnRequestForDecision = (
+  returnRequestId,
+  { session = null } = {},
+) => {
+  const query = OrderReturnRequest.findById(returnRequestId);
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

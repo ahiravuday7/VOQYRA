@@ -63,6 +63,7 @@ import {
   saveOrderReturnRequestDocument,
   findAdminOrderReturnRequestById,
   listAdminOrderReturnRequests,
+  findAdminOrderReturnRequestForDecision,
 } from "./order-return.repository.js";
 
 /*
@@ -364,6 +365,42 @@ const createCustomerReturnDetailsRequiredError = (orderItemId) => {
 
       details: {
         orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Decision Concurrency Error
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnDecisionConflictError = () => {
+  return new AppError(
+    "The Return Request was modified by another operation. Please refresh and try again.",
+    409,
+    {
+      errorCode: "ORDER_RETURN_DECISION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Linked Order State Error
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnOrderStateInvalidError = (orderId) => {
+  return new AppError(
+    "The Return Request is connected to an invalid Order state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_ORDER_STATE_INVALID",
+
+      details: {
+        orderId: String(orderId),
       },
     },
   );
@@ -1366,6 +1403,221 @@ const assertAdminOrderReturnDecisionStateIsClean = (returnRequest) => {
 
   if (cancellationExists || physicalProcessingStarted) {
     throw createAdminOrderReturnDecisionStateInvalidError(returnRequest.status);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Return Approval
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnApproval = async ({
+  returnRequestId,
+  adminId,
+  approvalData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let approvedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForDecision(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Approval State
+          |--------------------------------------------------------------------------
+          */
+
+        const approvedAt = new Date();
+
+        const approvedState = buildAdminApprovedOrderReturnState(
+          returnRequest,
+          {
+            approvalData,
+            adminId,
+            approvedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply and Save Approval
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(approvedState);
+
+        approvedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return approvedReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnDecisionConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Return Rejection
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnRejection = async ({
+  returnRequestId,
+  adminId,
+  rejectionData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let rejectedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForDecision(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Rejection State
+          |--------------------------------------------------------------------------
+          */
+
+        const rejectedAt = new Date();
+
+        const rejectedState = buildAdminRejectedOrderReturnState(
+          returnRequest,
+          {
+            rejectionData,
+            adminId,
+            rejectedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Synchronize Released Return Quantity
+          |--------------------------------------------------------------------------
+          |
+          | requested consumes quantity.
+          | rejected does not consume quantity.
+          |
+          | Incrementing the linked Order version synchronizes rejection with
+          | concurrent customer Return Request creation.
+          |--------------------------------------------------------------------------
+          */
+
+        const orderMatched = await bumpOrderReturnRequestVersion(
+          returnRequest.order,
+          returnRequest.customer,
+          {
+            session,
+          },
+        );
+
+        if (!orderMatched) {
+          throw createAdminOrderReturnOrderStateInvalidError(
+            returnRequest.order,
+          );
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply and Save Rejection
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(rejectedState);
+
+        rejectedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return rejectedReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnDecisionConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
   }
 };
 
@@ -6011,4 +6263,52 @@ export const buildAdminRejectedOrderReturnState = (
   }
 
   return rejectedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Approve Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const approveAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  approvalData = {},
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to approve a Return Request");
+  }
+
+  return executeAtomicAdminOrderReturnApproval({
+    returnRequestId,
+    adminId,
+    approvalData,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reject Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const rejectAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  rejectionData,
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to reject a Return Request");
+  }
+
+  if (!rejectionData) {
+    throw new Error("Return rejection data is required");
+  }
+
+  return executeAtomicAdminOrderReturnRejection({
+    returnRequestId,
+    adminId,
+    rejectionData,
+  });
 };
