@@ -194,3 +194,193 @@ export const toCustomerOrderReturnRequest = (returnRequest) => {
     updatedAt: normalizedReturnRequest.updatedAt,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Return Item Inspection
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminReturnInspection = (inspection) => {
+  return {
+    status: inspection?.status ?? "pending",
+
+    resellableQuantity: inspection?.resellableQuantity ?? 0,
+
+    damagedQuantity: inspection?.damagedQuantity ?? 0,
+
+    rejectedQuantity: inspection?.rejectedQuantity ?? 0,
+
+    note: inspection?.note ?? null,
+
+    inspectedBy: normalizeIdentifier(inspection?.inspectedBy),
+
+    inspectedAt: inspection?.inspectedAt ?? null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Return Item
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminReturnItem = (item) => {
+  return {
+    id: normalizeIdentifier(item._id),
+
+    orderItemId: normalizeIdentifier(item.orderItemId),
+
+    productId: normalizeIdentifier(item.product),
+
+    variantId: normalizeIdentifier(item.variantId),
+
+    sku: item.sku,
+
+    productName: item.productName,
+
+    size: item.size ?? null,
+
+    color: {
+      name: item.color?.name ?? null,
+
+      code: item.color?.code ?? null,
+    },
+
+    quantity: item.quantity,
+
+    reason: item.reason,
+
+    details: item.details ?? null,
+
+    inspection: mapAdminReturnInspection(item.inspection),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Order Return Summary
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminOrderReturnRequestSummary = (returnRequest) => {
+  const normalizedReturnRequest = normalizeReturnRequest(returnRequest);
+
+  const items = normalizedReturnRequest.items ?? [];
+
+  const totalQuantity = items.reduce((total, item) => {
+    return total + Number(item.quantity ?? 0);
+  }, 0);
+
+  return {
+    id: normalizeIdentifier(normalizedReturnRequest._id),
+
+    returnRequestNumber: normalizedReturnRequest.returnRequestNumber,
+
+    orderId: normalizeIdentifier(normalizedReturnRequest.order),
+
+    orderNumber: normalizedReturnRequest.orderNumber,
+
+    customerId: normalizeIdentifier(normalizedReturnRequest.customer),
+
+    requestedResolution: normalizedReturnRequest.requestedResolution,
+
+    status: normalizedReturnRequest.status,
+
+    itemCount: items.length,
+
+    totalQuantity,
+
+    customerNote: normalizedReturnRequest.customerNote ?? null,
+
+    adminNote: normalizedReturnRequest.adminNote ?? null,
+
+    createdAt: normalizedReturnRequest.createdAt,
+
+    updatedAt: normalizedReturnRequest.updatedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Map Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminOrderReturnRequest = (returnRequest) => {
+  const normalizedReturnRequest = normalizeReturnRequest(returnRequest);
+
+  return {
+    id: normalizeIdentifier(normalizedReturnRequest._id),
+
+    returnRequestNumber: normalizedReturnRequest.returnRequestNumber,
+
+    orderId: normalizeIdentifier(normalizedReturnRequest.order),
+
+    orderNumber: normalizedReturnRequest.orderNumber,
+
+    customerId: normalizeIdentifier(normalizedReturnRequest.customer),
+
+    requestedResolution: normalizedReturnRequest.requestedResolution,
+
+    status: normalizedReturnRequest.status,
+
+    items: (normalizedReturnRequest.items ?? []).map(mapAdminReturnItem),
+
+    customerNote: normalizedReturnRequest.customerNote ?? null,
+
+    adminNote: normalizedReturnRequest.adminNote ?? null,
+
+    approval: {
+      approvedBy: normalizeIdentifier(
+        normalizedReturnRequest.approval?.approvedBy,
+      ),
+
+      approvedAt: normalizedReturnRequest.approval?.approvedAt ?? null,
+    },
+
+    rejection: {
+      reason: normalizedReturnRequest.rejection?.reason ?? null,
+
+      rejectedBy: normalizeIdentifier(
+        normalizedReturnRequest.rejection?.rejectedBy,
+      ),
+
+      rejectedAt: normalizedReturnRequest.rejection?.rejectedAt ?? null,
+    },
+
+    receipt: {
+      receivedBy: normalizeIdentifier(
+        normalizedReturnRequest.receipt?.receivedBy,
+      ),
+
+      receivedAt: normalizedReturnRequest.receipt?.receivedAt ?? null,
+    },
+
+    completion: {
+      completedBy: normalizeIdentifier(
+        normalizedReturnRequest.completion?.completedBy,
+      ),
+
+      completedAt: normalizedReturnRequest.completion?.completedAt ?? null,
+    },
+
+    cancellation: {
+      reason: normalizedReturnRequest.cancellation?.reason ?? null,
+
+      cancelledBy: normalizeIdentifier(
+        normalizedReturnRequest.cancellation?.cancelledBy,
+      ),
+
+      cancelledAt: normalizedReturnRequest.cancellation?.cancelledAt ?? null,
+    },
+
+    createdBy: normalizeIdentifier(normalizedReturnRequest.createdBy),
+
+    updatedBy: normalizeIdentifier(normalizedReturnRequest.updatedBy),
+
+    createdAt: normalizedReturnRequest.createdAt,
+
+    updatedAt: normalizedReturnRequest.updatedAt,
+  };
+};

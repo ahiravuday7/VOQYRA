@@ -3,11 +3,15 @@ import {
   getCustomerOrderReturnRequestById,
   getCustomerOrderReturnRequests,
   cancelCustomerOrderReturnRequest,
+  getAdminOrderReturnRequestById,
+  getAdminOrderReturnRequests,
 } from "./order.service.js";
 
 import {
   toCustomerOrderReturnRequest,
   toCustomerOrderReturnRequestSummary,
+  toAdminOrderReturnRequest,
+  toAdminOrderReturnRequestSummary,
 } from "./order-return.mapper.js";
 
 /*
@@ -191,6 +195,71 @@ export const cancelCustomerOrderReturnRequestController = async (
     success: true,
 
     message: "Return request cancelled successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Return Requests
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/order-returns
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnRequestsController = async (
+  request,
+  response,
+) => {
+  const filters = request.validated.query;
+
+  const { returnRequests, pagination } =
+    await getAdminOrderReturnRequests(filters);
+
+  const mappedReturnRequests = returnRequests.map(
+    toAdminOrderReturnRequestSummary,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return Requests retrieved successfully",
+
+    data: {
+      returnRequests: mappedReturnRequests,
+
+      pagination,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/order-returns/:returnRequestId
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const returnRequest = await getAdminOrderReturnRequestById(returnRequestId);
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(returnRequest);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return Request retrieved successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

@@ -321,6 +321,82 @@ const adminOrderListQuerySchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Return List Query
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnListQuerySchema = z.strictObject({
+  page: z.coerce
+    .number({
+      error: "Page must be a number",
+    })
+    .int({
+      error: "Page must be a whole number",
+    })
+    .min(1, {
+      error: "Page must be at least 1",
+    })
+    .default(1),
+
+  limit: z.coerce
+    .number({
+      error: "Limit must be a number",
+    })
+    .int({
+      error: "Limit must be a whole number",
+    })
+    .min(1, {
+      error: "Limit must be at least 1",
+    })
+    .max(100, {
+      error: "Limit cannot exceed 100",
+    })
+    .default(20),
+
+  search: z
+    .string({
+      error: "Search must be text",
+    })
+    .trim()
+    .min(1, {
+      error: "Search cannot be empty",
+    })
+    .max(100, {
+      error: "Search cannot exceed 100 characters",
+    })
+    .optional(),
+
+  status: z
+    .enum(ORDER_RETURN_STATUS_VALUES, {
+      error: "Invalid Return Request status",
+    })
+    .optional(),
+
+  requestedResolution: z
+    .enum(ORDER_RETURN_RESOLUTION_VALUES, {
+      error: "Invalid requested resolution",
+    })
+    .optional(),
+
+  customerId: objectIdSchema.optional(),
+
+  orderId: objectIdSchema.optional(),
+
+  sortBy: z
+    .enum(["createdAt", "updatedAt", "returnRequestNumber", "status"], {
+      error: "Invalid Return Request sort field",
+    })
+    .default("createdAt"),
+
+  sortDirection: z
+    .enum(["asc", "desc"], {
+      error: "Sort direction must be asc or desc",
+    })
+    .default("desc"),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Customer Return List Query
 |--------------------------------------------------------------------------
 */
@@ -1299,6 +1375,40 @@ export const customerOrderReturnDetailsRequestSchema = z.strictObject({
 
 export const customerOrderReturnCancellationRequestSchema = z.strictObject({
   body: customerOrderReturnCancellationBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return List Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/order-returns
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminOrderReturnListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return Details Request
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/order-returns/:returnRequestId
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
 
   params: customerOrderReturnParamsSchema,
 

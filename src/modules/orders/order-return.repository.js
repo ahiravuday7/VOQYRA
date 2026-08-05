@@ -62,6 +62,63 @@ const CUSTOMER_ORDER_RETURN_PROJECTION = Object.freeze({
 
   updatedAt: 1,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Escape Regular Expression Search
+|--------------------------------------------------------------------------
+*/
+
+const escapeOrderReturnSearchPattern = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Order Return List Projection
+|--------------------------------------------------------------------------
+*/
+
+const ADMIN_ORDER_RETURN_LIST_PROJECTION = Object.freeze({
+  _id: 1,
+
+  returnRequestNumber: 1,
+
+  order: 1,
+
+  orderNumber: 1,
+
+  customer: 1,
+
+  items: 1,
+
+  requestedResolution: 1,
+
+  status: 1,
+
+  customerNote: 1,
+
+  adminNote: 1,
+
+  approval: 1,
+
+  rejection: 1,
+
+  receipt: 1,
+
+  completion: 1,
+
+  cancellation: 1,
+
+  createdBy: 1,
+
+  updatedBy: 1,
+
+  createdAt: 1,
+
+  updatedAt: 1,
+});
+
 /*
 |--------------------------------------------------------------------------
 | Find Consumed Return Quantities
@@ -312,4 +369,108 @@ export const saveOrderReturnRequestDocument = (
   }
 
   return returnRequest.save(options);
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Order Return Requests
+|--------------------------------------------------------------------------
+*/
+
+export const listAdminOrderReturnRequests = async ({
+  page = 1,
+
+  limit = 20,
+
+  search,
+
+  status,
+
+  requestedResolution,
+
+  customerId,
+
+  orderId,
+
+  sortBy = "createdAt",
+
+  sortDirection = "desc",
+} = {}) => {
+  const filter = {};
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (requestedResolution) {
+    filter.requestedResolution = requestedResolution;
+  }
+
+  if (customerId) {
+    filter.customer = customerId;
+  }
+
+  if (orderId) {
+    filter.order = orderId;
+  }
+
+  if (search) {
+    const escapedSearch = escapeOrderReturnSearchPattern(search);
+
+    const searchExpression = new RegExp(escapedSearch, "i");
+
+    filter.$or = [
+      {
+        returnRequestNumber: searchExpression,
+      },
+
+      {
+        orderNumber: searchExpression,
+      },
+
+      {
+        "items.sku": searchExpression,
+      },
+
+      {
+        "items.productName": searchExpression,
+      },
+    ];
+  }
+
+  const skip = (page - 1) * limit;
+
+  const sortValue = sortDirection === "asc" ? 1 : -1;
+
+  const sort = {
+    [sortBy]: sortValue,
+
+    _id: sortValue,
+  };
+
+  const [returnRequests, total] = await Promise.all([
+    OrderReturnRequest.find(filter)
+      .select(ADMIN_ORDER_RETURN_LIST_PROJECTION)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    OrderReturnRequest.countDocuments(filter),
+  ]);
+
+  return {
+    returnRequests,
+    total,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Order Return Request by ID
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderReturnRequestById = (returnRequestId) => {
+  return OrderReturnRequest.findById(returnRequestId).lean();
 };

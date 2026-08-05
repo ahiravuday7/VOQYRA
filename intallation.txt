@@ -2793,6 +2793,29 @@ Transaction rollback
 Product inventory invariants
 Inventory Ledger invariants
 |--------------------------------------------------------------------------
+Part 125: Admin Return Request List and Details APIs
+
+Create/update:
+
+src/modules/orders/order.validation.js
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order-return.mapper.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+src/app.js
+
+This part exposes:
+
+GET /api/v1/admin/order-returns
+GET /api/v1/admin/order-returns/:returnRequestId
+
+Admins will be able to:
+
+View all customer Return Requests
+Filter by status, resolution, customer, and Order
+Search by return number, Order number, SKU, or Product name
+View internal approval, rejection, receipt, inspection, and audit fields
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

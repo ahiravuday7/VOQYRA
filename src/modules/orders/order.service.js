@@ -60,6 +60,8 @@ import {
   listCustomerOrderReturnRequests,
   findCustomerOrderReturnRequestForCancellation,
   saveOrderReturnRequestDocument,
+  findAdminOrderReturnRequestById,
+  listAdminOrderReturnRequests,
 } from "./order-return.repository.js";
 
 /*
@@ -373,6 +375,18 @@ const createCustomerReturnDetailsRequiredError = (orderItemId) => {
 */
 
 const createCustomerReturnRequestNotFoundError = () => {
+  return new AppError("Return request was not found", 404, {
+    errorCode: "ORDER_RETURN_REQUEST_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Request Not Found
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnRequestNotFoundError = () => {
   return new AppError("Return request was not found", 404, {
     errorCode: "ORDER_RETURN_REQUEST_NOT_FOUND",
   });
@@ -1860,6 +1874,58 @@ export const getAdminOrderById = async (orderId) => {
   }
 
   return order;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Return Requests
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnRequests = async (filters = {}) => {
+  const {
+    page = 1,
+
+    limit = 20,
+  } = filters;
+
+  const { returnRequests, total } = await listAdminOrderReturnRequests(filters);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  return {
+    returnRequests,
+
+    pagination: {
+      page,
+
+      limit,
+
+      total,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Order Return Request by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnRequestById = async (returnRequestId) => {
+  const returnRequest = await findAdminOrderReturnRequestById(returnRequestId);
+
+  if (!returnRequest) {
+    throw createAdminOrderReturnRequestNotFoundError();
+  }
+
+  return returnRequest;
 };
 
 /*
