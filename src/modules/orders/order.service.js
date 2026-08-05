@@ -18,6 +18,7 @@ import {
   ORDER_RETURN_REASONS,
   ORDER_RETURN_STATUSES,
   ORDER_RETURN_ITEM_INSPECTION_STATUSES,
+  CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -397,6 +398,54 @@ const createCustomerReturnConcurrencyError = () => {
     409,
     {
       errorCode: "ORDER_RETURN_CONCURRENT_REQUEST",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Cancellation Errors
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerReturnAlreadyCancelledError = (returnRequest) => {
+  return new AppError("This return request has already been cancelled", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_CANCELLED",
+
+    details: {
+      status: returnRequest.status,
+
+      cancelledAt: returnRequest.cancellation?.cancelledAt ?? null,
+    },
+  });
+};
+
+const createCustomerReturnCancellationStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This return request cannot be cancelled from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_CANCELLATION_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        cancellableStatuses: CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createCustomerReturnCancellationStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The return request has already entered physical return processing",
+    409,
+    {
+      errorCode: "ORDER_RETURN_CANCELLATION_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
     },
   );
 };
@@ -1168,6 +1217,44 @@ const isOrderReturnTransactionConflict = (error) => {
     error?.errorLabels?.includes?.("TransientTransactionError") ||
     error?.code === 112 ||
     error?.codeName === "WriteConflict",
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Cancelled
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyCancelled = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.CANCELLED ||
+    returnRequest.cancellation?.cancelledAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Physical Return Processing Has Started
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnPhysicalProcessingHasStarted = (returnRequest) => {
+  const itemInspectionStarted = (returnRequest.items ?? []).some((item) => {
+    return (
+      item.inspection?.status ===
+      ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED
+    );
+  });
+
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.IN_TRANSIT ||
+    returnRequest.status === ORDER_RETURN_STATUSES.RECEIVED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.INSPECTED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
+    returnRequest.receipt?.receivedAt ||
+    returnRequest.completion?.completedAt ||
+    itemInspectionStarted,
   );
 };
 
@@ -5282,4 +5369,86 @@ export const createCustomerOrderReturnRequest = async (
     customerId,
     returnData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Customer Return Request Can Be Cancelled
+|--------------------------------------------------------------------------
+*/
+
+export const assertCustomerOrderReturnCanBeCancelled = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyCancelled(returnRequest)) {
+    throw createCustomerReturnAlreadyCancelledError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Allowed Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES.includes(
+      returnRequest.status,
+    )
+  ) {
+    throw createCustomerReturnCancellationStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Physical Processing Must Not Have Started
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnPhysicalProcessingHasStarted(returnRequest)) {
+    throw createCustomerReturnCancellationStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.CANCELLED,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Customer Cancelled Return Request State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildCustomerCancelledOrderReturnState = (
+  returnRequest,
+  { cancellationData, customerId, cancelledAt = new Date() },
+) => {
+  assertCustomerOrderReturnCanBeCancelled(returnRequest);
+
+  return {
+    status: ORDER_RETURN_STATUSES.CANCELLED,
+
+    cancellation: {
+      reason: cancellationData.reason,
+
+      cancelledBy: customerId,
+
+      cancelledAt,
+    },
+
+    updatedBy: customerId,
+  };
 };

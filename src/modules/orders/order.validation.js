@@ -763,6 +763,26 @@ const customerOrderReturnBodySchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Customer Return Cancellation Body
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnCancellationBodySchema = z.strictObject({
+  reason: z
+    .string({
+      error: "Cancellation reason is required",
+    })
+    .trim()
+    .min(5, {
+      error: "Cancellation reason must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Cancellation reason cannot exceed 500 characters",
+    }),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order Cancellation Body
 |--------------------------------------------------------------------------
 */
@@ -1262,6 +1282,23 @@ export const customerOrderReturnListRequestSchema = z.strictObject({
 
 export const customerOrderReturnDetailsRequestSchema = z.strictObject({
   body: emptyObjectSchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Cancellation Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/orders/returns/:returnRequestId/cancel
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnCancellationRequestSchema = z.strictObject({
+  body: customerOrderReturnCancellationBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

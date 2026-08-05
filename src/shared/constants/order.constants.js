@@ -325,3 +325,18 @@ export const ORDER_RETURN_QUANTITY_CONSUMING_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.INSPECTED,
   ORDER_RETURN_STATUSES.COMPLETED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Cancellable Return Statuses
+|--------------------------------------------------------------------------
+|
+| Customers may cancel before the physical return has entered transit
+| or reached the warehouse.
+|--------------------------------------------------------------------------
+*/
+
+export const CUSTOMER_CANCELLABLE_ORDER_RETURN_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.REQUESTED,
+  ORDER_RETURN_STATUSES.APPROVED,
+]);

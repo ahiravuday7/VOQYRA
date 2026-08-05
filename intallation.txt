@@ -2719,6 +2719,26 @@ Protect return-request ownership
 Hide admin and warehouse actor information
 Return full item and inspection details when requested
 |--------------------------------------------------------------------------
+Part 122: Customer Return Cancellation Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares:
+
+POST /api/v1/orders/returns/:returnRequestId/cancel
+
+The workflow will allow the customer to cancel a return request only while it is still safe to stop:
+
+requested → cancelled
+approved  → cancelled
+
+Cancellation will also release the return quantity so the customer may create another valid return request later.
+
+No repository write, controller, or route is added yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
