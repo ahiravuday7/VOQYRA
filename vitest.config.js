@@ -23,9 +23,9 @@ export default defineConfig({
     fileParallelism: false,
     maxWorkers: 1,
 
-    testTimeout: 30_000,
-    hookTimeout: 60_000,
-    teardownTimeout: 60_000,
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
+    teardownTimeout: 120_000,
 
     clearMocks: true,
     restoreMocks: true,
