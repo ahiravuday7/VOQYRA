@@ -2941,6 +2941,33 @@ completed
 
 No repository persistence, controller, or route is added yet.
 |--------------------------------------------------------------------------
+Part 131: Atomic Return Shipment and Warehouse Receipt Persistence, Controllers, and Routes
+
+Update:
+
+src/modules/orders/order-return.repository.js
+src/modules/orders/order.service.js
+src/modules/orders/order-return.mapper.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+
+This step exposes:
+
+POST /api/v1/admin/order-returns/:returnRequestId/mark-in-transit
+POST /api/v1/admin/order-returns/:returnRequestId/receive
+
+Workflow:
+
+approved
+   ↓ mark-in-transit
+in-transit
+   ↓ receive
+received
+
+Neither operation changes Product inventory or releases return quantity.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

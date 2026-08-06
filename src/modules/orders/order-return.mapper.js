@@ -175,6 +175,17 @@ export const toCustomerOrderReturnRequest = (returnRequest) => {
       rejectedAt: normalizedReturnRequest.rejection?.rejectedAt ?? null,
     },
 
+    shipment: {
+      carrier: normalizedReturnRequest.shipment?.carrier ?? null,
+
+      trackingNumber: normalizedReturnRequest.shipment?.trackingNumber ?? null,
+
+      trackingUrl: normalizedReturnRequest.shipment?.trackingUrl ?? null,
+
+      markedInTransitAt:
+        normalizedReturnRequest.shipment?.markedInTransitAt ?? null,
+    },
+
     receipt: {
       receivedAt: normalizedReturnRequest.receipt?.receivedAt ?? null,
     },
@@ -349,7 +360,26 @@ export const toAdminOrderReturnRequest = (returnRequest) => {
       rejectedAt: normalizedReturnRequest.rejection?.rejectedAt ?? null,
     },
 
+    shipment: {
+      carrier: normalizedReturnRequest.shipment?.carrier ?? null,
+
+      trackingNumber: normalizedReturnRequest.shipment?.trackingNumber ?? null,
+
+      trackingUrl: normalizedReturnRequest.shipment?.trackingUrl ?? null,
+
+      note: normalizedReturnRequest.shipment?.note ?? null,
+
+      markedInTransitBy: normalizeIdentifier(
+        normalizedReturnRequest.shipment?.markedInTransitBy,
+      ),
+
+      markedInTransitAt:
+        normalizedReturnRequest.shipment?.markedInTransitAt ?? null,
+    },
+
     receipt: {
+      note: normalizedReturnRequest.receipt?.note ?? null,
+
       receivedBy: normalizeIdentifier(
         normalizedReturnRequest.receipt?.receivedBy,
       ),

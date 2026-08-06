@@ -66,6 +66,7 @@ import {
   findAdminOrderReturnRequestById,
   listAdminOrderReturnRequests,
   findAdminOrderReturnRequestForDecision,
+  findAdminOrderReturnRequestForProcessing,
 } from "./order-return.repository.js";
 
 /*
@@ -368,6 +369,22 @@ const createCustomerReturnDetailsRequiredError = (orderItemId) => {
       details: {
         orderItemId: String(orderItemId),
       },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Processing Conflict
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnProcessingConflictError = () => {
+  return new AppError(
+    "The Return Request was modified by another operation. Please refresh and try again.",
+    409,
+    {
+      errorCode: "ORDER_RETURN_PROCESSING_CONFLICT",
     },
   );
 };
@@ -6719,6 +6736,206 @@ export const buildAdminOrderReturnInTransitState = (
 
 /*
 |--------------------------------------------------------------------------
+| Execute Atomic Admin Return Mark-In-Transit
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnMarkInTransit = async ({
+  returnRequestId,
+  adminId,
+  shipmentData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let inTransitReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Shipment State
+          |--------------------------------------------------------------------------
+          */
+
+        const markedInTransitAt = new Date();
+
+        const inTransitState = buildAdminOrderReturnInTransitState(
+          returnRequest,
+          {
+            shipmentData,
+            adminId,
+            markedInTransitAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Shipment State
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(inTransitState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        inTransitReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return inTransitReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnProcessingConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Return Warehouse Receipt
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnReceipt = async ({
+  returnRequestId,
+  adminId,
+  receiptData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let receivedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Receipt State
+          |--------------------------------------------------------------------------
+          */
+
+        const receivedAt = new Date();
+
+        const receivedState = buildAdminOrderReturnReceivedState(
+          returnRequest,
+          {
+            receiptData,
+            adminId,
+            receivedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Receipt State
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(receivedState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        receivedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return receivedReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnProcessingConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
 | Build Admin Received Return State
 |--------------------------------------------------------------------------
 |
@@ -6751,4 +6968,54 @@ export const buildAdminOrderReturnReceivedState = (
 
     updatedBy: adminId,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Mark Admin Order Return Request In Transit
+|--------------------------------------------------------------------------
+*/
+
+export const markAdminOrderReturnRequestInTransit = async (
+  returnRequestId,
+  adminId,
+  shipmentData,
+) => {
+  if (!adminId) {
+    throw new Error(
+      "Admin ID is required to mark a Return Request as in transit",
+    );
+  }
+
+  if (!shipmentData) {
+    throw new Error("Return shipment data is required");
+  }
+
+  return executeAtomicAdminOrderReturnMarkInTransit({
+    returnRequestId,
+    adminId,
+    shipmentData,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Receive Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const receiveAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  receiptData = {},
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to receive a Return Request");
+  }
+
+  return executeAtomicAdminOrderReturnReceipt({
+    returnRequestId,
+    adminId,
+    receiptData,
+  });
 };

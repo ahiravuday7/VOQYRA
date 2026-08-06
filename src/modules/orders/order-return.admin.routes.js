@@ -13,6 +13,8 @@ import {
   getAdminOrderReturnRequestsController,
   approveAdminOrderReturnRequestController,
   rejectAdminOrderReturnRequestController,
+  markAdminOrderReturnRequestInTransitController,
+  receiveAdminOrderReturnRequestController,
 } from "./order-return.controller.js";
 
 import {
@@ -20,6 +22,8 @@ import {
   adminOrderReturnListRequestSchema,
   adminOrderReturnApprovalRequestSchema,
   adminOrderReturnRejectionRequestSchema,
+  adminOrderReturnMarkInTransitRequestSchema,
+  adminOrderReturnReceiptRequestSchema,
 } from "./order.validation.js";
 
 const router = express.Router();
@@ -74,6 +78,30 @@ router.post(
   "/:returnRequestId/reject",
   validateRequest(adminOrderReturnRejectionRequestSchema),
   rejectAdminOrderReturnRequestController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Mark Return Request In Transit
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/mark-in-transit",
+  validateRequest(adminOrderReturnMarkInTransitRequestSchema),
+  markAdminOrderReturnRequestInTransitController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Receive Return Request
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/receive",
+  validateRequest(adminOrderReturnReceiptRequestSchema),
+  receiveAdminOrderReturnRequestController,
 );
 
 /*

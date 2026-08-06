@@ -50,6 +50,14 @@ const CUSTOMER_ORDER_RETURN_PROJECTION = Object.freeze({
 
   "rejection.rejectedAt": 1,
 
+  "shipment.carrier": 1,
+
+  "shipment.trackingNumber": 1,
+
+  "shipment.trackingUrl": 1,
+
+  "shipment.markedInTransitAt": 1,
+
   "receipt.receivedAt": 1,
 
   "completion.completedAt": 1,
@@ -103,6 +111,8 @@ const ADMIN_ORDER_RETURN_LIST_PROJECTION = Object.freeze({
   approval: 1,
 
   rejection: 1,
+
+  shipment: 1,
 
   receipt: 1,
 
@@ -485,6 +495,28 @@ export const findAdminOrderReturnRequestById = (returnRequestId) => {
 */
 
 export const findAdminOrderReturnRequestForDecision = (
+  returnRequestId,
+  { session = null } = {},
+) => {
+  const query = OrderReturnRequest.findById(returnRequestId);
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Return Request for Processing
+|--------------------------------------------------------------------------
+|
+| Used by shipment, receipt, inspection and completion workflows.
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderReturnRequestForProcessing = (
   returnRequestId,
   { session = null } = {},
 ) => {

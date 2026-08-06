@@ -6,7 +6,9 @@ import {
   getAdminOrderReturnRequestById,
   getAdminOrderReturnRequests,
   approveAdminOrderReturnRequest,
+  markAdminOrderReturnRequestInTransit,
   rejectAdminOrderReturnRequest,
+  receiveAdminOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -372,6 +374,116 @@ export const rejectAdminOrderReturnRequestController = async (
     success: true,
 
     message: "Return Request rejected successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Mark Admin Return Request In Transit
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/mark-in-transit
+|--------------------------------------------------------------------------
+*/
+
+export const markAdminOrderReturnRequestInTransitController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const shipmentData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const inTransitReturnRequest = await markAdminOrderReturnRequestInTransit(
+    returnRequestId,
+    adminId,
+    shipmentData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(inTransitReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      status: mappedReturnRequest.status,
+
+      carrier: mappedReturnRequest.shipment.carrier,
+
+      trackingNumber: mappedReturnRequest.shipment.trackingNumber,
+
+      markedInTransitAt: mappedReturnRequest.shipment.markedInTransitAt,
+    },
+    "Admin marked Order Return Request as in transit",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request marked as in transit successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Receive Admin Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/receive
+|--------------------------------------------------------------------------
+*/
+
+export const receiveAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const receiptData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const receivedReturnRequest = await receiveAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    receiptData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(receivedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      status: mappedReturnRequest.status,
+
+      receivedAt: mappedReturnRequest.receipt.receivedAt,
+    },
+    "Warehouse received Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request received successfully",
 
     data: {
       returnRequest: mappedReturnRequest,
