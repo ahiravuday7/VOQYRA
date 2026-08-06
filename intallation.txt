@@ -2965,7 +2965,84 @@ in-transit
 received
 
 Neither operation changes Product inventory or releases return quantity.
+
+note:Atomic Return Shipment and Warehouse Receipt Persistence safely records that an approved customer return has been shipped and physically received, while preventing partial updates, duplicate processing, concurrent admin conflicts, and premature inventory restoration.
 |--------------------------------------------------------------------------
+Part 132: Return Shipment and Warehouse Receipt Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This part tests:
+
+POST /api/v1/admin/order-returns/:returnRequestId/mark-in-transit
+POST /api/v1/admin/order-returns/:returnRequestId/receive
+
+Coverage includes:
+
+Authentication and admin authorization
+Request validation
+Missing Return Requests
+Shipment audit fields
+Warehouse receipt audit fields
+Invalid transitions
+Duplicate shipment and receipt operations
+Inconsistent state protection
+Transaction rollback
+Concurrent shipment protection
+Return quantity retention
+Product inventory invariants
+Inventory Ledger invariants
+
+4. Shipment lifecycle tested
+
+The valid shipment transition is:
+
+approved → in-transit
+
+Before shipment:
+
+status                     = approved
+shipment.carrier           = null
+shipment.trackingNumber    = null
+shipment.markedInTransitBy = null
+shipment.markedInTransitAt = null
+
+After shipment:
+
+status                     = in-transit
+shipment.carrier           = request carrier
+shipment.trackingNumber    = request tracking number
+shipment.markedInTransitBy = authenticated admin ID
+shipment.markedInTransitAt = backend-generated timestamp
+
+The admin cannot control:
+
+status
+markedInTransitBy
+markedInTransitAt
+updatedBy
+5. Warehouse receipt lifecycle tested
+
+The valid receipt transition is:
+
+in-transit → received
+
+Before receipt:
+
+status             = in-transit
+receipt.receivedBy = null
+receipt.receivedAt = null
+
+After receipt:
+
+status             = received
+receipt.note       = request note
+receipt.receivedBy = authenticated admin ID
+receipt.receivedAt = backend-generated timestamp
+
+Shipment data must remain intact after receipt.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

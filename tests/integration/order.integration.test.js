@@ -529,6 +529,101 @@ const createCustomerReturnRequestFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Approved Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createApprovedCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  approvalData = {
+    adminNote: "Return Request approved for shipment.",
+  },
+
+  ...returnFixtureOptions
+}) => {
+  const fixture = await createCustomerReturnRequestFixture({
+    adminAgent,
+    customerAgent,
+    ...returnFixtureOptions,
+  });
+
+  const approvalResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${fixture.returnRequest.id}/approve`)
+    .send(approvalData)
+    .expect(200);
+
+  const approvedReturnRequest = approvalResponse.body.data.returnRequest;
+
+  const storedApprovedReturnRequest = await OrderReturnRequest.findById(
+    fixture.returnRequest.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    approvalData,
+    approvedReturnRequest,
+    storedApprovedReturnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create In-Transit Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createInTransitCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  shipmentData = {
+    carrier: "Blue Dart",
+
+    trackingNumber: `RETURN-${new mongoose.Types.ObjectId()
+      .toString()
+      .slice(-12)
+      .toUpperCase()}`,
+
+    trackingUrl: "https://tracking.example.com/return-shipment",
+
+    note: "Customer pickup completed successfully.",
+  },
+
+  ...returnFixtureOptions
+}) => {
+  const fixture = await createApprovedCustomerReturnRequestFixture({
+    adminAgent,
+    customerAgent,
+    ...returnFixtureOptions,
+  });
+
+  const shipmentResponse = await adminAgent
+    .post(
+      `/api/v1/admin/order-returns/${fixture.returnRequest.id}/mark-in-transit`,
+    )
+    .send(shipmentData)
+    .expect(200);
+
+  const inTransitReturnRequest = shipmentResponse.body.data.returnRequest;
+
+  const storedInTransitReturnRequest = await OrderReturnRequest.findById(
+    fixture.returnRequest.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    shipmentData,
+    inTransitReturnRequest,
+    storedInTransitReturnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Admin Return Read Fixture
 |--------------------------------------------------------------------------
 |
@@ -10245,6 +10340,8 @@ describe("GET /api/v1/admin/order-returns/:returnRequestId", () => {
         */
 
     expect(returnedDetails.receipt).toEqual({
+      note: null,
+
       receivedBy: String(admin._id),
 
       receivedAt: receivedAt.toISOString(),
@@ -11350,5 +11447,1037 @@ describe("Admin Order Return approval and rejection", () => {
     if (storedReturnRequest.status === "rejected") {
       expect(linkedOrder.returnRequestVersion).toBe(2);
     }
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Shipment and Warehouse Receipt
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return shipment and warehouse receipt", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when shipment or receipt is attempted without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const shipmentResponse = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/mark-in-transit`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-RETURN-401",
+      });
+
+    expect(shipmentResponse.status).toBe(401);
+
+    const receiptResponse = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/receive`)
+      .send({});
+
+    expect(receiptResponse.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer attempts shipment or warehouse receipt operations", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const shipmentResponse = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/mark-in-transit`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-RETURN-403",
+      });
+
+    expect(shipmentResponse.status).toBe(403);
+
+    const receiptResponse = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/receive`)
+      .send({});
+
+    expect(receiptResponse.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Request Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid Return Request IDs and backend-controlled shipment or receipt fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const invalidShipmentIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-a-valid-object-id/mark-in-transit")
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-RETURN-INVALID-ID",
+      });
+
+    expect(invalidShipmentIdResponse.status).toBe(400);
+
+    expect(invalidShipmentIdResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const invalidReceiptIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-a-valid-object-id/receive")
+      .send({});
+
+    expect(invalidReceiptIdResponse.status).toBe(400);
+
+    expect(invalidReceiptIdResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const invalidShipmentBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/mark-in-transit`)
+      .send({
+        carrier: "A",
+
+        trackingNumber: "X",
+
+        trackingUrl: "not-a-valid-url",
+
+        status: "in-transit",
+
+        markedInTransitBy: new mongoose.Types.ObjectId().toString(),
+
+        markedInTransitAt: new Date().toISOString(),
+      });
+
+    expect(invalidShipmentBodyResponse.status).toBe(400);
+
+    expect(invalidShipmentBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const invalidReceiptBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/receive`)
+      .send({
+        status: "received",
+
+        receivedBy: new mongoose.Types.ObjectId().toString(),
+
+        receivedAt: new Date().toISOString(),
+      });
+
+    expect(invalidReceiptBodyResponse.status).toBe(400);
+
+    expect(invalidReceiptBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when shipment or receipt is attempted for a missing Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const shipmentResponse = await adminAgent
+      .post(
+        `/api/v1/admin/order-returns/${missingReturnRequestId}/mark-in-transit`,
+      )
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-MISSING-RETURN",
+      });
+
+    expect(shipmentResponse.status).toBe(404);
+
+    expect(shipmentResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REQUEST_NOT_FOUND",
+    );
+
+    const receiptResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/receive`)
+      .send({});
+
+    expect(receiptResponse.status).toBe(404);
+
+    expect(receiptResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REQUEST_NOT_FOUND",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Mark-In-Transit
+    |--------------------------------------------------------------------------
+    */
+
+  it("marks an approved Return Request as in transit using trusted audit fields without changing quantity or inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createApprovedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const productBeforeShipment = await Product.findById(product._id).lean();
+
+    const variantBeforeShipment = findProductVariant(
+      productBeforeShipment,
+      variant._id,
+    );
+
+    const ledgerBeforeShipment = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(
+      ledgerBeforeShipment.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+
+    const orderBeforeShipment = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeShipment.returnRequestVersion).toBe(1);
+
+    const shipmentData = {
+      carrier: "Blue Dart",
+
+      trackingNumber: "BD-RETURN-SUCCESS-001",
+
+      trackingUrl: "https://tracking.example.com/BD-RETURN-SUCCESS-001",
+
+      note: "Customer pickup completed at the registered address.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+      .send(shipmentData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return Request marked as in transit successfully",
+    );
+
+    const inTransitReturnRequest = response.body.data.returnRequest;
+
+    expect(inTransitReturnRequest.status).toBe("in-transit");
+
+    expect(inTransitReturnRequest.shipment).toMatchObject({
+      carrier: shipmentData.carrier,
+
+      trackingNumber: shipmentData.trackingNumber,
+
+      trackingUrl: shipmentData.trackingUrl,
+
+      note: shipmentData.note,
+
+      markedInTransitBy: String(admin._id),
+    });
+
+    expect(inTransitReturnRequest.shipment.markedInTransitAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Shipment Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("in-transit");
+
+    expect(storedReturnRequest.shipment.carrier).toBe(shipmentData.carrier);
+
+    expect(storedReturnRequest.shipment.trackingNumber).toBe(
+      shipmentData.trackingNumber,
+    );
+
+    expect(storedReturnRequest.shipment.trackingUrl).toBe(
+      shipmentData.trackingUrl,
+    );
+
+    expect(storedReturnRequest.shipment.note).toBe(shipmentData.note);
+
+    expect(String(storedReturnRequest.shipment.markedInTransitBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReturnRequest.shipment.markedInTransitAt).toBeTruthy();
+
+    expect(String(storedReturnRequest.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Shipment Retains Consumed Return Quantity
+        |--------------------------------------------------------------------------
+        */
+
+    const exhaustedResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "Attempt to create an additional return during shipment.",
+          },
+        ],
+      });
+
+    expect(exhaustedResponse.status).toBe(409);
+
+    expect(exhaustedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    expect(exhaustedResponse.body.details).toMatchObject({
+      orderedQuantity: 2,
+
+      consumedQuantity: 2,
+
+      requestedQuantity: 1,
+
+      remainingQuantity: 0,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Version Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterShipment = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterShipment.returnRequestVersion).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterShipment = await Product.findById(product._id).lean();
+
+    const variantAfterShipment = findProductVariant(
+      productAfterShipment,
+      variant._id,
+    );
+
+    expect(variantAfterShipment.inventory.stock).toBe(
+      variantBeforeShipment.inventory.stock,
+    );
+
+    expect(variantAfterShipment.inventory.reservedStock).toBe(
+      variantBeforeShipment.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerAfterShipment = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(
+      ledgerAfterShipment.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Status Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects marking a requested Return Request as in transit before approval", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-BEFORE-APPROVAL",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_SHIPMENT_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("requested");
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("requested");
+
+    expect(unchangedReturnRequest.shipment.markedInTransitAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Approval Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects marking an approved Return Request as in transit when approval audit evidence is missing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      status: "approved",
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/mark-in-transit`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-MISSING-APPROVAL-AUDIT",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_SHIPMENT_STATE_INVALID");
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("approved");
+
+    expect(storedReturnRequest.shipment.markedInTransitAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Shipment
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects marking the same Return Request as in transit twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createInTransitCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+      .send({
+        carrier: "Different Carrier",
+
+        trackingNumber: "DUPLICATE-TRACKING-NUMBER",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_ALREADY_IN_TRANSIT");
+
+    expect(response.body.details.status).toBe("in-transit");
+
+    expect(response.body.details.markedInTransitAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Warehouse Receipt
+    |--------------------------------------------------------------------------
+    */
+
+  it("receives an in-transit Return Request while preserving shipment data and leaving inventory unchanged", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const shipmentData = {
+      carrier: "Delhivery",
+
+      trackingNumber: "DLV-RETURN-RECEIPT-001",
+
+      trackingUrl: "https://tracking.example.com/DLV-RETURN-RECEIPT-001",
+
+      note: "Customer return parcel collected.",
+    };
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createInTransitCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+
+        shipmentData,
+      });
+
+    const productBeforeReceipt = await Product.findById(product._id).lean();
+
+    const variantBeforeReceipt = findProductVariant(
+      productBeforeReceipt,
+      variant._id,
+    );
+
+    const orderBeforeReceipt = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderBeforeReceipt.returnRequestVersion).toBe(1);
+
+    const receiptData = {
+      note: "The sealed parcel was received at the Pune warehouse.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/receive`)
+      .send(receiptData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return Request received successfully");
+
+    const receivedReturnRequest = response.body.data.returnRequest;
+
+    expect(receivedReturnRequest.status).toBe("received");
+
+    expect(receivedReturnRequest.receipt).toMatchObject({
+      note: receiptData.note,
+
+      receivedBy: String(admin._id),
+    });
+
+    expect(receivedReturnRequest.receipt.receivedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Shipment Data Must Remain Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    expect(receivedReturnRequest.shipment).toMatchObject({
+      carrier: shipmentData.carrier,
+
+      trackingNumber: shipmentData.trackingNumber,
+
+      trackingUrl: shipmentData.trackingUrl,
+
+      note: shipmentData.note,
+
+      markedInTransitBy: String(admin._id),
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Receipt Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("received");
+
+    expect(storedReturnRequest.receipt.note).toBe(receiptData.note);
+
+    expect(String(storedReturnRequest.receipt.receivedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReturnRequest.receipt.receivedAt).toBeTruthy();
+
+    expect(storedReturnRequest.shipment.trackingNumber).toBe(
+      shipmentData.trackingNumber,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Receipt Retains Consumed Return Quantity
+        |--------------------------------------------------------------------------
+        */
+
+    const exhaustedResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "quality-issue",
+
+            details:
+              "Attempt to create another return after warehouse receipt.",
+          },
+        ],
+      });
+
+    expect(exhaustedResponse.status).toBe(409);
+
+    expect(exhaustedResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Version Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterReceipt = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterReceipt.returnRequestVersion).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Not Change
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterReceipt = await Product.findById(product._id).lean();
+
+    const variantAfterReceipt = findProductVariant(
+      productAfterReceipt,
+      variant._id,
+    );
+
+    expect(variantAfterReceipt.inventory.stock).toBe(
+      variantBeforeReceipt.inventory.stock,
+    );
+
+    expect(variantAfterReceipt.inventory.reservedStock).toBe(
+      variantBeforeReceipt.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(
+      ledgerEntries.map((entry) => {
+        return entry.operation;
+      }),
+    ).toEqual(["reserve", "commit"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Receipt Status Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects receiving an approved Return Request before it enters transit", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createApprovedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/receive`)
+      .send({
+        note: "Attempt to receive before shipment.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_RECEIPT_STATUS_INVALID");
+
+    expect(response.body.details.currentStatus).toBe("approved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Incomplete Shipment Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects warehouse receipt when an in-transit Return Request has incomplete shipment evidence", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "in-transit",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    /*
+     * Native collection access creates incomplete
+     * shipment evidence intentionally.
+     */
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequest._id,
+      },
+      {
+        $set: {
+          "shipment.carrier": "Blue Dart",
+
+          "shipment.markedInTransitBy": admin._id,
+
+          "shipment.markedInTransitAt": new Date(),
+
+          /*
+           * trackingNumber is intentionally absent.
+           */
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/receive`)
+      .send({
+        note: "Attempt to receive with incomplete shipment evidence.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_RECEIPT_STATE_INVALID");
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("in-transit");
+
+    expect(unchangedReturnRequest.receipt.receivedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Warehouse Receipt
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects receiving the same Return Request twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createInTransitCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/receive`)
+      .send({
+        note: "First warehouse receipt.",
+      })
+      .expect(200);
+
+    const secondResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/receive`)
+      .send({
+        note: "Duplicate warehouse receipt.",
+      });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe("ORDER_RETURN_ALREADY_RECEIVED");
+
+    expect(secondResponse.body.details.status).toBe("received");
+
+    expect(secondResponse.body.details.receivedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Persistence Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back shipment changes when Return Request persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createApprovedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const returnRequestObjectId = new mongoose.Types.ObjectId(returnRequest.id);
+
+    /*
+     * Corrupt an enum-controlled field using
+     * native collection access.
+     */
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequestObjectId,
+      },
+      {
+        $set: {
+          requestedResolution: "invalid-resolution",
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "BD-ROLLBACK-SHIPMENT",
+      });
+
+    expect(response.status).toBe(400);
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("approved");
+
+    expect(unchangedReturnRequest.shipment.carrier).toBeNull();
+
+    expect(unchangedReturnRequest.shipment.trackingNumber).toBeNull();
+
+    expect(unchangedReturnRequest.shipment.markedInTransitBy).toBeNull();
+
+    expect(unchangedReturnRequest.shipment.markedInTransitAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Receipt Persistence Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back warehouse receipt changes when Return Request persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createInTransitCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+      },
+    );
+
+    const returnRequestObjectId = new mongoose.Types.ObjectId(returnRequest.id);
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequestObjectId,
+      },
+      {
+        $set: {
+          requestedResolution: "invalid-resolution",
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/receive`)
+      .send({
+        note: "Receipt persistence rollback test.",
+      });
+
+    expect(response.status).toBe(400);
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("in-transit");
+
+    expect(unchangedReturnRequest.receipt.note).toBeNull();
+
+    expect(unchangedReturnRequest.receipt.receivedBy).toBeNull();
+
+    expect(unchangedReturnRequest.receipt.receivedAt).toBeNull();
+
+    /*
+     * Existing shipment must remain intact.
+     */
+    expect(unchangedReturnRequest.shipment.trackingNumber).toBeTruthy();
+
+    expect(unchangedReturnRequest.shipment.markedInTransitAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Shipment Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one mark-in-transit operation when two shipment requests happen concurrently", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createApprovedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+        .send({
+          carrier: "Blue Dart",
+
+          trackingNumber: "BD-CONCURRENT-001",
+        }),
+
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/mark-in-transit`)
+        .send({
+          carrier: "Delhivery",
+
+          trackingNumber: "DLV-CONCURRENT-002",
+        }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter((response) => {
+      return response.status === 200;
+    });
+
+    const conflictResponses = responses.filter((response) => {
+      return response.status === 409;
+    });
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_PROCESSING_CONFLICT",
+      "ORDER_RETURN_ALREADY_IN_TRANSIT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("in-transit");
+
+    expect(["BD-CONCURRENT-001", "DLV-CONCURRENT-002"]).toContain(
+      storedReturnRequest.shipment.trackingNumber,
+    );
+
+    expect(storedReturnRequest.shipment.markedInTransitAt).toBeTruthy();
   });
 });
