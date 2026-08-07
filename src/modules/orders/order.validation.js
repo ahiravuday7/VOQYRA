@@ -1077,6 +1077,29 @@ const adminOrderReturnInspectionBodySchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Admin Return Completion Body
+|--------------------------------------------------------------------------
+|
+| Inventory quantities are NOT accepted here.
+|
+| They come exclusively from the trusted warehouse inspection.
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnCompletionBodySchema = z.strictObject({
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order Cancellation Body
 |--------------------------------------------------------------------------
 */
@@ -1712,6 +1735,23 @@ export const adminOrderReturnReceiptRequestSchema = z.strictObject({
 
 export const adminOrderReturnInspectionRequestSchema = z.strictObject({
   body: adminOrderReturnInspectionBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Completion Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/complete
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnCompletionRequestSchema = z.strictObject({
+  body: adminOrderReturnCompletionBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

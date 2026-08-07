@@ -3104,6 +3104,43 @@ POST /api/v1/admin/order-returns/:returnRequestId/inspect
 
 We’ll cover the important paths without unnecessarily expanding the already-heavy integration suite.
 |--------------------------------------------------------------------------
+Part 136: Return Completion + Resellable Inventory Restoration Design and Validation
+
+Now we reach the important inventory part. 🚀
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares:
+
+POST /api/v1/admin/order-returns/:returnRequestId/complete
+
+The lifecycle becomes:
+
+received
+   ↓
+inspected
+   ↓
+completed
+
+During the next persistence step, completion will atomically:
+
+Validate inspection
+        ↓
+Identify resellable quantities
+        ↓
+Increase Product stock
+        ↓
+Create Inventory Ledger entries
+        ↓
+Mark Return Request completed
+        ↓
+Commit everything together
+
+Part 136 only prepares the validation, business rules, and trusted inventory-restoration plan.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

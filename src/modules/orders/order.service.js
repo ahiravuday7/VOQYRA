@@ -23,6 +23,7 @@ import {
   ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES,
+  ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -628,6 +629,70 @@ const createAdminOrderReturnInspectionQuantityInvalidError = ({
         returnedQuantity,
 
         inspectedQuantity,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Completion Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyCompletedError = (returnRequest) => {
+  return new AppError("This Return Request has already been completed", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_COMPLETED",
+
+    details: {
+      status: returnRequest.status,
+
+      completedAt: returnRequest.completion?.completedAt ?? null,
+    },
+  });
+};
+
+const createAdminOrderReturnCompletionStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be completed from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_COMPLETION_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnCompletionStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Return Request contains invalid completion state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_COMPLETION_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnCompletionInspectionInvalidError = (
+  orderItemId,
+) => {
+  return new AppError(
+    "A Return Request item does not contain a valid completed inspection",
+    409,
+    {
+      errorCode: "ORDER_RETURN_COMPLETION_INSPECTION_INVALID",
+
+      details: {
+        orderItemId: String(orderItemId),
       },
     },
   );
@@ -1761,6 +1826,19 @@ const orderReturnPostReceiptProcessingHasStarted = (returnRequest) => {
 
 /*
 |--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Completed
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyCompleted = (returnRequest) => {
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
+    returnRequest.completion?.completedAt,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Check Whether Return Request Is Already Approved
 |--------------------------------------------------------------------------
 */
@@ -2514,6 +2592,186 @@ export const assertAdminOrderReturnCanBeInspected = (returnRequest) => {
     changesReturnQuantity: false,
 
     changesProductInventory: false,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Return Item Inspection Is Complete
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderReturnItemInspectionIsComplete = (returnItem) => {
+  const inspection = returnItem.inspection;
+
+  if (
+    !inspection ||
+    inspection.status !== ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED ||
+    !inspection.inspectedBy ||
+    !inspection.inspectedAt
+  ) {
+    throw createAdminOrderReturnCompletionInspectionInvalidError(
+      returnItem.orderItemId,
+    );
+  }
+
+  const resellableQuantity = Number(inspection.resellableQuantity);
+
+  const damagedQuantity = Number(inspection.damagedQuantity);
+
+  const rejectedQuantity = Number(inspection.rejectedQuantity);
+
+  const quantitiesAreValid =
+    Number.isInteger(resellableQuantity) &&
+    Number.isInteger(damagedQuantity) &&
+    Number.isInteger(rejectedQuantity) &&
+    resellableQuantity >= 0 &&
+    damagedQuantity >= 0 &&
+    rejectedQuantity >= 0;
+
+  if (!quantitiesAreValid) {
+    throw createAdminOrderReturnCompletionInspectionInvalidError(
+      returnItem.orderItemId,
+    );
+  }
+
+  const inspectedQuantity =
+    resellableQuantity + damagedQuantity + rejectedQuantity;
+
+  const returnedQuantity = Number(returnItem.quantity);
+
+  if (inspectedQuantity !== returnedQuantity) {
+    throw createAdminOrderReturnCompletionInspectionInvalidError(
+      returnItem.orderItemId,
+    );
+  }
+
+  return {
+    resellableQuantity,
+    damagedQuantity,
+    rejectedQuantity,
+    inspectedQuantity,
+    returnedQuantity,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Completed
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeCompleted = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Completion
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyCompleted(returnRequest)) {
+    throw createAdminOrderReturnAlreadyCompletedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Allowed Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES.includes(
+      returnRequest.status,
+    )
+  ) {
+    throw createAdminOrderReturnCompletionStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approval Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !returnRequest.approval?.approvedBy ||
+    !returnRequest.approval?.approvedAt
+  ) {
+    throw createAdminOrderReturnCompletionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  if (!orderReturnShipmentEvidenceIsComplete(returnRequest)) {
+    throw createAdminOrderReturnCompletionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Warehouse Receipt Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  if (!orderReturnReceiptEvidenceIsComplete(returnRequest)) {
+    throw createAdminOrderReturnCompletionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Terminal Conflict Protection
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    returnRequest.rejection?.rejectedAt ||
+    returnRequest.cancellation?.cancelledAt
+  ) {
+    throw createAdminOrderReturnCompletionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Return Items Must Exist
+    |--------------------------------------------------------------------------
+    */
+
+  if (!Array.isArray(returnRequest.items) || returnRequest.items.length === 0) {
+    throw createAdminOrderReturnCompletionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Every Item Must Have Complete Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  for (const returnItem of returnRequest.items) {
+    assertOrderReturnItemInspectionIsComplete(returnItem);
+  }
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.COMPLETED,
+
+    changesReturnQuantity: false,
+
+    mayRestoreProductInventory: true,
   };
 };
 
@@ -7613,4 +7871,97 @@ export const inspectAdminOrderReturnRequest = async (
     adminId,
     inspectionData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Return Inventory Restoration Plan
+|--------------------------------------------------------------------------
+|
+| Only resellable quantities are restored.
+|
+| Damaged and rejected quantities never enter normal sellable stock.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminOrderReturnInventoryRestorationPlan = (
+  returnRequest,
+) => {
+  assertAdminOrderReturnCanBeCompleted(returnRequest);
+
+  const restorationPlan = [];
+
+  for (const returnItem of returnRequest.items) {
+    const { resellableQuantity, damagedQuantity, rejectedQuantity } =
+      assertOrderReturnItemInspectionIsComplete(returnItem);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Nothing to Restock
+      |--------------------------------------------------------------------------
+      */
+
+    if (resellableQuantity === 0) {
+      continue;
+    }
+
+    restorationPlan.push({
+      orderItemId: returnItem.orderItemId,
+
+      productId: returnItem.product,
+
+      variantId: returnItem.variantId,
+
+      sku: returnItem.sku,
+
+      quantity: resellableQuantity,
+
+      inspection: {
+        resellableQuantity,
+
+        damagedQuantity,
+
+        rejectedQuantity,
+      },
+    });
+  }
+
+  return restorationPlan;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Completed Return Request State
+|--------------------------------------------------------------------------
+|
+| This does NOT update Product inventory.
+|
+| Product restoration will be performed by the atomic completion transaction
+| in the next part.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminCompletedOrderReturnState = (
+  returnRequest,
+  { completionData = {}, adminId, completedAt = new Date() },
+) => {
+  assertAdminOrderReturnCanBeCompleted(returnRequest);
+
+  const completedState = {
+    status: ORDER_RETURN_STATUSES.COMPLETED,
+
+    completion: {
+      completedBy: adminId,
+
+      completedAt,
+    },
+
+    updatedBy: adminId,
+  };
+
+  if (completionData.adminNote !== undefined) {
+    completedState.adminNote = completionData.adminNote;
+  }
+
+  return completedState;
 };

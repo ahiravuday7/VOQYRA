@@ -395,3 +395,16 @@ export const ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES = Object.freeze([
 export const ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.RECEIVED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Completion Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| A Return Request can be completed only after warehouse inspection.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.INSPECTED,
+]);
