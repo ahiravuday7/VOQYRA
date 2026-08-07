@@ -3092,6 +3092,21 @@ inspected
 
 The inspection result is persisted atomically, but Product inventory is still not changed in this part.
 |--------------------------------------------------------------------------
+Part 135: Warehouse Return Inspection Integration Tests
+
+Update:
+
+tests/integration/order.integration.test.js
+
+This part tests:
+
+POST /api/v1/admin/order-returns/:returnRequestId/inspect
+
+We’ll cover the important paths without unnecessarily expanding the already-heavy integration suite.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

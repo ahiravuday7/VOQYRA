@@ -624,6 +624,48 @@ const createInTransitCustomerReturnRequestFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Received Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createReceivedCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  receiptData = {
+    note: "Return parcel received at the warehouse.",
+  },
+
+  ...returnFixtureOptions
+}) => {
+  const fixture = await createInTransitCustomerReturnRequestFixture({
+    adminAgent,
+    customerAgent,
+    ...returnFixtureOptions,
+  });
+
+  const receiptResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${fixture.returnRequest.id}/receive`)
+    .send(receiptData)
+    .expect(200);
+
+  const receivedReturnRequest = receiptResponse.body.data.returnRequest;
+
+  const storedReceivedReturnRequest = await OrderReturnRequest.findById(
+    fixture.returnRequest.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    receiptData,
+    receivedReturnRequest,
+    storedReceivedReturnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Admin Return Read Fixture
 |--------------------------------------------------------------------------
 |
@@ -12479,5 +12521,900 @@ describe("Admin Return shipment and warehouse receipt", () => {
     );
 
     expect(storedReturnRequest.shipment.markedInTransitAt).toBeTruthy();
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Warehouse Inspection
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return warehouse inspection", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when inspection is attempted without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer attempts to inspect a Return Request", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid inspection request data and backend-controlled fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+     * Invalid Return Request ID.
+     */
+
+    const invalidIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-valid-id/inspect")
+      .send({
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(invalidIdResponse.status).toBe(400);
+
+    expect(invalidIdResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+     * Backend-controlled inspection fields.
+     */
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const invalidBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+
+            status: "inspected",
+
+            inspectedBy: new mongoose.Types.ObjectId().toString(),
+
+            inspectedAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+    expect(invalidBodyResponse.status).toBe(400);
+
+    expect(invalidBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when the Return Request does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: new mongoose.Types.ObjectId().toString(),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  it("inspects a received Return Request while preserving its trusted item identity and leaving inventory unchanged", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Snapshot Return Item Before Inspection
+        |--------------------------------------------------------------------------
+        */
+
+    const returnBeforeInspection = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(returnBeforeInspection.status).toBe("received");
+
+    const returnItemBefore = returnBeforeInspection.items[0];
+
+    const returnItemSubdocumentIdBefore = String(returnItemBefore._id);
+
+    const trustedProductBefore = String(returnItemBefore.product);
+
+    const trustedVariantBefore = String(returnItemBefore.variantId);
+
+    const trustedSkuBefore = returnItemBefore.sku;
+
+    const trustedQuantityBefore = returnItemBefore.quantity;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Snapshot Product Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    const productBeforeInspection = await Product.findById(product._id).lean();
+
+    const variantBeforeInspection = findProductVariant(
+      productBeforeInspection,
+      variant._id,
+    );
+
+    const stockBefore = variantBeforeInspection.inventory.stock;
+
+    const reservedStockBefore = variantBeforeInspection.inventory.reservedStock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Snapshot Inventory Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerBeforeInspection = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerBeforeInspection.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inspect Return
+        |--------------------------------------------------------------------------
+        |
+        | Returned quantity = 2
+        |
+        | 1 resellable + 1 damaged = 2
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 1,
+
+            rejectedQuantity: 0,
+
+            note: "One unit is resellable and one unit has physical damage.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return Request inspected successfully");
+
+    const inspectedReturnRequest = response.body.data.returnRequest;
+
+    expect(inspectedReturnRequest.status).toBe("inspected");
+
+    expect(inspectedReturnRequest.items[0].inspection).toMatchObject({
+      status: "inspected",
+
+      resellableQuantity: 1,
+
+      damagedQuantity: 1,
+
+      rejectedQuantity: 0,
+
+      note: "One unit is resellable and one unit has physical damage.",
+
+      inspectedBy: String(admin._id),
+    });
+
+    expect(inspectedReturnRequest.items[0].inspection.inspectedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify Stored Inspection
+        |--------------------------------------------------------------------------
+        */
+
+    const returnAfterInspection = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(returnAfterInspection.status).toBe("inspected");
+
+    const returnItemAfter = returnAfterInspection.items[0];
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Item Identity Must Be Preserved
+        |--------------------------------------------------------------------------
+        */
+
+    expect(String(returnItemAfter._id)).toBe(returnItemSubdocumentIdBefore);
+
+    expect(String(returnItemAfter.product)).toBe(trustedProductBefore);
+
+    expect(String(returnItemAfter.variantId)).toBe(trustedVariantBefore);
+
+    expect(returnItemAfter.sku).toBe(trustedSkuBefore);
+
+    expect(returnItemAfter.quantity).toBe(trustedQuantityBefore);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Inspection Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnItemAfter.inspection.status).toBe("inspected");
+
+    expect(returnItemAfter.inspection.resellableQuantity).toBe(1);
+
+    expect(returnItemAfter.inspection.damagedQuantity).toBe(1);
+
+    expect(returnItemAfter.inspection.rejectedQuantity).toBe(0);
+
+    expect(String(returnItemAfter.inspection.inspectedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(returnItemAfter.inspection.inspectedAt).toBeTruthy();
+
+    expect(String(returnAfterInspection.updatedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Must Remain Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterInspection = await Product.findById(product._id).lean();
+
+    const variantAfterInspection = findProductVariant(
+      productAfterInspection,
+      variant._id,
+    );
+
+    expect(variantAfterInspection.inventory.stock).toBe(stockBefore);
+
+    expect(variantAfterInspection.inventory.reservedStock).toBe(
+      reservedStockBefore,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inspection Must Not Create Inventory Ledger Entry
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerAfterInspection = await ProductInventoryLedger.find({
+      referenceId: createdOrder.orderNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfterInspection.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Quantity Version Must Remain Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterInspection = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterInspection.returnRequestVersion).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inspection Before Warehouse Receipt
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspection before the Return Request is received", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createInTransitCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_INSPECTION_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("in-transit");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Inspection Quantity — Too Low
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspection when classified quantity is less than the returned quantity", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            /*
+             * Total = 1
+             * Returned = 2
+             */
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_INSPECTION_QUANTITY_INVALID",
+    );
+
+    expect(response.body.details).toMatchObject({
+      returnedQuantity: 2,
+
+      inspectedQuantity: 1,
+    });
+
+    const unchanged = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchanged.status).toBe("received");
+
+    expect(unchanged.items[0].inspection.status).toBe("pending");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Inspection Quantity — Too High
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspection when classified quantity exceeds the returned quantity", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            /*
+             * Total = 3
+             * Returned = 2
+             */
+            resellableQuantity: 2,
+
+            damagedQuantity: 1,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_INSPECTION_QUANTITY_INVALID",
+    );
+
+    expect(response.body.details).toMatchObject({
+      returnedQuantity: 2,
+
+      inspectedQuantity: 3,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Unknown Return Item
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspection when the supplied Order item does not belong to the Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const unrelatedOrderItemId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: unrelatedOrderItemId,
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_INSPECTION_ITEM_NOT_FOUND",
+    );
+
+    expect(response.body.details.orderItemId).toBe(unrelatedOrderItemId);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspecting the same Return Request twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    const inspectionData = {
+      items: [
+        {
+          orderItemId: String(orderItem._id),
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 0,
+
+          rejectedQuantity: 0,
+
+          note: "Item is suitable for resale.",
+        },
+      ],
+    };
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send(inspectionData)
+      .expect(200);
+
+    const secondResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send(inspectionData);
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_ALREADY_INSPECTED",
+    );
+
+    expect(secondResponse.body.details.status).toBe("inspected");
+
+    expect(secondResponse.body.details.inspectedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inconsistent Receipt Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects inspection when received status exists without complete receipt audit evidence", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    /*
+     * Corrupt trusted receipt evidence without changing status.
+     */
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          "receipt.receivedBy": null,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_INSPECTION_STATE_INVALID",
+    );
+
+    const unchanged = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchanged.status).toBe("received");
+
+    expect(unchanged.items[0].inspection.status).toBe("pending");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Persistence Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back inspection state when Return Request persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    const returnRequestObjectId = new mongoose.Types.ObjectId(returnRequest.id);
+
+    /*
+     * Deliberately corrupt an enum-controlled field.
+     */
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: returnRequestObjectId,
+      },
+      {
+        $set: {
+          requestedResolution: "invalid-resolution",
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 0,
+
+            note: "Rollback inspection test.",
+          },
+        ],
+      });
+
+    expect(response.status).toBe(400);
+
+    const unchanged = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(unchanged.status).toBe("received");
+
+    expect(unchanged.items[0].inspection.status).toBe("pending");
+
+    expect(unchanged.items[0].inspection.resellableQuantity).toBe(0);
+
+    expect(unchanged.items[0].inspection.damagedQuantity).toBe(0);
+
+    expect(unchanged.items[0].inspection.rejectedQuantity).toBe(0);
+
+    expect(unchanged.items[0].inspection.inspectedBy).toBeNull();
+
+    expect(unchanged.items[0].inspection.inspectedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one inspection when two inspection requests happen concurrently", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { orderItem, returnRequest } =
+      await createReceivedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+      });
+
+    const orderItemId = String(orderItem._id);
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+        .send({
+          items: [
+            {
+              orderItemId,
+
+              resellableQuantity: 1,
+
+              damagedQuantity: 0,
+
+              rejectedQuantity: 0,
+
+              note: "Concurrent inspection A.",
+            },
+          ],
+        }),
+
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+        .send({
+          items: [
+            {
+              orderItemId,
+
+              resellableQuantity: 0,
+
+              damagedQuantity: 1,
+
+              rejectedQuantity: 0,
+
+              note: "Concurrent inspection B.",
+            },
+          ],
+        }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_PROCESSING_CONFLICT",
+      "ORDER_RETURN_ALREADY_INSPECTED",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Database Must Contain Exactly One Final Inspection
+        |--------------------------------------------------------------------------
+        */
+
+    const stored = await OrderReturnRequest.findById(returnRequest.id).lean();
+
+    expect(stored.status).toBe("inspected");
+
+    expect(stored.items[0].inspection.status).toBe("inspected");
+
+    expect(stored.items[0].inspection.inspectedAt).toBeTruthy();
+
+    const classifiedQuantity =
+      stored.items[0].inspection.resellableQuantity +
+      stored.items[0].inspection.damagedQuantity +
+      stored.items[0].inspection.rejectedQuantity;
+
+    expect(classifiedQuantity).toBe(1);
   });
 });
