@@ -10,6 +10,7 @@ import {
   rejectAdminOrderReturnRequest,
   receiveAdminOrderReturnRequest,
   inspectAdminOrderReturnRequest,
+  completeAdminOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -538,6 +539,59 @@ export const inspectAdminOrderReturnRequestController = async (
     success: true,
 
     message: "Return Request inspected successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Complete Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/complete
+|--------------------------------------------------------------------------
+*/
+
+export const completeAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const completionData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const completedReturnRequest = await completeAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    completionData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(completedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      status: mappedReturnRequest.status,
+
+      completedAt: mappedReturnRequest.completion.completedAt,
+    },
+    "Admin completed Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request completed successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

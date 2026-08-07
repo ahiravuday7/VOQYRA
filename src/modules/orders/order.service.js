@@ -40,6 +40,7 @@ import {
   reserveVariantStockAtomically,
   releaseOrderVariantStockAtomically,
   commitOrderVariantStockAtomically,
+  adjustVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import {
@@ -113,6 +114,61 @@ const CUSTOMER_CANCELLABLE_PAYMENT_STATUS_SET = new Set(
 const ORDER_RETURN_REQUEST_NUMBER_PREFIX = "RET";
 
 const MAX_RETURN_REQUEST_NUMBER_ATTEMPTS = 10;
+
+/*
+|--------------------------------------------------------------------------
+| Return Inventory Restoration Configuration
+|--------------------------------------------------------------------------
+*/
+
+const ORDER_RETURN_INVENTORY_ADJUSTMENT_REASON = "customer-return";
+
+const ORDER_RETURN_INVENTORY_RESTORATION_NOTE =
+  "Resellable customer Return stock restored during Return Request completion";
+
+/*
+|--------------------------------------------------------------------------
+| Return Inventory Restoration Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnRestockInventoryStateInvalidError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "The Product inventory referenced by this Return Request is invalid",
+    409,
+    {
+      errorCode: "ORDER_RETURN_RESTOCK_INVENTORY_STATE_INVALID",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRestockInventoryConflictError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "Product inventory changed while Return stock was being restored",
+    409,
+    {
+      errorCode: "ORDER_RETURN_RESTOCK_INVENTORY_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -3141,6 +3197,322 @@ const findUpdatedCommittedVariant = (product, variantId) => {
   }
 
   return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Return-Restocked Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedReturnRestockedVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((candidate) => {
+    return String(candidate._id) === String(variantId);
+  });
+
+  if (!variant) {
+    throw createAdminOrderReturnRestockInventoryStateInvalidError({
+      productId: product._id,
+
+      variantId,
+    });
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Return Inventory Restoration
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedAdminOrderReturnInventoryRestoration = async ({
+  productId,
+  variantId,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing / Deleted Product
+    |--------------------------------------------------------------------------
+    */
+
+  if (!snapshot || snapshot.isDeleted) {
+    throw createAdminOrderReturnRestockInventoryStateInvalidError({
+      productId,
+      variantId,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Variant
+    |--------------------------------------------------------------------------
+    */
+
+  if (!snapshot.variant) {
+    throw createAdminOrderReturnRestockInventoryStateInvalidError({
+      productId,
+      variantId,
+    });
+  }
+
+  const { stock, reservedStock } = snapshot.variant;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Existing Inventory Must Be Consistent
+    |--------------------------------------------------------------------------
+    */
+
+  const inventoryIsValid =
+    Number.isInteger(stock) &&
+    Number.isInteger(reservedStock) &&
+    stock >= 0 &&
+    reservedStock >= 0 &&
+    reservedStock <= stock;
+
+  if (!inventoryIsValid) {
+    throw createAdminOrderReturnRestockInventoryStateInvalidError({
+      productId,
+      variantId,
+    });
+  }
+
+  /*
+   * Snapshot looks healthy but atomic update did
+   * not succeed.
+   *
+   * Treat it as concurrent inventory modification.
+   */
+  throw createAdminOrderReturnRestockInventoryConflictError({
+    productId,
+    variantId,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Return Inventory Restoration Ledger Entry
+|--------------------------------------------------------------------------
+*/
+
+const createOrderReturnInventoryRestorationLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  returnRequestNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReturnRestockedVariant(
+    updatedProduct,
+    variantId,
+  );
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Reconstruct Before State
+    |--------------------------------------------------------------------------
+    |
+    | Product has already been incremented atomically.
+    |
+    | afterStock = beforeStock + quantity
+    |--------------------------------------------------------------------------
+    */
+
+  const beforeStock = afterStock - quantity;
+
+  const beforeReservedStock = afterReservedStock;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.ADJUST,
+
+      quantity,
+
+      stockDelta: quantity,
+
+      reservedStockDelta: 0,
+
+      before: buildOrderInventoryState(beforeStock, beforeReservedStock),
+
+      after: buildOrderInventoryState(afterStock, afterReservedStock),
+
+      reason: ORDER_RETURN_INVENTORY_ADJUSTMENT_REASON,
+
+      note: ORDER_RETURN_INVENTORY_RESTORATION_NOTE,
+
+      referenceId: returnRequestNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+
+  return updatedVariant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Return Completion
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnCompletion = async ({
+  returnRequestId,
+  adminId,
+  completionData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let completedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Shared Completion Timestamp
+          |--------------------------------------------------------------------------
+          */
+
+        const completedAt = new Date();
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Inventory Restoration Plan
+          |--------------------------------------------------------------------------
+          |
+          | This also validates:
+          |
+          | - status = inspected
+          | - complete inspection evidence
+          | - quantity consistency
+          | - approval/shipment/receipt state
+          |--------------------------------------------------------------------------
+          */
+
+        const restorationPlan =
+          buildAdminOrderReturnInventoryRestorationPlan(returnRequest);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Completed Return State
+          |--------------------------------------------------------------------------
+          |
+          | Do this before Product mutation so all Return business rules
+          | have been checked before inventory changes begin.
+          |--------------------------------------------------------------------------
+          */
+
+        const completedState = buildAdminCompletedOrderReturnState(
+          returnRequest,
+          {
+            completionData,
+            adminId,
+            completedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Restore Sellable Product Inventory
+          |--------------------------------------------------------------------------
+          */
+
+        await restoreAdminOrderReturnInventoryInTransaction(restorationPlan, {
+          returnRequestNumber: returnRequest.returnRequestNumber,
+
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Mark Return Request Completed
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(completedState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        completedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return completedReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnProcessingConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
 };
 
 /*
@@ -7964,4 +8336,139 @@ export const buildAdminCompletedOrderReturnState = (
   }
 
   return completedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Restore Return Inventory In Existing Transaction
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| This function does NOT start or commit a transaction.
+|
+| The Return completion service owns the transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const restoreAdminOrderReturnInventoryInTransaction = async (
+  restorationPlan,
+  { returnRequestNumber, actorUserId, session },
+) => {
+  requireActiveOrderTransaction(session);
+
+  if (!actorUserId) {
+    throw new Error("Return inventory restoration requires an actor user ID");
+  }
+
+  if (!returnRequestNumber) {
+    throw new Error(
+      "Return inventory restoration requires a Return Request number",
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | No Resellable Stock
+    |--------------------------------------------------------------------------
+    |
+    | A fully damaged/rejected Return can still complete.
+    |--------------------------------------------------------------------------
+    */
+
+  if (restorationPlan.length === 0) {
+    return [];
+  }
+
+  const restoredVariants = [];
+
+  /*
+   * Do not use Promise.all().
+   *
+   * Operations using one MongoDB transaction session
+   * should execute sequentially.
+   */
+  for (const restorationItem of restorationPlan) {
+    const { productId, variantId, quantity } = restorationItem;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Atomic Positive Physical-Stock Adjustment
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedProduct = await adjustVariantStockAtomically({
+      productId,
+      variantId,
+
+      quantityDelta: quantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedAdminOrderReturnInventoryRestoration({
+        productId,
+        variantId,
+        session,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Matching Inventory Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedVariant =
+      await createOrderReturnInventoryRestorationLedgerEntry({
+        updatedProduct,
+        variantId,
+
+        quantity,
+
+        returnRequestNumber,
+
+        actorUserId,
+
+        session,
+      });
+
+    restoredVariants.push({
+      productId: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      restoredQuantity: quantity,
+    });
+  }
+
+  return restoredVariants;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Complete Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const completeAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  completionData = {},
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to complete a Return Request");
+  }
+
+  return executeAtomicAdminOrderReturnCompletion({
+    returnRequestId,
+    adminId,
+
+    completionData: completionData ?? {},
+  });
 };

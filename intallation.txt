@@ -3142,6 +3142,45 @@ Commit everything together
 
 Part 136 only prepares the validation, business rules, and trusted inventory-restoration plan.
 |--------------------------------------------------------------------------
+Part 137: Atomic Return Completion + Product Stock Restoration + Inventory Ledger
+
+Now we connect the Return workflow to the real Product inventory. 🚀
+
+Update:
+
+src/modules/orders/order.service.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+
+Your existing Product inventory layer already supports adjustVariantStockAtomically() with a transaction session, and your ledger repository can create the matching ledger entry inside that same transaction. That is exactly what we need here.
+
+The endpoint will be:
+
+POST /api/v1/admin/order-returns/:returnRequestId/complete
+
+The complete transaction will be:
+
+Load inspected Return Request
+        ↓
+Validate completion
+        ↓
+Build trusted resellable restoration plan
+        ↓
+For every resellable Return item
+        ↓
+Atomically increase Product stock
+        ↓
+Create matching Inventory Ledger
+        ↓
+Mark Return Request completed
+        ↓
+COMMIT EVERYTHING
+
+If anything fails:
+
+Product stock       ↩ rollback
+Inventory Ledger    ↩ rollback
+Return Request      ↩ rollback
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
