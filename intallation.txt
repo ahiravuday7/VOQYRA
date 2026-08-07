@@ -3182,7 +3182,61 @@ Product stock       ↩ rollback
 Inventory Ledger    ↩ rollback
 Return Request      ↩ rollback
 |--------------------------------------------------------------------------
+Part 138: Return Completion Integration Tests
+
+Now we prove the most important part of the Return workflow: sellable returned stock is restored exactly once, damaged/rejected stock is not restored, the Inventory Ledger is correct, and the whole operation rolls back atomically if completion fails. 🚀
+
+Update:
+
+tests/integration/order.integration.test.js
+
+We are testing:
+
+POST /api/v1/admin/order-returns/:returnRequestId/complete
 |--------------------------------------------------------------------------
+15. Expected Part 138 coverage
+
+After these tests pass:
+
+Completion authentication                         ✅
+Completion authorization                          ✅
+Completion strict validation                      ✅
+Missing Return Request                            ✅
+Inspected → completed                             ✅
+Trusted completion audit                          ✅
+Resellable stock restoration                      ✅
+Damaged stock exclusion                           ✅
+Rejected stock exclusion                          ✅
+Inventory Ledger before/after state               ✅
+customer-return reason                            ✅
+Return Request reference ID                       ✅
+Return quantity remains consumed                  ✅
+Order returnRequestVersion unchanged              ✅
+Duplicate completion idempotency                  ✅
+Product stock restored exactly once               ✅
+Transaction rollback                              ✅
+Concurrent completion protection                  ✅
+Broken Product/Variant reference protection       ✅
+Current Return system
+Customer Return creation                         ✅
+Customer Return history/details                  ✅
+Customer Return cancellation                     ✅
+Admin approval/rejection                         ✅
+Return shipment                                  ✅
+Warehouse receipt                                ✅
+Warehouse inspection                             ✅
+Atomic inspection                                ✅
+Return completion validation                     ✅
+Product stock restoration                        ✅
+customer-return Inventory Ledger                 ✅
+Atomic completion                                ✅
+Duplicate completion protection                  ✅
+Completion rollback                              ✅
+Completion concurrency                           ✅
+
+Basic Return lifecycle                           ✅ COMPLETE
+
+At this point the core Return + inventory lifecycle is complete.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

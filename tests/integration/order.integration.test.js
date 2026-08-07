@@ -666,6 +666,82 @@ const createReceivedCustomerReturnRequestFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Inspected Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createInspectedCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  inspectionData = null,
+
+  ...returnFixtureOptions
+}) => {
+  const fixture = await createReceivedCustomerReturnRequestFixture({
+    adminAgent,
+    customerAgent,
+
+    ...returnFixtureOptions,
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Build Default Inspection From Trusted Return Item
+  |--------------------------------------------------------------------------
+  */
+
+  const storedReturnItem = fixture.storedReceivedReturnRequest.items[0];
+
+  const resolvedInspectionData = inspectionData ?? {
+    items: [
+      {
+        orderItemId: String(storedReturnItem.orderItemId),
+
+        /*
+         * By default the complete returned quantity is resellable.
+         */
+        resellableQuantity: Number(storedReturnItem.quantity),
+
+        damagedQuantity: 0,
+
+        rejectedQuantity: 0,
+
+        note: "Returned item passed warehouse inspection.",
+      },
+    ],
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Inspect Return Request
+  |--------------------------------------------------------------------------
+  */
+
+  const inspectionResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${fixture.returnRequest.id}/inspect`)
+    .send(resolvedInspectionData)
+    .expect(200);
+
+  const inspectedReturnRequest = inspectionResponse.body.data.returnRequest;
+
+  const storedInspectedReturnRequest = await OrderReturnRequest.findById(
+    fixture.returnRequest.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    inspectionData: resolvedInspectionData,
+
+    inspectedReturnRequest,
+
+    storedInspectedReturnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Admin Return Read Fixture
 |--------------------------------------------------------------------------
 |
@@ -13416,5 +13492,1127 @@ describe("Admin Return warehouse inspection", () => {
       stored.items[0].inspection.rejectedQuantity;
 
     expect(classifiedQuantity).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Completion
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return completion", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when Return completion is attempted without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/complete`)
+      .send({});
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer attempts to complete a Return Request", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/complete`)
+      .send({});
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid completion requests and backend-controlled fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+     * Invalid Return Request ID
+     */
+
+    const invalidIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-valid-object-id/complete")
+      .send({});
+
+    expect(invalidIdResponse.status).toBe(400);
+
+    expect(invalidIdResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+     * Backend-controlled fields
+     */
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const invalidBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/complete`)
+      .send({
+        status: "completed",
+
+        completedBy: new mongoose.Types.ObjectId().toString(),
+
+        completedAt: new Date().toISOString(),
+
+        resellableQuantity: 100,
+      });
+
+    expect(invalidBodyResponse.status).toBe(400);
+
+    expect(invalidBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when completing a missing Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/complete`)
+      .send({});
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Completion + Partial Resellable Restoration
+    |--------------------------------------------------------------------------
+    */
+
+  it("completes an inspected Return Request and restores only resellable Product stock with a matching Inventory Ledger entry", async () => {
+    const { agent: adminAgent, user: admin } =
+      await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Received Return
+        |--------------------------------------------------------------------------
+        */
+
+    const fixture = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 3,
+
+      returnQuantity: 3,
+    });
+
+    const {
+      product,
+      variant,
+      createdOrder,
+      orderItem,
+      returnRequest,
+      storedReceivedReturnRequest,
+    } = fixture;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inspect Return
+        |--------------------------------------------------------------------------
+        |
+        | Returned = 3
+        |
+        | Resellable = 2
+        | Damaged    = 1
+        | Rejected   = 0
+        |--------------------------------------------------------------------------
+        */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(
+              storedReceivedReturnRequest.items[0].orderItemId,
+            ),
+
+            resellableQuantity: 2,
+
+            damagedQuantity: 1,
+
+            rejectedQuantity: 0,
+
+            note: "Two units are sellable and one unit is damaged.",
+          },
+        ],
+      })
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify Inspection Stored
+        |--------------------------------------------------------------------------
+        */
+
+    const storedInspectedReturn = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedInspectedReturn.status).toBe("inspected");
+
+    expect(storedInspectedReturn.items[0].inspection.resellableQuantity).toBe(
+      2,
+    );
+
+    expect(storedInspectedReturn.items[0].inspection.damagedQuantity).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Snapshot Before Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const productBeforeCompletion = await Product.findById(product._id).lean();
+
+    const variantBeforeCompletion = findProductVariant(
+      productBeforeCompletion,
+      variant._id,
+    );
+
+    const stockBefore = variantBeforeCompletion.inventory.stock;
+
+    const reservedStockBefore = variantBeforeCompletion.inventory.reservedStock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Return-Restock Ledger Before Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const returnLedgerBeforeCompletion = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(returnLedgerBeforeCompletion).toHaveLength(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Complete Return
+        |--------------------------------------------------------------------------
+        */
+
+    const completionResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({
+        adminNote: "Warehouse Return processing completed.",
+      });
+
+    expect(completionResponse.status).toBe(200);
+
+    expect(completionResponse.body.success).toBe(true);
+
+    expect(completionResponse.body.message).toBe(
+      "Return Request completed successfully",
+    );
+
+    const completedReturnRequest = completionResponse.body.data.returnRequest;
+
+    expect(completedReturnRequest.status).toBe("completed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Completion Audit
+        |--------------------------------------------------------------------------
+        */
+
+    expect(completedReturnRequest.completion.completedBy).toBe(
+      String(admin._id),
+    );
+
+    expect(completedReturnRequest.completion.completedAt).toBeTruthy();
+
+    expect(completedReturnRequest.adminNote).toBe(
+      "Warehouse Return processing completed.",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Stock
+        |--------------------------------------------------------------------------
+        |
+        | Only resellable quantity = 2 is restored.
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterCompletion = await Product.findById(product._id).lean();
+
+    const variantAfterCompletion = findProductVariant(
+      productAfterCompletion,
+      variant._id,
+    );
+
+    expect(variantAfterCompletion.inventory.stock).toBe(stockBefore + 2);
+
+    expect(variantAfterCompletion.inventory.reservedStock).toBe(
+      reservedStockBefore,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Inventory Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const returnLedgerEntries = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(returnLedgerEntries).toHaveLength(1);
+
+    const returnLedger = returnLedgerEntries[0];
+
+    expect(returnLedger.operation).toBe("adjust");
+
+    expect(returnLedger.reason).toBe("customer-return");
+
+    expect(returnLedger.quantity).toBe(2);
+
+    expect(returnLedger.stockDelta).toBe(2);
+
+    expect(returnLedger.reservedStockDelta).toBe(0);
+
+    expect(String(returnLedger.product)).toBe(String(product._id));
+
+    expect(String(returnLedger.variantId)).toBe(String(variant._id));
+
+    expect(returnLedger.referenceId).toBe(returnRequest.returnRequestNumber);
+
+    expect(String(returnLedger.actor)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Ledger Before State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnLedger.before).toMatchObject({
+      stock: stockBefore,
+
+      reservedStock: reservedStockBefore,
+
+      availableStock: stockBefore - reservedStockBefore,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Ledger After State
+        |--------------------------------------------------------------------------
+        */
+
+    expect(returnLedger.after).toMatchObject({
+      stock: stockBefore + 2,
+
+      reservedStock: reservedStockBefore,
+
+      availableStock: stockBefore + 2 - reservedStockBefore,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Stored Return Request
+        |--------------------------------------------------------------------------
+        */
+
+    const storedCompletedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedCompletedReturnRequest.status).toBe("completed");
+
+    expect(String(storedCompletedReturnRequest.completion.completedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedCompletedReturnRequest.completion.completedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inspection Must Remain Preserved
+        |--------------------------------------------------------------------------
+        */
+
+    expect(storedCompletedReturnRequest.items[0].inspection.status).toBe(
+      "inspected",
+    );
+
+    expect(
+      storedCompletedReturnRequest.items[0].inspection.resellableQuantity,
+    ).toBe(2);
+
+    expect(
+      storedCompletedReturnRequest.items[0].inspection.damagedQuantity,
+    ).toBe(1);
+
+    expect(
+      storedCompletedReturnRequest.items[0].inspection.rejectedQuantity,
+    ).toBe(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Completed Return Quantity Remains Consumed
+        |--------------------------------------------------------------------------
+        */
+
+    const secondReturnResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "Attempting to return an already completed quantity.",
+          },
+        ],
+      });
+
+    expect(secondReturnResponse.status).toBe(409);
+
+    expect(secondReturnResponse.body.errorCode).toBe(
+      "ORDER_RETURN_QUANTITY_EXCEEDED",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Completion Does Not Change Return Request Version
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterCompletion = await Order.findById(createdOrder.id)
+      .select("+returnRequestVersion")
+      .lean();
+
+    expect(orderAfterCompletion.returnRequestVersion).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Fully Damaged Return
+    |--------------------------------------------------------------------------
+    */
+
+  it("completes a fully damaged Return Request without restoring Product stock or creating a restock ledger entry", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const fixture = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 2,
+    });
+
+    const { product, variant, returnRequest, storedReceivedReturnRequest } =
+      fixture;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inspect All as Damaged
+        |--------------------------------------------------------------------------
+        */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(
+              storedReceivedReturnRequest.items[0].orderItemId,
+            ),
+
+            resellableQuantity: 0,
+
+            damagedQuantity: 2,
+
+            rejectedQuantity: 0,
+
+            note: "Both returned units are damaged.",
+          },
+        ],
+      })
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Before Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const stockBefore = variantBefore.inventory.stock;
+
+    const reservedStockBefore = variantBefore.inventory.reservedStock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Complete
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.status).toBe("completed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Must Remain Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(stockBefore);
+
+    expect(variantAfter.inventory.reservedStock).toBe(reservedStockBefore);
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Return-Restock Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const returnLedger = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(returnLedger).toHaveLength(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Rejected Returned Merchandise
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not restore rejected Return quantities to sellable Product stock", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const fixture = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 2,
+    });
+
+    const { product, variant, returnRequest, storedReceivedReturnRequest } =
+      fixture;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(
+              storedReceivedReturnRequest.items[0].orderItemId,
+            ),
+
+            resellableQuantity: 0,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 2,
+
+            note: "Returned merchandise failed warehouse acceptance.",
+          },
+        ],
+      })
+      .expect(200);
+
+    const before = await Product.findById(product._id).lean();
+
+    const beforeVariant = findProductVariant(before, variant._id);
+
+    const stockBefore = beforeVariant.inventory.stock;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({})
+      .expect(200);
+
+    const after = await Product.findById(product._id).lean();
+
+    const afterVariant = findProductVariant(after, variant._id);
+
+    expect(afterVariant.inventory.stock).toBe(stockBefore);
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(ledgerEntries).toHaveLength(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Completion Before Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects completing a Return Request before warehouse inspection", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_COMPLETION_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("received");
+
+    const stored = await OrderReturnRequest.findById(returnRequest.id).lean();
+
+    expect(stored.status).toBe("received");
+
+    expect(stored.completion.completedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Stored Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects completion when inspected status exists with invalid inspection quantities", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createInspectedCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 2,
+      },
+    );
+
+    /*
+     * Corrupt inspection directly in MongoDB.
+     *
+     * Returned = 2
+     * Classified = 1
+     */
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          "items.0.inspection.resellableQuantity": 1,
+
+          "items.0.inspection.damagedQuantity": 0,
+
+          "items.0.inspection.rejectedQuantity": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_COMPLETION_INSPECTION_INVALID",
+    );
+
+    const stored = await OrderReturnRequest.findById(returnRequest.id).lean();
+
+    expect(stored.status).toBe("inspected");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Completion
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects duplicate completion and does not restore the same Product stock twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, returnRequest } =
+      await createInspectedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+      });
+
+    const before = await Product.findById(product._id).lean();
+
+    const beforeVariant = findProductVariant(before, variant._id);
+
+    const stockBefore = beforeVariant.inventory.stock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Completion
+        |--------------------------------------------------------------------------
+        */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({})
+      .expect(200);
+
+    const afterFirstCompletion = await Product.findById(product._id).lean();
+
+    const variantAfterFirstCompletion = findProductVariant(
+      afterFirstCompletion,
+      variant._id,
+    );
+
+    expect(variantAfterFirstCompletion.inventory.stock).toBe(stockBefore + 1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Second Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const secondResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_ALREADY_COMPLETED",
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Must Not Be Restocked Twice
+        |--------------------------------------------------------------------------
+        */
+
+    const afterSecondCompletion = await Product.findById(product._id).lean();
+
+    const variantAfterSecondCompletion = findProductVariant(
+      afterSecondCompletion,
+      variant._id,
+    );
+
+    expect(variantAfterSecondCompletion.inventory.stock).toBe(stockBefore + 1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Exactly One Return Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(ledgerEntries).toHaveLength(1);
+
+    expect(ledgerEntries[0].quantity).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back Product stock and Inventory Ledger when Return completion persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, returnRequest } =
+      await createInspectedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+      });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Before Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const stockBefore = variantBefore.inventory.stock;
+
+    const reservedStockBefore = variantBefore.inventory.reservedStock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Corrupt Return Request
+        |--------------------------------------------------------------------------
+        |
+        | Native collection access bypasses Mongoose validation.
+        |
+        | Inventory restoration runs first, but the final Return save
+        | must fail validation.
+        |--------------------------------------------------------------------------
+        */
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          requestedResolution: "invalid-resolution",
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Attempt Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(response.status).toBe(400);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(stockBefore);
+
+    expect(variantAfter.inventory.reservedStock).toBe(reservedStockBefore);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Ledger Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const returnLedgerEntries = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(returnLedgerEntries).toHaveLength(0);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Completion Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturnRequest.status).toBe("inspected");
+
+    expect(storedReturnRequest.completion.completedBy).toBeNull();
+
+    expect(storedReturnRequest.completion.completedAt).toBeNull();
+
+    /*
+     * Existing warehouse inspection remains.
+     */
+
+    expect(storedReturnRequest.items[0].inspection.status).toBe("inspected");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Completion
+    |--------------------------------------------------------------------------
+    */
+
+  it("restores Product stock exactly once when two Return completion requests happen concurrently", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, returnRequest } =
+      await createInspectedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+      });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Before
+        |--------------------------------------------------------------------------
+        */
+
+    const before = await Product.findById(product._id).lean();
+
+    const beforeVariant = findProductVariant(before, variant._id);
+
+    const stockBefore = beforeVariant.inventory.stock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Concurrent Completion Calls
+        |--------------------------------------------------------------------------
+        */
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+        .send({
+          adminNote: "Concurrent completion A",
+        }),
+
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+        .send({
+          adminNote: "Concurrent completion B",
+        }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_PROCESSING_CONFLICT",
+      "ORDER_RETURN_ALREADY_COMPLETED",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Must Be Restored Exactly Once
+        |--------------------------------------------------------------------------
+        */
+
+    const after = await Product.findById(product._id).lean();
+
+    const afterVariant = findProductVariant(after, variant._id);
+
+    expect(afterVariant.inventory.stock).toBe(stockBefore + 1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Exactly One Return Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const returnLedgers = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(returnLedgers).toHaveLength(1);
+
+    expect(returnLedgers[0].stockDelta).toBe(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Must Be Completed
+        |--------------------------------------------------------------------------
+        */
+
+    const stored = await OrderReturnRequest.findById(returnRequest.id).lean();
+
+    expect(stored.status).toBe("completed");
+
+    expect(stored.completion.completedAt).toBeTruthy();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Trusted Product Variant
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not complete the Return when its trusted Product variant can no longer be restored", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, returnRequest } =
+      await createInspectedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+      });
+
+    const before = await Product.findById(product._id).lean();
+
+    const beforeVariant = findProductVariant(before, variant._id);
+
+    const stockBefore = beforeVariant.inventory.stock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Corrupt Trusted Variant Reference
+        |--------------------------------------------------------------------------
+        */
+
+    const unavailableVariantId = new mongoose.Types.ObjectId();
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          "items.0.variantId": unavailableVariantId,
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Attempt Completion
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect([
+      "ORDER_RETURN_RESTOCK_INVENTORY_STATE_INVALID",
+      "ORDER_RETURN_RESTOCK_INVENTORY_CONFLICT",
+    ]).toContain(response.body.errorCode);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Must Stay Unchanged
+        |--------------------------------------------------------------------------
+        */
+
+    const after = await Product.findById(product._id).lean();
+
+    const afterVariant = findProductVariant(after, variant._id);
+
+    expect(afterVariant.inventory.stock).toBe(stockBefore);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Must Remain Inspected
+        |--------------------------------------------------------------------------
+        */
+
+    const stored = await OrderReturnRequest.findById(returnRequest.id).lean();
+
+    expect(stored.status).toBe("inspected");
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Restock Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const ledgers = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(ledgers).toHaveLength(0);
   });
 });
