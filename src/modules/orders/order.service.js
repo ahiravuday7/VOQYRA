@@ -2026,6 +2026,110 @@ const executeAtomicAdminOrderReturnRejection = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Execute Atomic Admin Return Inspection
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnInspection = async ({
+  returnRequestId,
+  adminId,
+  inspectionData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let inspectedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Inspection State
+          |--------------------------------------------------------------------------
+          */
+
+        const inspectedAt = new Date();
+
+        const inspectedState = buildAdminOrderReturnInspectedState(
+          returnRequest,
+          {
+            inspectionData,
+            adminId,
+            inspectedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Apply Only Mutable Inspection State
+          |--------------------------------------------------------------------------
+          |
+          | Do not replace the complete Return-item array.
+          |--------------------------------------------------------------------------
+          */
+
+        applyAdminOrderReturnInspectedState(returnRequest, inspectedState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Persist Inspection
+          |--------------------------------------------------------------------------
+          */
+
+        inspectedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return inspectedReturnRequest;
+  } catch (error) {
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnProcessingConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
 | Assert Admin Return Request Can Be Approved
 |--------------------------------------------------------------------------
 */
@@ -7438,4 +7542,75 @@ export const buildAdminOrderReturnInspectedState = (
 
     updatedBy: adminId,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Apply Trusted Admin Return Inspection State
+|--------------------------------------------------------------------------
+|
+| Only mutable inspection fields are changed.
+|
+| The original Return-item snapshot and subdocument IDs are preserved.
+|--------------------------------------------------------------------------
+*/
+
+const applyAdminOrderReturnInspectedState = (returnRequest, inspectedState) => {
+  const inspectionByOrderItemId = new Map(
+    (inspectedState.items ?? []).map((item) => [
+      String(item.orderItemId),
+
+      item.inspection,
+    ]),
+  );
+
+  for (const returnItem of returnRequest.items) {
+    const orderItemId = String(returnItem.orderItemId);
+
+    const inspection = inspectionByOrderItemId.get(orderItemId);
+
+    /*
+     * buildAdminOrderReturnInspectedState() already validates
+     * complete item coverage, so this should never happen.
+     */
+    if (!inspection) {
+      throw new Error(
+        `Trusted inspection state is missing Order item ${orderItemId}`,
+      );
+    }
+
+    returnItem.set("inspection", inspection);
+  }
+
+  returnRequest.set("status", inspectedState.status);
+
+  returnRequest.set("updatedBy", inspectedState.updatedBy);
+
+  return returnRequest;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Inspect Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const inspectAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  inspectionData,
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to inspect a Return Request");
+  }
+
+  if (!inspectionData) {
+    throw new Error("Return inspection data is required");
+  }
+
+  return executeAtomicAdminOrderReturnInspection({
+    returnRequestId,
+    adminId,
+    inspectionData,
+  });
 };

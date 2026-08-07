@@ -15,6 +15,7 @@ import {
   rejectAdminOrderReturnRequestController,
   markAdminOrderReturnRequestInTransitController,
   receiveAdminOrderReturnRequestController,
+  inspectAdminOrderReturnRequestController,
 } from "./order-return.controller.js";
 
 import {
@@ -24,6 +25,7 @@ import {
   adminOrderReturnRejectionRequestSchema,
   adminOrderReturnMarkInTransitRequestSchema,
   adminOrderReturnReceiptRequestSchema,
+  adminOrderReturnInspectionRequestSchema,
 } from "./order.validation.js";
 
 const router = express.Router();
@@ -102,6 +104,21 @@ router.post(
   "/:returnRequestId/receive",
   validateRequest(adminOrderReturnReceiptRequestSchema),
   receiveAdminOrderReturnRequestController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Inspect Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/inspect
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/inspect",
+  validateRequest(adminOrderReturnInspectionRequestSchema),
+  inspectAdminOrderReturnRequestController,
 );
 
 /*

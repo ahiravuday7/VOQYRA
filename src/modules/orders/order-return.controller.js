@@ -9,6 +9,7 @@ import {
   markAdminOrderReturnRequestInTransit,
   rejectAdminOrderReturnRequest,
   receiveAdminOrderReturnRequest,
+  inspectAdminOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -484,6 +485,59 @@ export const receiveAdminOrderReturnRequestController = async (
     success: true,
 
     message: "Return Request received successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Inspect Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/inspect
+|--------------------------------------------------------------------------
+*/
+
+export const inspectAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const inspectionData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const inspectedReturnRequest = await inspectAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    inspectionData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(inspectedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      status: mappedReturnRequest.status,
+
+      inspectedItems: mappedReturnRequest.items.length,
+    },
+    "Warehouse inspected Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request inspected successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

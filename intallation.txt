@@ -3072,6 +3072,25 @@ completed
 
 This part does not update Product inventory yet. It only records the warehouse inspection result.
 |--------------------------------------------------------------------------
+Part 134: Atomic Warehouse Inspection Persistence, Controller, and Route
+
+Update:
+
+src/modules/orders/order.service.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+
+This step exposes:
+
+POST /api/v1/admin/order-returns/:returnRequestId/inspect
+
+The lifecycle becomes:
+
+received
+   ↓
+inspected
+
+The inspection result is persisted atomically, but Product inventory is still not changed in this part.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
