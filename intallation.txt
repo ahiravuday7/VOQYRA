@@ -3044,6 +3044,33 @@ receipt.receivedAt = backend-generated timestamp
 
 Shipment data must remain intact after receipt.
 |--------------------------------------------------------------------------
+Part 133: Warehouse Return Inspection Validation and Business Rules
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+This step prepares:
+
+POST /api/v1/admin/order-returns/:returnRequestId/inspect
+
+The valid lifecycle is:
+
+requested
+   ↓
+approved
+   ↓
+in-transit
+   ↓
+received
+   ↓
+inspected
+   ↓
+completed
+
+This part does not update Product inventory yet. It only records the warehouse inspection result.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

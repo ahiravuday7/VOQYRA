@@ -381,3 +381,17 @@ export const ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES = Object.freeze(
 export const ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.IN_TRANSIT,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Inspection Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| Warehouse inspection can start only after the returned parcel has been
+| formally received.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.RECEIVED,
+]);

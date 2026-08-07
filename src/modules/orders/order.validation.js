@@ -990,6 +990,93 @@ const adminOrderReturnRejectionBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Return Inspection Item
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnInspectionItemSchema = z.strictObject({
+  orderItemId: objectIdSchema,
+
+  resellableQuantity: z.coerce
+    .number({
+      error: "Resellable quantity must be a number",
+    })
+    .int({
+      error: "Resellable quantity must be a whole number",
+    })
+    .min(0, {
+      error: "Resellable quantity cannot be negative",
+    }),
+
+  damagedQuantity: z.coerce
+    .number({
+      error: "Damaged quantity must be a number",
+    })
+    .int({
+      error: "Damaged quantity must be a whole number",
+    })
+    .min(0, {
+      error: "Damaged quantity cannot be negative",
+    }),
+
+  rejectedQuantity: z.coerce
+    .number({
+      error: "Rejected quantity must be a number",
+    })
+    .int({
+      error: "Rejected quantity must be a whole number",
+    })
+    .min(0, {
+      error: "Rejected quantity cannot be negative",
+    }),
+
+  note: z
+    .string({
+      error: "Inspection note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Inspection note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Inspection Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnInspectionBodySchema = z
+  .strictObject({
+    items: z.array(adminOrderReturnInspectionItemSchema).min(1, {
+      error: "At least one Return item must be inspected",
+    }),
+  })
+  .superRefine((value, context) => {
+    const seenOrderItemIds = new Set();
+
+    value.items.forEach((item, index) => {
+      const orderItemId = String(item.orderItemId);
+
+      if (seenOrderItemIds.has(orderItemId)) {
+        context.addIssue({
+          code: "custom",
+
+          path: ["items", index, "orderItemId"],
+
+          message: "The same Order item cannot be inspected more than once",
+        });
+
+        return;
+      }
+
+      seenOrderItemIds.add(orderItemId);
+    });
+  });
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order Cancellation Body
 |--------------------------------------------------------------------------
 */
@@ -1608,6 +1695,23 @@ export const adminOrderReturnMarkInTransitRequestSchema = z.strictObject({
 
 export const adminOrderReturnReceiptRequestSchema = z.strictObject({
   body: adminOrderReturnReceiptBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Inspection Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/inspect
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnInspectionRequestSchema = z.strictObject({
+  body: adminOrderReturnInspectionBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

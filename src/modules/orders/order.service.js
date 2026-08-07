@@ -22,6 +22,7 @@ import {
   ADMIN_RETURN_DECISION_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_MARK_IN_TRANSIT_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES,
+  ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -520,6 +521,113 @@ const createAdminOrderReturnDecisionStateInvalidError = (currentStatus) => {
 
       details: {
         currentStatus,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Inspection Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyInspectedError = (returnRequest) => {
+  const inspectedAt =
+    (returnRequest.items ?? [])
+      .map((item) => item.inspection?.inspectedAt)
+      .filter(Boolean)[0] ?? null;
+
+  return new AppError("This Return Request has already been inspected", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_INSPECTED",
+
+    details: {
+      status: returnRequest.status,
+
+      inspectedAt,
+    },
+  });
+};
+
+const createAdminOrderReturnInspectionStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be inspected from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_INSPECTION_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnInspectionStateInvalidError = (currentStatus) => {
+  return new AppError(
+    "The Return Request contains invalid warehouse inspection state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_INSPECTION_STATE_INVALID",
+
+      details: {
+        currentStatus,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnInspectionItemNotFoundError = (orderItemId) => {
+  return new AppError(
+    "The selected Order item does not belong to this Return Request",
+    400,
+    {
+      errorCode: "ORDER_RETURN_INSPECTION_ITEM_NOT_FOUND",
+
+      details: {
+        orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnInspectionItemsIncompleteError = ({
+  expectedItemCount,
+  receivedItemCount,
+}) => {
+  return new AppError(
+    "Every Return Request item must be inspected in the same operation",
+    409,
+    {
+      errorCode: "ORDER_RETURN_INSPECTION_ITEMS_INCOMPLETE",
+
+      details: {
+        expectedItemCount,
+        receivedItemCount,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnInspectionQuantityInvalidError = ({
+  orderItemId,
+  returnedQuantity,
+  inspectedQuantity,
+}) => {
+  return new AppError(
+    "Inspection quantities must exactly equal the returned quantity",
+    409,
+    {
+      errorCode: "ORDER_RETURN_INSPECTION_QUANTITY_INVALID",
+
+      details: {
+        orderItemId: String(orderItemId),
+
+        returnedQuantity,
+
+        inspectedQuantity,
       },
     },
   );
@@ -1433,6 +1541,88 @@ const buildTrustedCustomerReturnItems = ({
 
 /*
 |--------------------------------------------------------------------------
+| Build Trusted Return Item Map
+|--------------------------------------------------------------------------
+*/
+
+const buildTrustedOrderReturnItemMap = (returnRequest) => {
+  return new Map(
+    (returnRequest.items ?? []).map((item) => [String(item.orderItemId), item]),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Trusted Inspection Items
+|--------------------------------------------------------------------------
+*/
+
+const buildTrustedAdminOrderReturnInspectionItems = (
+  returnRequest,
+  inspectionItems,
+  { adminId, inspectedAt },
+) => {
+  assertAllOrderReturnItemsAreIncludedForInspection(
+    returnRequest,
+    inspectionItems,
+  );
+
+  const trustedReturnItemMap = buildTrustedOrderReturnItemMap(returnRequest);
+
+  return inspectionItems.map((inspectionItem) => {
+    const orderItemId = String(inspectionItem.orderItemId);
+
+    const trustedReturnItem = trustedReturnItemMap.get(orderItemId);
+
+    if (!trustedReturnItem) {
+      throw createAdminOrderReturnInspectionItemNotFoundError(orderItemId);
+    }
+
+    const resellableQuantity = Number(inspectionItem.resellableQuantity);
+
+    const damagedQuantity = Number(inspectionItem.damagedQuantity);
+
+    const rejectedQuantity = Number(inspectionItem.rejectedQuantity);
+
+    const inspectedQuantity =
+      resellableQuantity + damagedQuantity + rejectedQuantity;
+
+    const returnedQuantity = Number(trustedReturnItem.quantity);
+
+    if (inspectedQuantity !== returnedQuantity) {
+      throw createAdminOrderReturnInspectionQuantityInvalidError({
+        orderItemId,
+
+        returnedQuantity,
+
+        inspectedQuantity,
+      });
+    }
+
+    return {
+      orderItemId,
+
+      inspection: {
+        status: ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED,
+
+        resellableQuantity,
+
+        damagedQuantity,
+
+        rejectedQuantity,
+
+        note: inspectionItem.note ?? null,
+
+        inspectedBy: adminId,
+
+        inspectedAt,
+      },
+    };
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Return Request Number Candidate
 |--------------------------------------------------------------------------
 */
@@ -2124,6 +2314,129 @@ export const assertAdminOrderReturnCanBeReceived = (returnRequest) => {
 
 /*
 |--------------------------------------------------------------------------
+| Assert Admin Return Request Can Be Inspected
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeInspected = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Inspection
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyInspected(returnRequest)) {
+    throw createAdminOrderReturnAlreadyInspectedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Allowed Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES.includes(
+      returnRequest.status,
+    )
+  ) {
+    throw createAdminOrderReturnInspectionStatusInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Receipt Audit Required
+    |--------------------------------------------------------------------------
+    */
+
+  if (!orderReturnReceiptEvidenceIsComplete(returnRequest)) {
+    throw createAdminOrderReturnInspectionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Evidence Must Still Exist
+    |--------------------------------------------------------------------------
+    */
+
+  if (!orderReturnShipmentEvidenceIsComplete(returnRequest)) {
+    throw createAdminOrderReturnInspectionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approval Evidence Must Still Exist
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !returnRequest.approval?.approvedBy ||
+    !returnRequest.approval?.approvedAt
+  ) {
+    throw createAdminOrderReturnInspectionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Terminal Conflicts
+    |--------------------------------------------------------------------------
+    */
+
+  const terminalConflictExists = Boolean(
+    returnRequest.rejection?.rejectedAt ||
+    returnRequest.cancellation?.cancelledAt ||
+    returnRequest.completion?.completedAt,
+  );
+
+  if (terminalConflictExists) {
+    throw createAdminOrderReturnInspectionStateInvalidError(
+      returnRequest.status,
+    );
+  }
+
+  return {
+    currentStatus: returnRequest.status,
+
+    targetStatus: ORDER_RETURN_STATUSES.INSPECTED,
+
+    changesReturnQuantity: false,
+
+    changesProductInventory: false,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert All Return Items Are Included for Inspection
+|--------------------------------------------------------------------------
+*/
+
+const assertAllOrderReturnItemsAreIncludedForInspection = (
+  returnRequest,
+  inspectionItems,
+) => {
+  const expectedItemCount = (returnRequest.items ?? []).length;
+
+  const receivedItemCount = inspectionItems.length;
+
+  if (expectedItemCount !== receivedItemCount) {
+    throw createAdminOrderReturnInspectionItemsIncompleteError({
+      expectedItemCount,
+      receivedItemCount,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
 | Check Transaction Conflict
 |--------------------------------------------------------------------------
 */
@@ -2171,6 +2484,40 @@ const orderReturnPhysicalProcessingHasStarted = (returnRequest) => {
     returnRequest.receipt?.receivedAt ||
     returnRequest.completion?.completedAt ||
     itemInspectionStarted,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Inspected
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyInspected = (returnRequest) => {
+  const itemInspectionExists = (returnRequest.items ?? []).some((item) => {
+    return (
+      item.inspection?.status ===
+        ORDER_RETURN_ITEM_INSPECTION_STATUSES.INSPECTED ||
+      item.inspection?.inspectedAt
+    );
+  });
+
+  return Boolean(
+    returnRequest.status === ORDER_RETURN_STATUSES.INSPECTED ||
+    returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
+    itemInspectionExists,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Warehouse Receipt Evidence Is Complete
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnReceiptEvidenceIsComplete = (returnRequest) => {
+  return Boolean(
+    returnRequest.receipt?.receivedBy && returnRequest.receipt?.receivedAt,
   );
 };
 
@@ -7018,4 +7365,77 @@ export const receiveAdminOrderReturnRequest = async (
     adminId,
     receiptData,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Inspected Return Request State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminOrderReturnInspectedState = (
+  returnRequest,
+  { inspectionData, adminId, inspectedAt = new Date() },
+) => {
+  assertAdminOrderReturnCanBeInspected(returnRequest);
+
+  const trustedInspectionItems = buildTrustedAdminOrderReturnInspectionItems(
+    returnRequest,
+    inspectionData.items,
+    {
+      adminId,
+      inspectedAt,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Preserve Immutable Return Item Snapshot
+    |--------------------------------------------------------------------------
+    */
+
+  const inspectionByOrderItemId = new Map(
+    trustedInspectionItems.map((item) => [item.orderItemId, item.inspection]),
+  );
+
+  const items = returnRequest.items.map((trustedReturnItem) => {
+    const inspection = inspectionByOrderItemId.get(
+      String(trustedReturnItem.orderItemId),
+    );
+
+    return {
+      orderItemId: trustedReturnItem.orderItemId,
+
+      product: trustedReturnItem.product,
+
+      variantId: trustedReturnItem.variantId,
+
+      sku: trustedReturnItem.sku,
+
+      productName: trustedReturnItem.productName,
+
+      size: trustedReturnItem.size,
+
+      color: trustedReturnItem.color,
+
+      quantity: trustedReturnItem.quantity,
+
+      reason: trustedReturnItem.reason,
+
+      details: trustedReturnItem.details,
+
+      inspection,
+    };
+  });
+
+  return {
+    status: ORDER_RETURN_STATUSES.INSPECTED,
+
+    items,
+
+    updatedBy: adminId,
+  };
 };
