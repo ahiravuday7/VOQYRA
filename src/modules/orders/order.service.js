@@ -74,6 +74,11 @@ import {
   findAdminOrderReturnRequestForProcessing,
 } from "./order-return.repository.js";
 
+import {
+  createOrderReturnRefundAuditEntry,
+  getOrderReturnRefundTotals,
+} from "./order-return-refund-audit.repository.js";
+
 /*
 |--------------------------------------------------------------------------
 | Order Number Configuration
@@ -858,6 +863,75 @@ const createAdminOrderReturnRefundPaymentStateInvalidError = (
 
 /*
 |--------------------------------------------------------------------------
+| Return Refund Persistence Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnRefundReferenceConflictError = (referenceId) => {
+  return new AppError(
+    "The Return refund reference ID has already been used",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_REFERENCE_CONFLICT",
+
+      details: {
+        referenceId,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRefundExceedsOrderTotalError = ({
+  orderGrandTotal,
+  previousRefundAmount,
+  requestedRefundAmount,
+}) => {
+  return new AppError(
+    "The Return refund would exceed the refundable Order total",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_EXCEEDS_ORDER_TOTAL",
+
+      details: {
+        orderGrandTotal,
+
+        previousRefundAmount,
+
+        requestedRefundAmount,
+
+        attemptedCumulativeRefundAmount:
+          previousRefundAmount + requestedRefundAmount,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRefundOrderStateInvalidError = (orderId) => {
+  return new AppError(
+    "The Return Request is connected to an invalid Order refund state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_ORDER_STATE_INVALID",
+
+      details: {
+        orderId: String(orderId),
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRefundConflictError = () => {
+  return new AppError(
+    "The Return refund state changed while the refund was being processed. Please refresh and try again.",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Return Shipment Errors
 |--------------------------------------------------------------------------
 */
@@ -1493,6 +1567,45 @@ const createConcurrentOrderRefundError = (orderId) => {
 const isMongoDuplicateKeyError = (error) => {
   return error?.code === 11000;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Translate Return Refund Duplicate-Key Errors
+|--------------------------------------------------------------------------
+*/
+
+const translateAdminOrderReturnRefundDuplicateError = (
+  error,
+  { returnRequest, referenceId },
+) => {
+  /*
+    |--------------------------------------------------------------------------
+    | External Reference Reused
+    |--------------------------------------------------------------------------
+    */
+
+  if (error?.keyPattern?.referenceId || error?.keyValue?.referenceId) {
+    return createAdminOrderReturnRefundReferenceConflictError(referenceId);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Same Return Request Refunded Twice
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    error?.keyPattern?.returnRequest ||
+    error?.keyValue?.returnRequest ||
+    error?.keyPattern?.returnRequestNumber ||
+    error?.keyValue?.returnRequestNumber
+  ) {
+    return createAdminOrderReturnAlreadyRefundedError(returnRequest);
+  }
+
+  return error;
+};
+
 /*
 |--------------------------------------------------------------------------
 | Order Inventory Commit Errors
@@ -8909,4 +9022,453 @@ export const buildAdminRefundedOrderReturnState = (
   }
 
   return refundedState;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Order Payment State for Return Refund
+|--------------------------------------------------------------------------
+*/
+
+const buildAdminOrderReturnRefundPaymentPlan = (
+  order,
+  { previousRefundAmount, currentRefundAmount, refundedAt },
+) => {
+  const orderGrandTotal = Number(order.totals?.grandTotal);
+
+  if (!Number.isInteger(orderGrandTotal) || orderGrandTotal <= 0) {
+    throw createAdminOrderReturnRefundOrderStateInvalidError(order._id);
+  }
+
+  const previousAmount = Number(previousRefundAmount);
+
+  const currentAmount = Number(currentRefundAmount);
+
+  if (
+    !Number.isInteger(previousAmount) ||
+    previousAmount < 0 ||
+    !Number.isInteger(currentAmount) ||
+    currentAmount <= 0
+  ) {
+    throw createAdminOrderReturnRefundOrderStateInvalidError(order._id);
+  }
+
+  const cumulativeRefundAmount = previousAmount + currentAmount;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Never Refund More Than the Order Total
+    |--------------------------------------------------------------------------
+    */
+
+  if (cumulativeRefundAmount > orderGrandTotal) {
+    throw createAdminOrderReturnRefundExceedsOrderTotalError({
+      orderGrandTotal,
+
+      previousRefundAmount: previousAmount,
+
+      requestedRefundAmount: currentAmount,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Determine Payment State
+    |--------------------------------------------------------------------------
+    */
+
+  const targetPaymentStatus =
+    cumulativeRefundAmount === orderGrandTotal
+      ? ORDER_PAYMENT_STATUSES.REFUNDED
+      : ORDER_PAYMENT_STATUSES.PARTIALLY_REFUNDED;
+
+  const existingPayment = normalizeOrderSubdocument(order.payment);
+
+  const payment = {
+    ...existingPayment,
+
+    status: targetPaymentStatus,
+
+    /*
+     * failedAt cannot remain set after successful refund processing.
+     */
+    failedAt: null,
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | refundedAt Represents Full Payment Refund Completion
+    |--------------------------------------------------------------------------
+    |
+    | A partial refund does not mean the entire payment has been refunded.
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetPaymentStatus === ORDER_PAYMENT_STATUSES.REFUNDED) {
+    payment.refundedAt = refundedAt;
+  }
+
+  return {
+    previousPaymentStatus: existingPayment.status,
+
+    targetPaymentStatus,
+
+    previousCumulativeRefundAmount: previousAmount,
+
+    cumulativeRefundAmount,
+
+    currentRefundAmount: currentAmount,
+
+    orderGrandTotal,
+
+    payment,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Return Refund Audit Data
+|--------------------------------------------------------------------------
+*/
+
+const buildOrderReturnRefundAuditData = (
+  order,
+  returnRequest,
+  refundPlan,
+  paymentPlan,
+  { refundData, adminId, refundedAt },
+) => {
+  return {
+    order: order._id,
+
+    orderNumber: order.orderNumber,
+
+    returnRequest: returnRequest._id,
+
+    returnRequestNumber: returnRequest.returnRequestNumber,
+
+    customer: returnRequest.customer,
+
+    items: refundPlan.items.map((item) => {
+      return {
+        orderItemId: item.orderItemId,
+
+        product: item.productId,
+
+        variantId: item.variantId,
+
+        sku: item.sku,
+
+        returnedQuantity: item.returnedQuantity,
+
+        refundableQuantity: item.refundableQuantity,
+
+        rejectedQuantity: item.rejectedQuantity,
+
+        unitRefundAmount: item.unitRefundAmount,
+
+        lineRefundAmount: item.lineRefundAmount,
+      };
+    }),
+
+    refundedQuantity: refundPlan.refundedQuantity,
+
+    amount: refundPlan.refundAmount,
+
+    currency: refundPlan.currency,
+
+    previousPaymentStatus: paymentPlan.previousPaymentStatus,
+
+    paymentStatus: paymentPlan.targetPaymentStatus,
+
+    previousCumulativeRefundAmount: paymentPlan.previousCumulativeRefundAmount,
+
+    cumulativeRefundAmount: paymentPlan.cumulativeRefundAmount,
+
+    orderGrandTotal: paymentPlan.orderGrandTotal,
+
+    referenceId: refundData.referenceId,
+
+    note: refundData.note ?? null,
+
+    refundedBy: adminId,
+
+    refundedAt,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Apply Return Refund Payment State to Order
+|--------------------------------------------------------------------------
+*/
+
+const applyAdminOrderReturnRefundPaymentState = (
+  order,
+  paymentPlan,
+  adminId,
+) => {
+  order.set("payment", paymentPlan.payment);
+
+  order.set("updatedBy", adminId);
+
+  return order;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Admin Order Return Refund
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicAdminOrderReturnRefund = async ({
+  returnRequestId,
+  adminId,
+  refundData,
+}) => {
+  const session = await mongoose.startSession();
+
+  let loadedReturnRequest = null;
+
+  try {
+    let refundedReturnRequest;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveOrderTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Completed Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createAdminOrderReturnRequestNotFoundError();
+        }
+
+        loadedReturnRequest = returnRequest;
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Linked Order
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findAdminOrderForStatusUpdate(returnRequest.order, {
+          session,
+        });
+
+        if (!order) {
+          throw createAdminOrderReturnRefundOrderStateInvalidError(
+            returnRequest.order,
+          );
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Shared Financial Timestamp
+          |--------------------------------------------------------------------------
+          */
+
+        const refundedAt = new Date();
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Current Refund Plan
+          |--------------------------------------------------------------------------
+          */
+
+        const refundPlan = buildAdminOrderReturnRefundPlan(
+          order,
+          returnRequest,
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Read Previous Return Refunds for this Order
+          |--------------------------------------------------------------------------
+          */
+
+        const previousRefundTotals = await getOrderReturnRefundTotals(
+          order._id,
+          {
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Calculate Target Payment State
+          |--------------------------------------------------------------------------
+          */
+
+        const paymentPlan = buildAdminOrderReturnRefundPaymentPlan(order, {
+          previousRefundAmount: previousRefundTotals.totalRefundAmount,
+
+          currentRefundAmount: refundPlan.refundAmount,
+
+          refundedAt,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Trusted Return Refund State
+          |--------------------------------------------------------------------------
+          */
+
+        const refundedReturnState = buildAdminRefundedOrderReturnState(
+          returnRequest,
+          refundPlan,
+          {
+            refundData,
+            adminId,
+            refundedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build Immutable Refund Audit
+          |--------------------------------------------------------------------------
+          */
+
+        const refundAuditData = buildOrderReturnRefundAuditData(
+          order,
+          returnRequest,
+          refundPlan,
+          paymentPlan,
+          {
+            refundData,
+            adminId,
+            refundedAt,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Immutable Financial Audit
+          |--------------------------------------------------------------------------
+          |
+          | Unique Return Request + reference indexes provide additional
+          | idempotency protection.
+          |--------------------------------------------------------------------------
+          */
+
+        await createOrderReturnRefundAuditEntry(refundAuditData, {
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Update Order Payment
+          |--------------------------------------------------------------------------
+          */
+
+        applyAdminOrderReturnRefundPaymentState(order, paymentPlan, adminId);
+
+        await saveOrderDocument(order, {
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Update Return Request Refund State
+          |--------------------------------------------------------------------------
+          */
+
+        returnRequest.set(refundedReturnState);
+
+        refundedReturnRequest = await saveOrderReturnRequestDocument(
+          returnRequest,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return refundedReturnRequest;
+  } catch (error) {
+    /*
+      |--------------------------------------------------------------------------
+      | Duplicate Financial Audit
+      |--------------------------------------------------------------------------
+      */
+
+    if (isMongoDuplicateKeyError(error)) {
+      throw translateAdminOrderReturnRefundDuplicateError(error, {
+        returnRequest: loadedReturnRequest ?? {
+          status: ORDER_RETURN_STATUSES.COMPLETED,
+
+          refund: {},
+        },
+
+        referenceId: refundData.referenceId,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Concurrent Financial Mutation
+      |--------------------------------------------------------------------------
+      */
+
+    if (isOrderReturnTransactionConflict(error)) {
+      throw createAdminOrderReturnRefundConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refund Admin Order Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const refundAdminOrderReturnRequest = async (
+  returnRequestId,
+  adminId,
+  refundData,
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to refund a Return Request");
+  }
+
+  if (!refundData) {
+    throw new Error("Return refund data is required");
+  }
+
+  if (!refundData.referenceId) {
+    throw new Error("Return refund reference ID is required");
+  }
+
+  return executeAtomicAdminOrderReturnRefund({
+    returnRequestId,
+    adminId,
+    refundData,
+  });
 };

@@ -3271,6 +3271,43 @@ financial refund
 
 This part prepares the schema, validation, and trusted refund calculation only.
 |--------------------------------------------------------------------------
+Part 140: Immutable Return Refund Audit + Atomic Partial Refund Persistence
+
+Now we make the Return refund financially safe. 💰🔒
+
+Update/create:
+
+src/modules/orders/order-return-refund-audit.model.js        NEW
+src/modules/orders/order-return-refund-audit.repository.js   NEW
+src/modules/orders/order.service.js
+
+This part will not add the /refund route yet. It implements the transaction underneath it.
+
+The transaction will be:
+
+Completed Return Request
+        ↓
+Load linked Order
+        ↓
+Build trusted refund amount
+        ↓
+Read previous Return refunds for Order
+        ↓
+Prevent cumulative over-refund
+        ↓
+Create immutable refund audit
+        ↓
+Update Order payment state
+        ↓
+Update Return Request refund audit state
+        ↓
+COMMIT ALL
+
+If anything fails:
+
+Order payment      ↩ rollback
+Refund audit       ↩ rollback
+Return refund      ↩ rollback
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
