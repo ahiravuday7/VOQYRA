@@ -142,6 +142,8 @@ export const toCustomerOrderReturnRequestSummary = (returnRequest) => {
 | - inspectedBy
 | - createdBy
 | - updatedBy
+| - refund.refundedBy
+| - refund.note
 |--------------------------------------------------------------------------
 */
 
@@ -198,6 +200,20 @@ export const toCustomerOrderReturnRequest = (returnRequest) => {
       reason: normalizedReturnRequest.cancellation?.reason ?? null,
 
       cancelledAt: normalizedReturnRequest.cancellation?.cancelledAt ?? null,
+    },
+
+    refund: {
+      refundedQuantity: Number(
+        normalizedReturnRequest.refund?.refundedQuantity ?? 0,
+      ),
+
+      amount: Number(normalizedReturnRequest.refund?.amount ?? 0),
+
+      currency: normalizedReturnRequest.refund?.currency ?? null,
+
+      referenceId: normalizedReturnRequest.refund?.referenceId ?? null,
+
+      refundedAt: normalizedReturnRequest.refund?.refundedAt ?? null,
     },
 
     createdAt: normalizedReturnRequest.createdAt,
@@ -403,6 +419,26 @@ export const toAdminOrderReturnRequest = (returnRequest) => {
       ),
 
       cancelledAt: normalizedReturnRequest.cancellation?.cancelledAt ?? null,
+    },
+
+    refund: {
+      refundedQuantity: Number(
+        normalizedReturnRequest.refund?.refundedQuantity ?? 0,
+      ),
+
+      amount: Number(normalizedReturnRequest.refund?.amount ?? 0),
+
+      currency: normalizedReturnRequest.refund?.currency ?? null,
+
+      referenceId: normalizedReturnRequest.refund?.referenceId ?? null,
+
+      note: normalizedReturnRequest.refund?.note ?? null,
+
+      refundedBy: normalizeIdentifier(
+        normalizedReturnRequest.refund?.refundedBy,
+      ),
+
+      refundedAt: normalizedReturnRequest.refund?.refundedAt ?? null,
     },
 
     createdBy: normalizeIdentifier(normalizedReturnRequest.createdBy),

@@ -3309,6 +3309,21 @@ Order payment      ↩ rollback
 Refund audit       ↩ rollback
 Return refund      ↩ rollback
 |--------------------------------------------------------------------------
+Part 141: Return Refund Mapper + Controller + Admin Route
+
+Now we expose the Return refund workflow through the admin API. 💰✅
+
+Update:
+
+src/modules/orders/order-return.mapper.js
+src/modules/orders/order-return.controller.js
+src/modules/orders/order-return.admin.routes.js
+
+This adds:
+
+POST /api/v1/admin/order-returns/:returnRequestId/refund
+
+The backend already calculates the trusted refund amount and persists it atomically from Part 140. This step only exposes that workflow safely through the API.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

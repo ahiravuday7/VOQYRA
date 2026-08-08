@@ -17,6 +17,7 @@ import {
   receiveAdminOrderReturnRequestController,
   inspectAdminOrderReturnRequestController,
   completeAdminOrderReturnRequestController,
+  refundAdminOrderReturnRequestController,
 } from "./order-return.controller.js";
 
 import {
@@ -28,6 +29,7 @@ import {
   adminOrderReturnReceiptRequestSchema,
   adminOrderReturnInspectionRequestSchema,
   adminOrderReturnCompletionRequestSchema,
+  adminOrderReturnRefundRequestSchema,
 } from "./order.validation.js";
 
 const router = express.Router();
@@ -136,6 +138,21 @@ router.post(
   "/:returnRequestId/complete",
   validateRequest(adminOrderReturnCompletionRequestSchema),
   completeAdminOrderReturnRequestController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Refund Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/refund
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/refund",
+  validateRequest(adminOrderReturnRefundRequestSchema),
+  refundAdminOrderReturnRequestController,
 );
 
 /*

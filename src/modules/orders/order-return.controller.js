@@ -11,6 +11,7 @@ import {
   receiveAdminOrderReturnRequest,
   inspectAdminOrderReturnRequest,
   completeAdminOrderReturnRequest,
+  refundAdminOrderReturnRequest,
 } from "./order.service.js";
 
 import {
@@ -592,6 +593,65 @@ export const completeAdminOrderReturnRequestController = async (
     success: true,
 
     message: "Return Request completed successfully",
+
+    data: {
+      returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Refund Admin Order Return Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/refund
+|--------------------------------------------------------------------------
+*/
+
+export const refundAdminOrderReturnRequestController = async (
+  request,
+  response,
+) => {
+  const { returnRequestId } = request.validated.params;
+
+  const refundData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const refundedReturnRequest = await refundAdminOrderReturnRequest(
+    returnRequestId,
+    adminId,
+    refundData,
+  );
+
+  const mappedReturnRequest = toAdminOrderReturnRequest(refundedReturnRequest);
+
+  request.log?.info(
+    {
+      adminId: String(adminId),
+
+      returnRequestId: mappedReturnRequest.id,
+
+      returnRequestNumber: mappedReturnRequest.returnRequestNumber,
+
+      status: mappedReturnRequest.status,
+
+      refundAmount: mappedReturnRequest.refund.amount,
+
+      refundedQuantity: mappedReturnRequest.refund.refundedQuantity,
+
+      refundReferenceId: mappedReturnRequest.refund.referenceId,
+
+      refundedAt: mappedReturnRequest.refund.refundedAt,
+    },
+    "Admin refunded Order Return Request",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return Request refunded successfully",
 
     data: {
       returnRequest: mappedReturnRequest,

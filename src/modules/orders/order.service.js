@@ -9030,6 +9030,12 @@ export const buildAdminRefundedOrderReturnState = (
 |--------------------------------------------------------------------------
 */
 
+/*
+|--------------------------------------------------------------------------
+| Build Order Payment State for Return Refund
+|--------------------------------------------------------------------------
+*/
+
 const buildAdminOrderReturnRefundPaymentPlan = (
   order,
   { previousRefundAmount, currentRefundAmount, refundedAt },
@@ -9057,7 +9063,7 @@ const buildAdminOrderReturnRefundPaymentPlan = (
 
   /*
     |--------------------------------------------------------------------------
-    | Never Refund More Than the Order Total
+    | Prevent Over-Refund
     |--------------------------------------------------------------------------
     */
 
@@ -9073,14 +9079,15 @@ const buildAdminOrderReturnRefundPaymentPlan = (
 
   /*
     |--------------------------------------------------------------------------
-    | Determine Payment State
+    | Determine Whether Order Is Partially or Fully Refunded
     |--------------------------------------------------------------------------
     */
 
-  const targetPaymentStatus =
-    cumulativeRefundAmount === orderGrandTotal
-      ? ORDER_PAYMENT_STATUSES.REFUNDED
-      : ORDER_PAYMENT_STATUSES.PARTIALLY_REFUNDED;
+  const isFullyRefunded = cumulativeRefundAmount === orderGrandTotal;
+
+  const targetPaymentStatus = isFullyRefunded
+    ? ORDER_PAYMENT_STATUSES.REFUNDED
+    : ORDER_PAYMENT_STATUSES.PARTIALLY_REFUNDED;
 
   const existingPayment = normalizeOrderSubdocument(order.payment);
 
@@ -9089,29 +9096,20 @@ const buildAdminOrderReturnRefundPaymentPlan = (
 
     status: targetPaymentStatus,
 
-    /*
-     * failedAt cannot remain set after successful refund processing.
-     */
     failedAt: null,
+
+    /*
+     * Only a completely refunded payment gets refundedAt.
+     */
+    refundedAt: isFullyRefunded ? refundedAt : null,
   };
-
-  /*
-    |--------------------------------------------------------------------------
-    | refundedAt Represents Full Payment Refund Completion
-    |--------------------------------------------------------------------------
-    |
-    | A partial refund does not mean the entire payment has been refunded.
-    |--------------------------------------------------------------------------
-    */
-
-  if (targetPaymentStatus === ORDER_PAYMENT_STATUSES.REFUNDED) {
-    payment.refundedAt = refundedAt;
-  }
 
   return {
     previousPaymentStatus: existingPayment.status,
 
     targetPaymentStatus,
+
+    isFullyRefunded,
 
     previousCumulativeRefundAmount: previousAmount,
 
@@ -9199,18 +9197,123 @@ const buildOrderReturnRefundAuditData = (
 
 /*
 |--------------------------------------------------------------------------
-| Apply Return Refund Payment State to Order
+| Apply Return Refund Financial State to Order
+|--------------------------------------------------------------------------
+|
+| Partial refund:
+|
+|   Order status   remains delivered
+|   Payment status becomes partially-refunded
+|
+| Full cumulative refund:
+|
+|   Order status   becomes refunded
+|   Payment status becomes refunded
+|   Order refund audit snapshot is populated
 |--------------------------------------------------------------------------
 */
 
 const applyAdminOrderReturnRefundPaymentState = (
   order,
   paymentPlan,
-  adminId,
+  refundPlan,
+  { refundData, adminId, refundedAt },
 ) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Always Update Payment
+    |--------------------------------------------------------------------------
+    */
+
   order.set("payment", paymentPlan.payment);
 
   order.set("updatedBy", adminId);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Partial Refund
+    |--------------------------------------------------------------------------
+    |
+    | Do NOT mark the whole Order refunded.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!paymentPlan.isFullyRefunded) {
+    return order;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Full Cumulative Refund
+    |--------------------------------------------------------------------------
+    |
+    | Existing Order model requires a fully refunded payment to also have:
+    |
+    | - Order status = refunded
+    | - Order refund audit information
+    |--------------------------------------------------------------------------
+    */
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  order.set("status", ORDER_STATUSES.REFUNDED);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Populate Existing Order-Level Refund Snapshot
+    |--------------------------------------------------------------------------
+    |
+    | Detailed individual Return refunds remain permanently stored in
+    | OrderReturnRefundAudit.
+    |
+    | This Order-level refund represents the final cumulative state.
+    |--------------------------------------------------------------------------
+    */
+
+  order.set("refund", {
+    reason: "customer-return",
+
+    /*
+     * When several Return refunds finally reach the full Order amount,
+     * this is the reference that completed the full refund.
+     */
+    referenceId: refundData.referenceId,
+
+    /*
+     * Order.refund represents the complete Order financial refund.
+     */
+    amount: paymentPlan.cumulativeRefundAmount,
+
+    currency: refundPlan.currency,
+
+    refundedBy: adminId,
+
+    refundedAt,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Add Refunded Status History
+    |--------------------------------------------------------------------------
+    */
+
+  order.set("statusHistory", [
+    ...existingStatusHistory,
+
+    {
+      status: ORDER_STATUSES.REFUNDED,
+
+      note:
+        refundData.note ??
+        "Order fully refunded through customer Return Request",
+
+      changedBy: adminId,
+
+      changedAt: refundedAt,
+    },
+  ]);
 
   return order;
 };
@@ -9372,7 +9475,16 @@ const executeAtomicAdminOrderReturnRefund = async ({
           |--------------------------------------------------------------------------
           */
 
-        applyAdminOrderReturnRefundPaymentState(order, paymentPlan, adminId);
+        applyAdminOrderReturnRefundPaymentState(
+          order,
+          paymentPlan,
+          refundPlan,
+          {
+            refundData,
+            adminId,
+            refundedAt,
+          },
+        );
 
         await saveOrderDocument(order, {
           session,
