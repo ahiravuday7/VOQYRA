@@ -329,9 +329,82 @@ const orderReturnShipmentSchema = new mongoose.Schema(
     _id: false,
   },
 );
+
 /*
 |--------------------------------------------------------------------------
-| Order Return Request
+| Order Return Refund Schema
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRefundSchema = new mongoose.Schema(
+  {
+    refundedQuantity: {
+      type: Number,
+
+      default: 0,
+
+      min: 0,
+    },
+
+    amount: {
+      type: Number,
+
+      default: 0,
+
+      min: 0,
+    },
+
+    currency: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+    },
+
+    referenceId: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 200,
+    },
+
+    note: {
+      type: String,
+
+      trim: true,
+
+      default: null,
+
+      maxlength: 1000,
+    },
+
+    refundedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      default: null,
+    },
+
+    refundedAt: {
+      type: Date,
+
+      default: null,
+    },
+  },
+
+  {
+    _id: false,
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Order Return Request (main)
 |--------------------------------------------------------------------------
 */
 
@@ -549,6 +622,12 @@ const orderReturnRequestSchema = new mongoose.Schema(
 
         default: null,
       },
+    },
+
+    refund: {
+      type: orderReturnRefundSchema,
+
+      default: () => ({}),
     },
 
     createdBy: {

@@ -1385,6 +1385,46 @@ const adminOrderRefundBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Return Refund Body
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnRefundBodySchema = z.strictObject({
+  referenceId: z
+    .string({
+      error: "Refund reference ID must be text",
+    })
+    .trim()
+    .min(1, {
+      error: "Refund reference ID is required",
+    })
+    .max(200, {
+      error: "Refund reference ID cannot exceed 200 characters",
+    }),
+
+  note: z
+    .string({
+      error: "Refund note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Refund note cannot exceed 1000 characters",
+    })
+    .optional(),
+
+  adminNote: z
+    .string({
+      error: "Admin note must be text",
+    })
+    .trim()
+    .max(1000, {
+      error: "Admin note cannot exceed 1000 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Request
 |--------------------------------------------------------------------------
 |
@@ -1752,6 +1792,23 @@ export const adminOrderReturnInspectionRequestSchema = z.strictObject({
 
 export const adminOrderReturnCompletionRequestSchema = z.strictObject({
   body: adminOrderReturnCompletionBodySchema,
+
+  params: customerOrderReturnParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Refund Request
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/refund
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnRefundRequestSchema = z.strictObject({
+  body: adminOrderReturnRefundBodySchema,
 
   params: customerOrderReturnParamsSchema,
 

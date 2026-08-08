@@ -24,6 +24,8 @@ import {
   ADMIN_RETURN_RECEIPT_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES,
   ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES,
+  ADMIN_RETURN_REFUND_ALLOWED_STATUS_VALUES,
+  ORDER_RETURN_RESOLUTIONS,
 } from "../../shared/constants/order.constants.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
@@ -749,6 +751,106 @@ const createAdminOrderReturnCompletionInspectionInvalidError = (
 
       details: {
         orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Return Refund Errors
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnAlreadyRefundedError = (returnRequest) => {
+  return new AppError("This Return Request has already been refunded", 409, {
+    errorCode: "ORDER_RETURN_ALREADY_REFUNDED",
+
+    details: {
+      status: returnRequest.status,
+
+      refundedAt: returnRequest.refund?.refundedAt ?? null,
+
+      referenceId: returnRequest.refund?.referenceId ?? null,
+    },
+  });
+};
+
+const createAdminOrderReturnRefundStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return Request cannot be refunded from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: ADMIN_RETURN_REFUND_ALLOWED_STATUS_VALUES,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRefundResolutionInvalidError = (
+  requestedResolution,
+) => {
+  return new AppError(
+    "This Return Request does not use the refund resolution",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_RESOLUTION_INVALID",
+
+      details: {
+        requestedResolution,
+
+        requiredResolution: ORDER_RETURN_RESOLUTIONS.REFUND,
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnRefundStateInvalidError = () => {
+  return new AppError("The Return Request contains invalid refund state", 409, {
+    errorCode: "ORDER_RETURN_REFUND_STATE_INVALID",
+  });
+};
+
+const createAdminOrderReturnRefundOrderItemInvalidError = (orderItemId) => {
+  return new AppError(
+    "A Return item does not match the trusted Order item",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_ORDER_ITEM_INVALID",
+
+      details: {
+        orderItemId: String(orderItemId),
+      },
+    },
+  );
+};
+
+const createAdminOrderReturnNothingRefundableError = () => {
+  return new AppError(
+    "This Return Request does not contain any refundable quantity",
+    409,
+    {
+      errorCode: "ORDER_RETURN_NOTHING_REFUNDABLE",
+    },
+  );
+};
+
+const createAdminOrderReturnRefundPaymentStateInvalidError = (
+  paymentStatus,
+) => {
+  return new AppError(
+    "The Order payment state does not allow this Return refund",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REFUND_PAYMENT_STATE_INVALID",
+
+      details: {
+        paymentStatus,
       },
     },
   );
@@ -2833,6 +2935,106 @@ export const assertAdminOrderReturnCanBeCompleted = (returnRequest) => {
 
 /*
 |--------------------------------------------------------------------------
+| Assert Admin Return Can Be Refunded
+|--------------------------------------------------------------------------
+*/
+
+export const assertAdminOrderReturnCanBeRefunded = (returnRequest) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Refund
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderReturnRequestIsAlreadyRefunded(returnRequest)) {
+    throw createAdminOrderReturnAlreadyRefundedError(returnRequest);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Must Be Completed
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !ADMIN_RETURN_REFUND_ALLOWED_STATUS_VALUES.includes(returnRequest.status)
+  ) {
+    throw createAdminOrderReturnRefundStatusInvalidError(returnRequest.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Must Be Refund Resolution
+    |--------------------------------------------------------------------------
+    */
+
+  if (returnRequest.requestedResolution !== ORDER_RETURN_RESOLUTIONS.REFUND) {
+    throw createAdminOrderReturnRefundResolutionInvalidError(
+      returnRequest.requestedResolution,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Completion Audit Required
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !returnRequest.completion?.completedBy ||
+    !returnRequest.completion?.completedAt
+  ) {
+    throw createAdminOrderReturnRefundStateInvalidError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | No Cancellation/Rejection
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    returnRequest.cancellation?.cancelledAt ||
+    returnRequest.rejection?.rejectedAt
+  ) {
+    throw createAdminOrderReturnRefundStateInvalidError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Items Required
+    |--------------------------------------------------------------------------
+    */
+
+  if (!Array.isArray(returnRequest.items) || returnRequest.items.length === 0) {
+    throw createAdminOrderReturnRefundStateInvalidError();
+  }
+
+  return true;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Return Refund Payment State
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderPaymentAllowsReturnRefund = (order) => {
+  const paymentStatus = order.payment?.status;
+
+  const allowed =
+    paymentStatus === ORDER_PAYMENT_STATUSES.PAID ||
+    paymentStatus === ORDER_PAYMENT_STATUSES.PARTIALLY_REFUNDED;
+
+  if (!allowed) {
+    throw createAdminOrderReturnRefundPaymentStateInvalidError(paymentStatus);
+  }
+
+  return paymentStatus;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Assert All Return Items Are Included for Inspection
 |--------------------------------------------------------------------------
 */
@@ -2924,6 +3126,20 @@ const orderReturnRequestIsAlreadyInspected = (returnRequest) => {
     returnRequest.status === ORDER_RETURN_STATUSES.INSPECTED ||
     returnRequest.status === ORDER_RETURN_STATUSES.COMPLETED ||
     itemInspectionExists,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Whether Return Request Is Already Refunded
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestIsAlreadyRefunded = (returnRequest) => {
+  return Boolean(
+    returnRequest.refund?.refundedAt ||
+    returnRequest.refund?.refundedBy ||
+    returnRequest.refund?.referenceId,
   );
 };
 
@@ -8471,4 +8687,226 @@ export const completeAdminOrderReturnRequest = async (
 
     completionData: completionData ?? {},
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Return Refund Plan
+|--------------------------------------------------------------------------
+|
+| No database mutation happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminOrderReturnRefundPlan = (order, returnRequest) => {
+  assertAdminOrderReturnCanBeRefunded(returnRequest);
+
+  assertOrderPaymentAllowsReturnRefund(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Linked Order Relationship
+    |--------------------------------------------------------------------------
+    */
+
+  const linkedOrderIsValid =
+    String(returnRequest.order) === String(order._id) &&
+    String(returnRequest.customer) === String(order.customer);
+
+  if (!linkedOrderIsValid) {
+    throw createAdminOrderReturnRefundStateInvalidError();
+  }
+
+  const items = buildTrustedAdminOrderReturnRefundItems(order, returnRequest);
+
+  const refundedQuantity = items.reduce((total, item) => {
+    return total + item.refundableQuantity;
+  }, 0);
+
+  const refundAmount = items.reduce((total, item) => {
+    return total + item.lineRefundAmount;
+  }, 0);
+
+  if (refundedQuantity <= 0 || refundAmount <= 0) {
+    throw createAdminOrderReturnNothingRefundableError();
+  }
+
+  const currency = order.totals?.currency;
+
+  if (!currency) {
+    throw createAdminOrderReturnRefundStateInvalidError();
+  }
+
+  return {
+    orderId: order._id,
+
+    orderNumber: order.orderNumber,
+
+    returnRequestId: returnRequest._id,
+
+    returnRequestNumber: returnRequest.returnRequestNumber,
+
+    customerId: returnRequest.customer,
+
+    currency,
+
+    refundedQuantity,
+
+    refundAmount,
+
+    items,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Trusted Return Refund Items
+|--------------------------------------------------------------------------
+*/
+
+const buildTrustedAdminOrderReturnRefundItems = (order, returnRequest) => {
+  const trustedOrderItemMap = buildTrustedOrderItemMap(order.items);
+
+  const refundItems = [];
+
+  for (const returnItem of returnRequest.items) {
+    const orderItemId = String(returnItem.orderItemId);
+
+    const trustedOrderItem = trustedOrderItemMap.get(orderItemId);
+
+    if (!trustedOrderItem) {
+      throw createAdminOrderReturnRefundOrderItemInvalidError(
+        returnItem.orderItemId,
+      );
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Verify Trusted Snapshot Relationship
+      |--------------------------------------------------------------------------
+      */
+
+    const snapshotMatches =
+      String(trustedOrderItem.product) === String(returnItem.product) &&
+      String(trustedOrderItem.variantId) === String(returnItem.variantId) &&
+      trustedOrderItem.sku === returnItem.sku;
+
+    if (!snapshotMatches) {
+      throw createAdminOrderReturnRefundOrderItemInvalidError(
+        returnItem.orderItemId,
+      );
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Validate Completed Inspection
+      |--------------------------------------------------------------------------
+      */
+
+    const { resellableQuantity, damagedQuantity, rejectedQuantity } =
+      assertOrderReturnItemInspectionIsComplete(returnItem);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Refundable Quantity
+      |--------------------------------------------------------------------------
+      |
+      | Accepted physical Return:
+      |
+      | resellable + damaged
+      |
+      | rejected units are excluded.
+      |--------------------------------------------------------------------------
+      */
+
+    const refundableQuantity = resellableQuantity + damagedQuantity;
+
+    /*
+     * An individual line may have zero refundable quantity.
+     */
+    if (refundableQuantity === 0) {
+      continue;
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Trusted Original Purchase Price
+      |--------------------------------------------------------------------------
+      */
+
+    const unitRefundAmount = Number(trustedOrderItem.pricing?.unitFinalPrice);
+
+    if (!Number.isInteger(unitRefundAmount) || unitRefundAmount < 0) {
+      throw createAdminOrderReturnRefundOrderItemInvalidError(
+        returnItem.orderItemId,
+      );
+    }
+
+    const lineRefundAmount = unitRefundAmount * refundableQuantity;
+
+    refundItems.push({
+      orderItemId: trustedOrderItem._id,
+
+      productId: trustedOrderItem.product,
+
+      variantId: trustedOrderItem.variantId,
+
+      sku: trustedOrderItem.sku,
+
+      returnedQuantity: Number(returnItem.quantity),
+
+      refundableQuantity,
+
+      rejectedQuantity,
+
+      unitRefundAmount,
+
+      lineRefundAmount,
+    });
+  }
+
+  return refundItems;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Refunded Return Request State
+|--------------------------------------------------------------------------
+|
+| No database write happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const buildAdminRefundedOrderReturnState = (
+  returnRequest,
+  refundPlan,
+  { refundData, adminId, refundedAt = new Date() },
+) => {
+  assertAdminOrderReturnCanBeRefunded(returnRequest);
+
+  const refundedState = {
+    refund: {
+      refundedQuantity: refundPlan.refundedQuantity,
+
+      amount: refundPlan.refundAmount,
+
+      currency: refundPlan.currency,
+
+      referenceId: refundData.referenceId,
+
+      note: refundData.note ?? null,
+
+      refundedBy: adminId,
+
+      refundedAt,
+    },
+
+    updatedBy: adminId,
+  };
+
+  if (refundData.adminNote !== undefined) {
+    refundedState.adminNote = refundData.adminNote;
+  }
+
+  return refundedState;
 };

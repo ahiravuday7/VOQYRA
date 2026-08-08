@@ -3238,6 +3238,43 @@ Basic Return lifecycle                           ✅ COMPLETE
 
 At this point the core Return + inventory lifecycle is complete.
 |--------------------------------------------------------------------------
+Part 139: Return Refund Resolution Validation + Trusted Refund Plan
+
+Now we separate warehouse completion from money refunding. 💰
+
+Update:
+
+src/shared/constants/order.constants.js
+src/modules/orders/order-return.model.js
+src/modules/orders/order.validation.js
+src/modules/orders/order.service.js
+
+We are preparing:
+
+POST /api/v1/admin/order-returns/:returnRequestId/refund
+
+The flow becomes:
+
+Return requested with resolution = refund
+        ↓
+approved
+        ↓
+in-transit
+        ↓
+received
+        ↓
+inspected
+        ↓
+completed
+        ↓
+financial refund
+
+This part prepares the schema, validation, and trusted refund calculation only.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

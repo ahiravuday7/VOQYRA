@@ -408,3 +408,16 @@ export const ADMIN_RETURN_INSPECTION_ALLOWED_STATUS_VALUES = Object.freeze([
 export const ADMIN_RETURN_COMPLETION_ALLOWED_STATUS_VALUES = Object.freeze([
   ORDER_RETURN_STATUSES.INSPECTED,
 ]);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Refund Allowed Statuses
+|--------------------------------------------------------------------------
+|
+| Financial refund can happen only after warehouse Return completion.
+|--------------------------------------------------------------------------
+*/
+
+export const ADMIN_RETURN_REFUND_ALLOWED_STATUS_VALUES = Object.freeze([
+  ORDER_RETURN_STATUSES.COMPLETED,
+]);
