@@ -3325,6 +3325,32 @@ POST /api/v1/admin/order-returns/:returnRequestId/refund
 
 The backend already calculates the trusted refund amount and persists it atomically from Part 140. This step only exposes that workflow safely through the API.
 |--------------------------------------------------------------------------
+Part 142: Return Refund Integration Tests.
+
+This part verifies the complete financial Return flow:
+
+completed Return
+      ↓
+refund
+      ↓
+Return refund state
+      ↓
+immutable Return refund audit
+      ↓
+Order payment:
+partially-refunded / refunded
+
+And, importantly:
+
+/refund must NOT touch Product inventory
+
+Update:
+
+tests/integration/order.integration.test.js
+
+Also import the new audit model if it is not already imported:
+
+import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

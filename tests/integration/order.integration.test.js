@@ -22,6 +22,8 @@ import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 
 import OrderReturnRequest from "../../src/modules/orders/order-return.model.js";
 
+import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -905,6 +907,51 @@ const createAdminOrderReturnReadFixture = async ({
 
     updatedBy,
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Completed Customer Return Request Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createCompletedCustomerReturnRequestFixture = async ({
+  adminAgent,
+  customerAgent,
+
+  completionData = {
+    adminNote: "Return processing completed for refund testing.",
+  },
+
+  ...returnFixtureOptions
+}) => {
+  const fixture = await createInspectedCustomerReturnRequestFixture({
+    adminAgent,
+    customerAgent,
+
+    ...returnFixtureOptions,
+  });
+
+  const completionResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${fixture.returnRequest.id}/complete`)
+    .send(completionData)
+    .expect(200);
+
+  const completedReturnRequest = completionResponse.body.data.returnRequest;
+
+  const storedCompletedReturnRequest = await OrderReturnRequest.findById(
+    fixture.returnRequest.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    completionData,
+
+    completedReturnRequest,
+
+    storedCompletedReturnRequest,
+  };
 };
 
 /*
@@ -14614,5 +14661,958 @@ describe("Admin Return completion", () => {
     }).lean();
 
     expect(ledgers).toHaveLength(0);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Refund
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return refund", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when Return refund is attempted without authentication", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/refund`)
+      .send({
+        referenceId: "RFND-UNAUTH-001",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Authorization
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer attempts to refund a Return Request", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/refund`)
+      .send({
+        referenceId: "RFND-CUSTOMER-001",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects invalid refund requests and backend-controlled financial fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+     * Invalid Return Request ID
+     */
+
+    const invalidIdResponse = await adminAgent
+      .post("/api/v1/admin/order-returns/not-valid-id/refund")
+      .send({
+        referenceId: "RFND-INVALID-001",
+      });
+
+    expect(invalidIdResponse.status).toBe(400);
+
+    expect(invalidIdResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+     * Backend-controlled fields
+     */
+
+    const returnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const invalidBodyResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/refund`)
+      .send({
+        referenceId: "RFND-INVALID-002",
+
+        amount: 999999,
+
+        refundedQuantity: 100,
+
+        currency: "USD",
+
+        refundedBy: new mongoose.Types.ObjectId().toString(),
+
+        refundedAt: new Date().toISOString(),
+      });
+
+    expect(invalidBodyResponse.status).toBe(400);
+
+    expect(invalidBodyResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when refunding a missing Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const missingReturnRequestId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${missingReturnRequestId}/refund`)
+      .send({
+        referenceId: "RFND-MISSING-001",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Partial Refund
+    |--------------------------------------------------------------------------
+    */
+
+  it("refunds a completed partial Return using trusted Order pricing and marks the Order payment partially-refunded", async () => {
+    const { agent: adminAgent, user: admin } =
+      await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Purchase 2, Return only 1
+        |--------------------------------------------------------------------------
+        |
+        | This gives us a partial financial refund.
+        |--------------------------------------------------------------------------
+        */
+
+    const { product, variant, createdOrder, orderItem, returnRequest } =
+      await createCompletedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Read Trusted Order Pricing
+        |--------------------------------------------------------------------------
+        */
+
+    const orderBeforeRefund = await Order.findById(createdOrder.id).lean();
+
+    const trustedOrderItem = orderBeforeRefund.items.find(
+      (item) => String(item._id) === String(orderItem._id),
+    );
+
+    expect(trustedOrderItem).toBeTruthy();
+
+    const expectedUnitRefundAmount = Number(
+      trustedOrderItem.pricing.unitFinalPrice,
+    );
+
+    const expectedRefundAmount = expectedUnitRefundAmount;
+
+    const orderGrandTotal = Number(orderBeforeRefund.totals.grandTotal);
+
+    expect(expectedRefundAmount).toBeLessThan(orderGrandTotal);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Snapshot Before Financial Refund
+        |--------------------------------------------------------------------------
+        */
+
+    const productBeforeRefund = await Product.findById(product._id).lean();
+
+    const variantBeforeRefund = findProductVariant(
+      productBeforeRefund,
+      variant._id,
+    );
+
+    const stockBeforeRefund = variantBeforeRefund.inventory.stock;
+
+    const reservedStockBeforeRefund =
+      variantBeforeRefund.inventory.reservedStock;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Ledger Snapshot
+        |--------------------------------------------------------------------------
+        |
+        | Completion may already have created customer-return adjustment.
+        |--------------------------------------------------------------------------
+        */
+
+    const inventoryLedgersBefore = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Refund
+        |--------------------------------------------------------------------------
+        */
+
+    const referenceId = `RFND-PARTIAL-${new mongoose.Types.ObjectId().toString()}`;
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId,
+
+        note: "Partial customer Return refund processed.",
+
+        adminNote: "Financial Return refund completed.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Return Request refunded successfully");
+
+    const refundedReturnRequest = response.body.data.returnRequest;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Physical Status Must Stay Completed
+        |--------------------------------------------------------------------------
+        */
+
+    expect(refundedReturnRequest.status).toBe("completed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Trusted Refund Values
+        |--------------------------------------------------------------------------
+        */
+
+    expect(refundedReturnRequest.refund.refundedQuantity).toBe(1);
+
+    expect(refundedReturnRequest.refund.amount).toBe(expectedRefundAmount);
+
+    expect(refundedReturnRequest.refund.currency).toBe(
+      orderBeforeRefund.totals.currency,
+    );
+
+    expect(refundedReturnRequest.refund.referenceId).toBe(referenceId);
+
+    expect(refundedReturnRequest.refund.refundedBy).toBe(String(admin._id));
+
+    expect(refundedReturnRequest.refund.refundedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Payment Must Become Partially Refunded
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfterRefund = await Order.findById(createdOrder.id).lean();
+
+    expect(orderAfterRefund.payment.status).toBe("partially-refunded");
+
+    expect(orderAfterRefund.payment.refundedAt).toBeNull();
+
+    /*
+     * Whole Order is not fully refunded yet.
+     */
+
+    expect(orderAfterRefund.status).not.toBe("refunded");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Immutable Return Refund Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const audits = await OrderReturnRefundAudit.find({
+      returnRequest: returnRequest.id,
+    }).lean();
+
+    expect(audits).toHaveLength(1);
+
+    const audit = audits[0];
+
+    expect(audit.returnRequestNumber).toBe(returnRequest.returnRequestNumber);
+
+    expect(audit.orderNumber).toBe(createdOrder.orderNumber);
+
+    expect(audit.refundedQuantity).toBe(1);
+
+    expect(audit.amount).toBe(expectedRefundAmount);
+
+    expect(audit.referenceId).toBe(referenceId);
+
+    expect(audit.previousPaymentStatus).toBe("paid");
+
+    expect(audit.paymentStatus).toBe("partially-refunded");
+
+    expect(audit.previousCumulativeRefundAmount).toBe(0);
+
+    expect(audit.cumulativeRefundAmount).toBe(expectedRefundAmount);
+
+    expect(String(audit.refundedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Refund Must Not Touch Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterRefund = await Product.findById(product._id).lean();
+
+    const variantAfterRefund = findProductVariant(
+      productAfterRefund,
+      variant._id,
+    );
+
+    expect(variantAfterRefund.inventory.stock).toBe(stockBeforeRefund);
+
+    expect(variantAfterRefund.inventory.reservedStock).toBe(
+      reservedStockBeforeRefund,
+    );
+
+    const inventoryLedgersAfter = await ProductInventoryLedger.find({
+      referenceId: returnRequest.returnRequestNumber,
+    }).lean();
+
+    expect(inventoryLedgersAfter).toHaveLength(inventoryLedgersBefore.length);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Full Refund
+    |--------------------------------------------------------------------------
+    */
+
+  it("fully refunds the Order when the cumulative Return refund reaches the Order grand total", async () => {
+    const { agent: adminAgent, user: admin } =
+      await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+     * Single purchased unit.
+     *
+     * Returning/refunding it should fully refund the Order.
+     */
+
+    const { createdOrder, returnRequest } =
+      await createCompletedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    const orderBefore = await Order.findById(createdOrder.id).lean();
+
+    const orderGrandTotal = Number(orderBefore.totals.grandTotal);
+
+    const referenceId = `RFND-FULL-${new mongoose.Types.ObjectId().toString()}`;
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId,
+
+        note: "Full Return refund processed successfully.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.refund.amount).toBe(
+      orderGrandTotal,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Verify Fully Refunded Order State
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfter = await Order.findById(createdOrder.id).lean();
+
+    expect(orderAfter.status).toBe("refunded");
+
+    expect(orderAfter.payment.status).toBe("refunded");
+
+    expect(orderAfter.payment.refundedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Existing Order-Level Refund Snapshot Required by Model
+        |--------------------------------------------------------------------------
+        */
+
+    expect(orderAfter.refund.amount).toBe(orderGrandTotal);
+
+    expect(orderAfter.refund.referenceId).toBe(referenceId);
+
+    expect(orderAfter.refund.currency).toBe(orderBefore.totals.currency);
+
+    expect(String(orderAfter.refund.refundedBy)).toBe(String(admin._id));
+
+    expect(orderAfter.refund.refundedAt).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Refunded Status History
+        |--------------------------------------------------------------------------
+        */
+
+    const refundedHistoryEntry = orderAfter.statusHistory.find(
+      (entry) => entry.status === "refunded",
+    );
+
+    expect(refundedHistoryEntry).toBeTruthy();
+
+    expect(String(refundedHistoryEntry.changedBy)).toBe(String(admin._id));
+
+    /*
+        |--------------------------------------------------------------------------
+        | Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const audit = await OrderReturnRefundAudit.findOne({
+      returnRequest: returnRequest.id,
+    }).lean();
+
+    expect(audit).toBeTruthy();
+
+    expect(audit.paymentStatus).toBe("refunded");
+
+    expect(audit.cumulativeRefundAmount).toBe(orderGrandTotal);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Refund Before Completion
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects refunding a Return Request before physical Return completion", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createInspectedCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        requestedResolution: "refund",
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId: `RFND-EARLY-${new mongoose.Types.ObjectId().toString()}`,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REFUND_STATUS_INVALID");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Wrong Resolution
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects the refund endpoint when the Return Request resolution is replacement", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCompletedCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      },
+    );
+
+    /*
+     * Corrupt resolution directly to simulate an existing replacement
+     * Return reaching this endpoint.
+     */
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          requestedResolution: "replacement",
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId: `RFND-REPLACEMENT-${new mongoose.Types.ObjectId().toString()}`,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REFUND_RESOLUTION_INVALID",
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Nothing Refundable
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects refund when all returned quantities were rejected during inspection", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Received Return
+        |--------------------------------------------------------------------------
+        */
+
+    const fixture = await createReceivedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 1,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const { returnRequest, storedReceivedReturnRequest } = fixture;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Reject Returned Unit During Inspection
+        |--------------------------------------------------------------------------
+        */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/inspect`)
+      .send({
+        items: [
+          {
+            orderItemId: String(
+              storedReceivedReturnRequest.items[0].orderItemId,
+            ),
+
+            resellableQuantity: 0,
+
+            damagedQuantity: 0,
+
+            rejectedQuantity: 1,
+
+            note: "Returned merchandise was rejected.",
+          },
+        ],
+      })
+      .expect(200);
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/complete`)
+      .send({})
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Financial Refund
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId: `RFND-REJECTED-${new mongoose.Types.ObjectId().toString()}`,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_NOTHING_REFUNDABLE");
+
+    const audits = await OrderReturnRefundAudit.find({
+      returnRequest: returnRequest.id,
+    }).lean();
+
+    expect(audits).toHaveLength(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Refund
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects refunding the same Return Request twice", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCompletedCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      },
+    );
+
+    const firstReferenceId = `RFND-DUPLICATE-A-${new mongoose.Types.ObjectId().toString()}`;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId: firstReferenceId,
+      })
+      .expect(200);
+
+    const secondResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId: `RFND-DUPLICATE-B-${new mongoose.Types.ObjectId().toString()}`,
+      });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe("ORDER_RETURN_ALREADY_REFUNDED");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Exactly One Financial Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const audits = await OrderReturnRefundAudit.find({
+      returnRequest: returnRequest.id,
+    }).lean();
+
+    expect(audits).toHaveLength(1);
+
+    expect(audits[0].referenceId).toBe(firstReferenceId);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate External Reference
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects reusing the same external refund reference ID for another Return Request", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const firstFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 1,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const secondFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 1,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const sharedReferenceId = `RFND-SHARED-${new mongoose.Types.ObjectId().toString()}`;
+
+    await adminAgent
+      .post(
+        `/api/v1/admin/order-returns/${firstFixture.returnRequest.id}/refund`,
+      )
+      .send({
+        referenceId: sharedReferenceId,
+      })
+      .expect(200);
+
+    const response = await adminAgent
+      .post(
+        `/api/v1/admin/order-returns/${secondFixture.returnRequest.id}/refund`,
+      )
+      .send({
+        referenceId: sharedReferenceId,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REFUND_REFERENCE_CONFLICT",
+    );
+
+    /*
+     * Second Return must remain financially unrefunded.
+     */
+
+    const secondStoredReturn = await OrderReturnRequest.findById(
+      secondFixture.returnRequest.id,
+    ).lean();
+
+    expect(secondStoredReturn.refund.refundedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Transaction Rollback
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back refund audit and Order payment changes when Return refund persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCompletedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 2,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    const orderBefore = await Order.findById(createdOrder.id).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Corrupt an unrelated Return field
+        |--------------------------------------------------------------------------
+        |
+        | Refund plan itself does not use shipment.carrier.
+        |
+        | The audit and Order update can occur, then the final Return save
+        | should fail Mongoose validation.
+        |--------------------------------------------------------------------------
+        */
+
+    await OrderReturnRequest.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(returnRequest.id),
+      },
+      {
+        $set: {
+          "shipment.carrier": "X".repeat(101),
+        },
+      },
+    );
+
+    const referenceId = `RFND-ROLLBACK-${new mongoose.Types.ObjectId().toString()}`;
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId,
+      });
+
+    expect(response.status).toBe(400);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Payment Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfter = await Order.findById(createdOrder.id).lean();
+
+    expect(orderAfter.payment.status).toBe(orderBefore.payment.status);
+
+    expect(orderAfter.payment.refundedAt ?? null).toEqual(
+      orderBefore.payment.refundedAt ?? null,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Audit Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const audit = await OrderReturnRefundAudit.findOne({
+      referenceId,
+    }).lean();
+
+    expect(audit).toBeNull();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Refund State Must Roll Back
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturn = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturn.status).toBe("completed");
+
+    expect(storedReturn.refund.refundedQuantity).toBe(0);
+
+    expect(storedReturn.refund.amount).toBe(0);
+
+    expect(storedReturn.refund.referenceId).toBeNull();
+
+    expect(storedReturn.refund.refundedAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Refund
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one financial refund when two refund requests target the same Return Request concurrently", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { createdOrder, returnRequest } =
+      await createCompletedCustomerReturnRequestFixture({
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    const firstReferenceId = `RFND-CONCURRENT-A-${new mongoose.Types.ObjectId().toString()}`;
+
+    const secondReferenceId = `RFND-CONCURRENT-B-${new mongoose.Types.ObjectId().toString()}`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+        .send({
+          referenceId: firstReferenceId,
+        }),
+
+      adminAgent
+        .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+        .send({
+          referenceId: secondReferenceId,
+        }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REFUND_CONFLICT",
+      "ORDER_RETURN_ALREADY_REFUNDED",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Exactly One Audit
+        |--------------------------------------------------------------------------
+        */
+
+    const audits = await OrderReturnRefundAudit.find({
+      returnRequest: returnRequest.id,
+    }).lean();
+
+    expect(audits).toHaveLength(1);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Return Financial State Exists Exactly Once
+        |--------------------------------------------------------------------------
+        */
+
+    const storedReturn = await OrderReturnRequest.findById(
+      returnRequest.id,
+    ).lean();
+
+    expect(storedReturn.refund.refundedAt).toBeTruthy();
+
+    expect([firstReferenceId, secondReferenceId]).toContain(
+      storedReturn.refund.referenceId,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Full Single-Item Order Refunded Once
+        |--------------------------------------------------------------------------
+        */
+
+    const order = await Order.findById(createdOrder.id).lean();
+
+    expect(order.status).toBe("refunded");
+
+    expect(order.payment.status).toBe("refunded");
   });
 });
