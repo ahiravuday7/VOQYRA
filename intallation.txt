@@ -3518,6 +3518,30 @@ src/modules/orders/order-return-replacement.service.js
 
 We are not creating the replacement document or reserving inventory yet.
 |--------------------------------------------------------------------------
+Part 147 — Replacement Repository + Atomic Replacement Creation + Inventory Reservation
+
+Now we connect the replacement workflow to the existing atomic inventory infrastructure.
+
+Your Product repository already supports transaction-aware reserveVariantStockAtomically(), and your Inventory Ledger repository supports inserting ledger entries inside the same MongoDB session.
+
+We will reuse those lower-level repository functions rather than calling reserveProductVariantInventory(), because that Product service starts its own transaction. The replacement workflow needs one outer transaction covering the replacement document, every inventory reservation, and every ledger entry.
+
+Files for Part 147
+
+Create:
+
+src/modules/orders/order-return-replacement.repository.js
+
+Update:
+
+src/modules/orders/order-return-replacement.service.js
+
+No controller or route yet.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

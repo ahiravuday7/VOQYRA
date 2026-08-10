@@ -1,9 +1,28 @@
+import mongoose from "mongoose";
 import {
   ORDER_RETURN_ITEM_INSPECTION_STATUSES,
   ORDER_RETURN_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
 import AppError from "../../shared/errors/app-error.js";
+import { PRODUCT_INVENTORY_OPERATIONS } from "../../shared/constants/product-inventory.constants.js";
+
+import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
+import { createProductInventoryLedgerEntry } from "../products/product-inventory-ledger.repository.js";
+
+import {
+  findProductVariantInventorySnapshot,
+  reserveVariantStockAtomically,
+} from "../products/product.repository.js";
+
+import { findAdminOrderReturnRequestForProcessing } from "./order-return.repository.js";
+
+import { ORDER_RETURN_REPLACEMENT_STATUS } from "./order-return-replacement.model.js";
+
+import {
+  createOrderReturnReplacementDocument,
+  saveOrderReturnReplacementDocument,
+} from "./order-return-replacement.repository.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -118,6 +137,691 @@ const createReturnReplacementNothingEligibleError = () => {
       errorCode: "ORDER_RETURN_REPLACEMENT_NOTHING_ELIGIBLE",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replacement Persistence Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementNotFoundError = () => {
+  return new AppError("Return Request was not found", 404, {
+    errorCode: "ORDER_RETURN_REQUEST_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyExistsError = () => {
+  return new AppError(
+    "A replacement already exists for this Return Request",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_EXISTS",
+    },
+  );
+};
+
+const createReturnReplacementProductUnavailableError = (productId) => {
+  return new AppError(
+    "A Product required for this replacement is unavailable",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_PRODUCT_UNAVAILABLE",
+
+      details: {
+        productId: String(productId),
+      },
+    },
+  );
+};
+
+const createReturnReplacementVariantUnavailableError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "A Product variant required for this replacement is unavailable",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_VARIANT_UNAVAILABLE",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+const createReturnReplacementInventoryInvalidError = ({
+  productId,
+  variantId,
+  stock,
+  reservedStock,
+}) => {
+  return new AppError("Replacement inventory is in an invalid state", 409, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_INVENTORY_INVALID",
+
+    details: {
+      productId: String(productId),
+
+      variantId: String(variantId),
+
+      stock,
+
+      reservedStock,
+    },
+  });
+};
+
+const createReturnReplacementInsufficientStockError = ({
+  productId,
+  variantId,
+  requestedQuantity,
+  stock,
+  reservedStock,
+  availableStock,
+}) => {
+  return new AppError("Insufficient available stock for the replacement", 409, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_INSUFFICIENT_STOCK",
+
+    details: {
+      productId: String(productId),
+
+      variantId: String(variantId),
+
+      requestedQuantity,
+
+      stock,
+
+      reservedStock,
+
+      availableStock,
+    },
+  });
+};
+
+const createReturnReplacementInventoryConflictError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "Replacement inventory changed while the request was being processed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_INVENTORY_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+const createReturnReplacementCreationConflictError = () => {
+  return new AppError(
+    "The replacement could not be created because of a concurrent conflict. Please try again.",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_CREATION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Require Active Replacement Transaction
+|--------------------------------------------------------------------------
+*/
+
+const requireActiveReplacementTransaction = (session) => {
+  if (
+    !session ||
+    typeof session.inTransaction !== "function" ||
+    !session.inTransaction()
+  ) {
+    throw new Error(
+      "Return replacement inventory reservation requires an active MongoDB transaction",
+    );
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Replacement Inventory State
+|--------------------------------------------------------------------------
+*/
+
+const buildReplacementInventoryState = (stock, reservedStock) => {
+  return {
+    stock,
+
+    reservedStock,
+
+    availableStock: stock - reservedStock,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Updated Replacement Variant
+|--------------------------------------------------------------------------
+*/
+
+const findUpdatedReplacementVariant = (product, variantId) => {
+  const variant = (product.variants ?? []).find((candidate) => {
+    return String(candidate._id) === String(variantId);
+  });
+
+  if (!variant) {
+    throw createReturnReplacementVariantUnavailableError({
+      productId: product._id,
+
+      variantId,
+    });
+  }
+
+  return variant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Replacement Reservation
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementReservation = async ({
+  productId,
+  variantId,
+  requestedQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Product Availability
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !snapshot ||
+    snapshot.isDeleted ||
+    snapshot.status !== PRODUCT_STATUSES.ACTIVE
+  ) {
+    throw createReturnReplacementProductUnavailableError(productId);
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Variant Availability
+  |--------------------------------------------------------------------------
+  */
+
+  if (!snapshot.variant || !snapshot.variant.isActive) {
+    throw createReturnReplacementVariantUnavailableError({
+      productId,
+
+      variantId,
+    });
+  }
+
+  const { stock, reservedStock, availableStock } = snapshot.variant;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Inventory Integrity
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    !Number.isSafeInteger(stock) ||
+    !Number.isSafeInteger(reservedStock) ||
+    stock < 0 ||
+    reservedStock < 0 ||
+    reservedStock > stock
+  ) {
+    throw createReturnReplacementInventoryInvalidError({
+      productId,
+
+      variantId,
+
+      stock,
+
+      reservedStock,
+    });
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Available Stock
+  |--------------------------------------------------------------------------
+  */
+
+  if (availableStock < requestedQuantity) {
+    throw createReturnReplacementInsufficientStockError({
+      productId,
+
+      variantId,
+
+      requestedQuantity,
+
+      stock,
+
+      reservedStock,
+
+      availableStock,
+    });
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Inventory Change
+  |--------------------------------------------------------------------------
+  |
+  | Inventory appears valid and sufficient in the diagnostic snapshot,
+  | therefore the original atomic update most likely lost a concurrency
+  | race.
+  |--------------------------------------------------------------------------
+  */
+
+  throw createReturnReplacementInventoryConflictError({
+    productId,
+
+    variantId,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Replacement Reservation Ledger Entry
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementReservationLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  replacementNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReplacementVariant(
+    updatedProduct,
+    variantId,
+  );
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * Reservation changes only reservedStock.
+   *
+   * beforeReservedStock =
+   * afterReservedStock - reserved quantity
+   */
+
+  const beforeReservedStock = afterReservedStock - quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RESERVE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: quantity,
+
+      before: buildReplacementInventoryState(afterStock, beforeReservedStock),
+
+      after: buildReplacementInventoryState(afterStock, afterReservedStock),
+
+      /*
+       * Replacement-specific reference.
+       *
+       * Example:
+       * RPL-20260810-ABCDEF123456
+       */
+      referenceId: replacementNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+
+  return updatedVariant;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reserve Replacement Items Inventory
+|--------------------------------------------------------------------------
+|
+| All replacement Product reservations happen sequentially using the
+| same MongoDB transaction session.
+|--------------------------------------------------------------------------
+*/
+
+const reserveReturnReplacementItemsInTransaction = async (
+  replacement,
+  { actorUserId, session },
+) => {
+  requireActiveReplacementTransaction(session);
+
+  if (!replacement?.replacementNumber) {
+    throw new Error(
+      "Replacement number is required before inventory reservation",
+    );
+  }
+
+  if (!actorUserId) {
+    throw new Error(
+      "Replacement inventory reservation requires an actor user ID",
+    );
+  }
+
+  for (const replacementItem of replacement.items ?? []) {
+    const quantity = Number(replacementItem.replacementQuantity);
+
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      throw createReturnReplacementInventoryInvalidError({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        stock: null,
+
+        reservedStock: null,
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Atomic Product Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedProduct = await reserveVariantStockAtomically({
+      productId: replacementItem.product,
+
+      variantId: replacementItem.variantId,
+
+      quantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Diagnose Failed Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    if (!updatedProduct) {
+      await diagnoseFailedReturnReplacementReservation({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        requestedQuantity: quantity,
+
+        session,
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Immutable Inventory Movement History
+    |--------------------------------------------------------------------------
+    */
+
+    await createReturnReplacementReservationLedgerEntry({
+      updatedProduct,
+
+      variantId: replacementItem.variantId,
+
+      quantity,
+
+      replacementNumber: replacement.replacementNumber,
+
+      actorUserId,
+
+      session,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| MongoDB Duplicate Key
+|--------------------------------------------------------------------------
+*/
+
+const isMongoDuplicateKeyError = (error) => {
+  return error?.code === 11000;
+};
+
+const isReturnReplacementDuplicateError = (error) => {
+  if (!isMongoDuplicateKeyError(error)) {
+    return false;
+  }
+
+  return Boolean(
+    error?.keyPattern?.returnRequest || error?.keyPattern?.returnRequestNumber,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Return Replacement Creation
+|--------------------------------------------------------------------------
+|
+| Transaction:
+|
+| Load completed Return
+|        ↓
+| Build trusted replacement plan
+|        ↓
+| Create pending Replacement
+|        ↓
+| Reserve every replacement Product variant
+|        ↓
+| Write inventory ledgers
+|        ↓
+| Mark Replacement reserved
+|        ↓
+| Commit everything together
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderReturnReplacementCreation = async ({
+  returnRequestId,
+  adminId,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let createdReplacement;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveReplacementTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Return Request
+          |--------------------------------------------------------------------------
+          */
+
+        const returnRequest = await findAdminOrderReturnRequestForProcessing(
+          returnRequestId,
+          {
+            session,
+          },
+        );
+
+        if (!returnRequest) {
+          throw createReturnReplacementNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Trusted Replacement Plan
+          |--------------------------------------------------------------------------
+          */
+
+        const replacementPlan =
+          buildTrustedOrderReturnReplacementPlan(returnRequest);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Create Replacement First
+          |--------------------------------------------------------------------------
+          |
+          | Creating this first claims the unique Return Request replacement
+          | relationship before inventory reservations are performed.
+          |
+          | The document is still invisible outside this transaction.
+          |--------------------------------------------------------------------------
+          */
+
+        createdReplacement = await createOrderReturnReplacementDocument(
+          {
+            ...replacementPlan,
+
+            status: ORDER_RETURN_REPLACEMENT_STATUS.PENDING,
+          },
+          {
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Reserve Inventory
+          |--------------------------------------------------------------------------
+          */
+
+        await reserveReturnReplacementItemsInTransaction(createdReplacement, {
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Mark Replacement Reserved
+          |--------------------------------------------------------------------------
+          */
+
+        const reservedAt = new Date();
+
+        createdReplacement.status = ORDER_RETURN_REPLACEMENT_STATUS.RESERVED;
+
+        createdReplacement.reservation = {
+          reservedBy: adminId,
+
+          reservedAt,
+        };
+
+        /*
+          |--------------------------------------------------------------------------
+          | Persist Reserved State
+          |--------------------------------------------------------------------------
+          */
+
+        createdReplacement = await saveOrderReturnReplacementDocument(
+          createdReplacement,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return createdReplacement;
+  } catch (error) {
+    /*
+      |--------------------------------------------------------------------------
+      | Existing Replacement
+      |--------------------------------------------------------------------------
+      */
+
+    if (isReturnReplacementDuplicateError(error)) {
+      throw createReturnReplacementAlreadyExistsError();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Extremely Rare Replacement-Number Collision
+      |--------------------------------------------------------------------------
+      */
+
+    if (isMongoDuplicateKeyError(error)) {
+      throw createReturnReplacementCreationConflictError();
+    }
+
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Admin Order Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const createAdminOrderReturnReplacement = async (
+  returnRequestId,
+  adminId,
+) => {
+  if (!adminId) {
+    throw new Error("Admin ID is required to create a Return replacement");
+  }
+
+  if (!returnRequestId) {
+    throw new Error("Return Request ID is required to create a replacement");
+  }
+
+  return executeAtomicOrderReturnReplacementCreation({
+    returnRequestId,
+
+    adminId,
+  });
 };
 
 /*
