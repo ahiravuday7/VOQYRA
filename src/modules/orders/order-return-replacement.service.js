@@ -634,6 +634,294 @@ const createReturnReplacementReleaseInventoryConflictError = ({
 
 /*
 |--------------------------------------------------------------------------
+| Replacement Failure Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementFailureNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyFailedError = (replacement) => {
+  return new AppError("This Return replacement has already failed", 409, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_FAILED",
+
+    details: {
+      status: replacement.status,
+
+      failedAt: replacement.failure?.failedAt ?? null,
+    },
+  });
+};
+
+const createReturnReplacementFailureStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return replacement cannot be marked as failed from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_FAILURE_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: [
+          ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+          ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+        ],
+      },
+    },
+  );
+};
+
+const createReturnReplacementFailureStateInvalidError = (replacement) => {
+  return new AppError(
+    "This Return replacement does not contain a valid reserved state for failure processing",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_FAILURE_STATE_INVALID",
+
+      details: {
+        replacementId: String(replacement._id),
+
+        status: replacement.status,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Replacement Can Fail
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderReturnReplacementCanFail = (replacement) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Already Failed
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    replacement.status === ORDER_RETURN_REPLACEMENT_STATUS.FAILED ||
+    replacement.failure?.failedAt
+  ) {
+    throw createReturnReplacementAlreadyFailedError(replacement);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Only Pre-Shipment States
+    |--------------------------------------------------------------------------
+    */
+
+  const allowedStatuses = [
+    ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+    ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+  ];
+
+  if (!allowedStatuses.includes(replacement.status)) {
+    throw createReturnReplacementFailureStatusInvalidError(replacement.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Reservation Must Exist
+    |--------------------------------------------------------------------------
+    */
+
+  const hasReservation = Boolean(
+    replacement.reservation?.reservedBy && replacement.reservation?.reservedAt,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Must Never Have Started
+    |--------------------------------------------------------------------------
+    */
+
+  const hasShipmentEvidence = Boolean(
+    replacement.shipment?.carrier ||
+    replacement.shipment?.trackingNumber ||
+    replacement.shipment?.shippedBy ||
+    replacement.shipment?.shippedAt ||
+    replacement.shipment?.deliveredAt,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cannot Already Be Cancelled
+    |--------------------------------------------------------------------------
+    */
+
+  const hasCancellation = Boolean(replacement.cancellation?.cancelledAt);
+
+  if (!hasReservation || hasShipmentEvidence || hasCancellation) {
+    throw createReturnReplacementFailureStateInvalidError(replacement);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Replacement Failure
+|--------------------------------------------------------------------------
+|
+| load replacement
+|       ↓
+| validate failure state
+|       ↓
+| release all reserved inventory
+|       ↓
+| create release Ledger(s)
+|       ↓
+| replacement -> failed
+|       ↓
+| store failure audit
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderReturnReplacementFailure = async ({
+  replacementId,
+  adminId,
+  failureData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let failedReplacement;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveReplacementTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Replacement
+          |--------------------------------------------------------------------------
+          */
+
+        const replacement = await findOrderReturnReplacementById(
+          replacementId,
+          {
+            session,
+          },
+        );
+
+        if (!replacement) {
+          throw createReturnReplacementFailureNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate Failure Eligibility
+          |--------------------------------------------------------------------------
+          */
+
+        assertOrderReturnReplacementCanFail(replacement);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Release Reserved Inventory
+          |--------------------------------------------------------------------------
+          */
+
+        await releaseReturnReplacementItemsInTransaction(replacement, {
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Failure Audit
+          |--------------------------------------------------------------------------
+          */
+
+        const failedAt = new Date();
+
+        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.FAILED;
+
+        replacement.failure = {
+          reason: failureData.reason,
+
+          note: failureData.note ?? null,
+
+          failedBy: adminId,
+
+          failedAt,
+        };
+
+        /*
+          |--------------------------------------------------------------------------
+          | Persist Replacement
+          |--------------------------------------------------------------------------
+          */
+
+        failedReplacement = await saveOrderReturnReplacementDocument(
+          replacement,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return failedReplacement;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Fail Admin Order Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const failAdminOrderReturnReplacement = async (
+  replacementId,
+  adminId,
+  failureData,
+) => {
+  if (!replacementId) {
+    throw new Error("Replacement ID is required to fail a Return replacement");
+  }
+
+  if (!adminId) {
+    throw new Error("Admin ID is required to fail a Return replacement");
+  }
+
+  if (!failureData) {
+    throw new Error("Failure data is required");
+  }
+
+  return executeAtomicOrderReturnReplacementFailure({
+    replacementId,
+
+    adminId,
+
+    failureData,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Assert Replacement Can Be Cancelled
 |--------------------------------------------------------------------------
 */

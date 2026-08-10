@@ -3868,6 +3868,41 @@ tests/integration/order.integration.test.js
 
 No new import or beforeEach() change is required if you already applied the Part 149 cleanup.
 |--------------------------------------------------------------------------
+Part 158 — Replacement Failure Workflow + Inventory Release
+
+This handles cases where replacement fulfillment cannot continue before shipment:
+
+reserved ──┐
+           ├──→ failed
+processing ┘
+
+Because inventory has not yet been committed, failure must release the reservation:
+
+stock          → unchanged
+reservedStock  → decreases
+Ledger         → release
+
+That matches your inventory rule: releasing a failed reservation returns the blocked units to availability without reducing physical stock.
+
+The important difference is:
+
+cancelled = intentionally stopped
+failed    = fulfillment could not continue
+Replacement state machine now
+                  ┌──→ cancelled
+reserved ─────────┤
+   │              └──→ failed
+   ▼
+processing ───────┬──→ cancelled
+   │              └──→ failed
+   ▼
+shipped
+   ▼
+delivered
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

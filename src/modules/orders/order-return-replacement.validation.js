@@ -175,6 +175,39 @@ const cancelOrderReturnReplacementBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Fail Return Replacement Body
+|--------------------------------------------------------------------------
+*/
+
+const failOrderReturnReplacementBodySchema = z.strictObject({
+  reason: z
+    .string({
+      error: "Failure reason is required",
+    })
+    .trim()
+    .min(5, {
+      error: "Failure reason must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Failure reason cannot exceed 500 characters",
+    }),
+
+  note: z
+    .string({
+      error: "Failure note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Failure note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Failure note cannot exceed 500 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Process Return Replacement Request
 |--------------------------------------------------------------------------
 |
@@ -264,6 +297,24 @@ export const deliverOrderReturnReplacementRequestSchema = z.strictObject({
 
 export const cancelOrderReturnReplacementRequestSchema = z.strictObject({
   body: cancelOrderReturnReplacementBodySchema,
+
+  params: returnReplacementIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Fail Return Replacement Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/fail
+|--------------------------------------------------------------------------
+*/
+
+export const failOrderReturnReplacementRequestSchema = z.strictObject({
+  body: failOrderReturnReplacementBodySchema,
 
   params: returnReplacementIdParamsSchema,
 

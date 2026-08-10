@@ -11,6 +11,7 @@ import {
   shipAdminReturnReplacementController,
   deliverAdminReturnReplacementController,
   cancelAdminReturnReplacementController,
+  failAdminReturnReplacementController,
 } from "./order-return-replacement.controller.js";
 
 import {
@@ -18,6 +19,7 @@ import {
   shipOrderReturnReplacementRequestSchema,
   deliverOrderReturnReplacementRequestSchema,
   cancelOrderReturnReplacementRequestSchema,
+  failOrderReturnReplacementRequestSchema,
 } from "./order-return-replacement.validation.js";
 
 const router = Router();
@@ -100,6 +102,24 @@ router.post(
   validateRequest(cancelOrderReturnReplacementRequestSchema),
 
   cancelAdminReturnReplacementController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Fail Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/fail
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:replacementId/fail",
+
+  validateRequest(failOrderReturnReplacementRequestSchema),
+
+  failAdminReturnReplacementController,
 );
 
 export default router;

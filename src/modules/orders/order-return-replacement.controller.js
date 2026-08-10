@@ -6,6 +6,7 @@ import {
   shipAdminOrderReturnReplacement,
   deliverAdminOrderReturnReplacement,
   cancelAdminOrderReturnReplacement,
+  failAdminOrderReturnReplacement,
 } from "./order-return-replacement.service.js";
 
 /*
@@ -175,6 +176,39 @@ export const cancelAdminReturnReplacementController = async (
     success: true,
 
     message: "Return replacement cancelled successfully",
+
+    data: {
+      replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Fail Admin Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const failAdminReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const failureData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const replacement = await failAdminOrderReturnReplacement(
+    replacementId,
+    adminId,
+    failureData,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacement marked as failed successfully",
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),

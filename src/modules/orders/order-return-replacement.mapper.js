@@ -186,6 +186,8 @@ const mapReplacementFailure = (failure) => {
 
     note: failure.note ?? null,
 
+    failedBy: normalizeId(failure.failedBy),
+
     failedAt: failure.failedAt ?? null,
   };
 };

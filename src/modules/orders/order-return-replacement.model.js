@@ -339,6 +339,14 @@ const replacementFailureSchema = new Schema(
       default: null,
     },
 
+    failedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      default: null,
+    },
+
     failedAt: {
       type: Date,
       default: null,
