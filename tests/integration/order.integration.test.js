@@ -1281,6 +1281,62 @@ const createCompletedReplacementReturnFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Completed Return Awaiting Replacement
+|--------------------------------------------------------------------------
+|
+| Creates a completed Return with all trusted Product/variant snapshots,
+| but DOES NOT create the replacement yet.
+|--------------------------------------------------------------------------
+*/
+
+const createCompletedReturnAwaitingReplacementFixture = async ({
+  customerId,
+  adminId,
+
+  requestedResolution = "replacement",
+}) => {
+  const category = await createActiveCategoryFixture();
+
+  const product = await createActiveProductFixture({
+    category: category._id,
+  });
+
+  const variant = product.variants[0];
+
+  const returnRequest = await createCompletedReplacementReturnFixture({
+    customerId,
+
+    adminId,
+
+    requestedResolution,
+
+    items: [
+      {
+        product,
+
+        variant,
+
+        quantity: 2,
+
+        resellableQuantity: 1,
+
+        damagedQuantity: 1,
+
+        rejectedQuantity: 0,
+      },
+    ],
+  });
+
+  return {
+    category,
+    product,
+    variant,
+    returnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Reserved Replacement Fixture
 |--------------------------------------------------------------------------
 |
@@ -25175,5 +25231,526 @@ describe("Return replacement final consistency", () => {
       "reserve",
       "commit",
     ]);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Return Replacement Linked Return Details
+|--------------------------------------------------------------------------
+*/
+
+describe("Return replacement linked Return details", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Customer - No Replacement Yet
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns replacement null in customer Return details before replacement creation", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } =
+      await createCompletedReturnAwaitingReplacementFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+      });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/returns/${returnRequest._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.status).toBe("completed");
+
+    expect(response.body.data.returnRequest.requestedResolution).toBe(
+      "replacement",
+    );
+
+    expect(response.body.data.returnRequest.replacement).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Admin - No Replacement Yet
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns replacement null in admin Return details before replacement creation", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } =
+      await createCompletedReturnAwaitingReplacementFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+      });
+
+    const response = await adminAgent.get(
+      `/api/v1/admin/order-returns/${returnRequest._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.replacement).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Replacement Appears In Both Return Details
+    |--------------------------------------------------------------------------
+    */
+
+  it("links a newly created replacement into customer and admin Return details", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } =
+      await createCompletedReturnAwaitingReplacementFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Create Replacement
+      |--------------------------------------------------------------------------
+      */
+
+    const creationResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({})
+      .expect(201);
+
+    const replacement = creationResponse.body.data.replacement;
+
+    expect(replacement.status).toBe("reserved");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer Return Details
+      |--------------------------------------------------------------------------
+      */
+
+    const customerResponse = await customerAgent.get(
+      `/api/v1/orders/returns/${returnRequest._id}`,
+    );
+
+    expect(customerResponse.status).toBe(200);
+
+    const customerLinkedReplacement =
+      customerResponse.body.data.returnRequest.replacement;
+
+    expect(customerLinkedReplacement).toMatchObject({
+      id: replacement.id,
+
+      replacementNumber: replacement.replacementNumber,
+
+      returnRequestId: String(returnRequest._id),
+
+      status: "reserved",
+
+      itemCount: 1,
+
+      totalReplacementQuantity: 2,
+    });
+
+    expect(customerLinkedReplacement.reservedAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer Privacy
+      |--------------------------------------------------------------------------
+      */
+
+    expect(customerLinkedReplacement.customerId).toBeUndefined();
+
+    expect(customerLinkedReplacement.reservation).toBeUndefined();
+
+    expect(customerLinkedReplacement.processing).toBeUndefined();
+
+    expect(customerLinkedReplacement.shipment).toBeUndefined();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Admin Return Details
+      |--------------------------------------------------------------------------
+      */
+
+    const adminResponse = await adminAgent.get(
+      `/api/v1/admin/order-returns/${returnRequest._id}`,
+    );
+
+    expect(adminResponse.status).toBe(200);
+
+    const adminLinkedReplacement =
+      adminResponse.body.data.returnRequest.replacement;
+
+    expect(adminLinkedReplacement).toMatchObject({
+      id: replacement.id,
+
+      replacementNumber: replacement.replacementNumber,
+
+      status: "reserved",
+
+      customerId: String(customer._id),
+
+      itemCount: 1,
+
+      totalReplacementQuantity: 2,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Live Replacement Status
+    |--------------------------------------------------------------------------
+    */
+
+  it("always reflects the current replacement lifecycle status in Return details", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, returnRequest } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const returnUrl = `/api/v1/orders/returns/${returnRequest._id}`;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Reserved
+      |--------------------------------------------------------------------------
+      */
+
+    let response = await customerAgent.get(returnUrl);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.returnRequest.replacement.status).toBe(
+      "reserved",
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Processing
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/process`)
+      .send({
+        note: "Preparing replacement for linked Return test.",
+      })
+      .expect(200);
+
+    response = await customerAgent.get(returnUrl);
+
+    expect(response.body.data.returnRequest.replacement.status).toBe(
+      "processing",
+    );
+
+    expect(
+      response.body.data.returnRequest.replacement.processedAt,
+    ).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Shipped
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-LINK-STATUS-001",
+      })
+      .expect(200);
+
+    response = await customerAgent.get(returnUrl);
+
+    expect(response.body.data.returnRequest.replacement.status).toBe("shipped");
+
+    expect(response.body.data.returnRequest.replacement.shippedAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Delivered
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({})
+      .expect(200);
+
+    response = await customerAgent.get(returnUrl);
+
+    const deliveredSummary = response.body.data.returnRequest.replacement;
+
+    expect(deliveredSummary.status).toBe("delivered");
+
+    expect(deliveredSummary.deliveredAt).toBeTruthy();
+
+    /*
+     * Same Replacement relationship throughout.
+     */
+
+    expect(deliveredSummary.id).toBe(replacement.id);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Refund Resolution Never Links Replacement
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns replacement null for a refund-resolution Return", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } =
+      await createCompletedReturnAwaitingReplacementFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        requestedResolution: "refund",
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer
+      |--------------------------------------------------------------------------
+      */
+
+    const customerResponse = await customerAgent.get(
+      `/api/v1/orders/returns/${returnRequest._id}`,
+    );
+
+    expect(customerResponse.status).toBe(200);
+
+    expect(customerResponse.body.data.returnRequest.requestedResolution).toBe(
+      "refund",
+    );
+
+    expect(customerResponse.body.data.returnRequest.replacement).toBeNull();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Admin
+      |--------------------------------------------------------------------------
+      */
+
+    const adminResponse = await adminAgent.get(
+      `/api/v1/admin/order-returns/${returnRequest._id}`,
+    );
+
+    expect(adminResponse.status).toBe(200);
+
+    expect(adminResponse.body.data.returnRequest.replacement).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Ownership Isolation
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not reveal a linked replacement when another customer requests the Return", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: firstCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const { user: secondCustomer } = await createAuthenticatedCustomerAgent();
+
+    /*
+     * Second customer owns both Return + Replacement.
+     */
+
+    const { returnRequest } = await createReservedReplacementFixture({
+      adminAgent,
+
+      adminId: admin._id,
+
+      customerId: secondCustomer._id,
+    });
+
+    /*
+     * First customer tries to access the Return.
+     */
+
+    const response = await firstCustomerAgent.get(
+      `/api/v1/orders/returns/${returnRequest._id}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    /*
+     * The API must not expose any linked replacement payload.
+     */
+
+    expect(response.body.data?.returnRequest?.replacement).toBeUndefined();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Linked Reads Must Not Mutate Inventory
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not mutate Product inventory or replacement Ledger when Return details include a replacement", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, returnRequest, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Before Reads
+      |--------------------------------------------------------------------------
+      */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    const ledgerBefore = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerBefore.map((entry) => entry.operation)).toEqual(["reserve"]);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer Linked Read
+      |--------------------------------------------------------------------------
+      */
+
+    await customerAgent
+      .get(`/api/v1/orders/returns/${returnRequest._id}`)
+      .expect(200);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Admin Linked Read
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .get(`/api/v1/admin/order-returns/${returnRequest._id}`)
+      .expect(200);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory After Reads
+      |--------------------------------------------------------------------------
+      */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger After Reads
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerAfter = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
   });
 });

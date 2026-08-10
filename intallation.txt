@@ -4501,6 +4501,60 @@ If no replacement has been created yet:
 
 We do not store replacement status inside the Return document. That would duplicate state and eventually become stale.
 |--------------------------------------------------------------------------
+Part 169 — Return ↔ Replacement Link Integration Tests
+
+This Part is test-only. We verify the Part 168 enhancement to:
+
+GET /api/v1/orders/returns/:returnRequestId
+GET /api/v1/admin/order-returns/:returnRequestId
+
+Update only:
+
+tests/integration/order.integration.test.js
+
+No production file changes are needed.
+What Part 169 verifies
+
+We now prove:
+
+Completed replacement Return
+        ↓
+replacement not created
+        ↓
+replacement: null                ✅
+
+After creation:
+
+Return
+  ↓
+replacement:
+  id
+  replacementNumber
+  status = reserved
+  quantities                     ✅
+
+And because the relationship is queried live:
+
+reserved
+   ↓
+processing
+   ↓
+shipped
+   ↓
+delivered
+
+Return details always show the current status. ✅
+
+We also verify:
+
+Customer-safe summary                     ✅
+Admin summary                              ✅
+customerId hidden from customer            ✅
+Refund Return → replacement null           ✅
+Cross-customer Return hidden               ✅
+Cross-customer Replacement hidden          ✅
+No Product inventory mutation              ✅
+No Inventory Ledger mutation               ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
