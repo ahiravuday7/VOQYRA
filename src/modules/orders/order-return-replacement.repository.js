@@ -175,6 +175,30 @@ export const findOrderReturnReplacementByReturnRequest = (
 
 /*
 |--------------------------------------------------------------------------
+| Find Customer Replacement by Return Request
+|--------------------------------------------------------------------------
+|
+| Ownership is enforced inside MongoDB.
+|
+| Only customer-safe summary fields are selected.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderReturnReplacementByReturnRequest = (
+  returnRequestId,
+  customerId,
+) => {
+  return OrderReturnReplacement.findOne({
+    returnRequest: returnRequestId,
+
+    customer: customerId,
+  })
+    .select(CUSTOMER_ORDER_RETURN_REPLACEMENT_LIST_PROJECTION)
+    .lean();
+};
+
+/*
+|--------------------------------------------------------------------------
 | Save Replacement
 |--------------------------------------------------------------------------
 */

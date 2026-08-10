@@ -4468,6 +4468,38 @@ If it gives 0 failures, run the full Order suite next.
 
 Part 168 will only start after this regression checkpoint is clean.
 |--------------------------------------------------------------------------
+Part 168 — Link Replacement into Return Details
+
+Now that Return and Replacement have separate read APIs, there is one useful integration gap:
+
+When admin/customer opens a Return Request, they should immediately know whether a replacement exists and its current status.
+
+We will enhance these existing APIs:
+
+GET /api/v1/orders/returns/:returnRequestId
+
+GET /api/v1/admin/order-returns/:returnRequestId
+
+Response will include:
+
+{
+  "returnRequest": {
+    "...": "...",
+    "replacement": {
+      "id": "...",
+      "replacementNumber": "RPL-...",
+      "status": "shipped",
+      "shippedAt": "...",
+      "deliveredAt": null
+    }
+  }
+}
+
+If no replacement has been created yet:
+
+"replacement": null
+
+We do not store replacement status inside the Return document. That would duplicate state and eventually become stale.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

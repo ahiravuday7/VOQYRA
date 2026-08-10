@@ -34,6 +34,8 @@ import {
   transitionOrderReturnReplacementToCancelledAtomically,
   transitionOrderReturnReplacementToFailedAtomically,
   transitionOrderReturnReplacementToShippedAtomically,
+  findCustomerOrderReturnReplacementByReturnRequest,
+  findOrderReturnReplacementByReturnRequest,
 } from "./order-return-replacement.repository.js";
 
 /*
@@ -748,6 +750,58 @@ const createCustomerOrderReturnReplacementNotFoundError = () => {
   return new AppError("Return replacement was not found", 404, {
     errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Replacement Summary by Return Request
+|--------------------------------------------------------------------------
+|
+| A Return may legitimately have no Replacement yet.
+|
+| Therefore:
+|
+| found     -> Replacement
+| not found -> null
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnReplacementSummaryByReturnRequest = async (
+  returnRequestId,
+) => {
+  if (!returnRequestId) {
+    throw new Error(
+      "Return Request ID is required to retrieve its replacement",
+    );
+  }
+
+  return findOrderReturnReplacementByReturnRequest(returnRequestId).lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Replacement Summary by Return Request
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnReplacementSummaryByReturnRequest = async (
+  returnRequestId,
+  customerId,
+) => {
+  if (!returnRequestId) {
+    throw new Error(
+      "Return Request ID is required to retrieve its replacement",
+    );
+  }
+
+  if (!customerId) {
+    throw new Error("Customer ID is required to retrieve a Return replacement");
+  }
+
+  return findCustomerOrderReturnReplacementByReturnRequest(
+    returnRequestId,
+    customerId,
+  );
 };
 
 /*

@@ -21,6 +21,16 @@ import {
   toAdminOrderReturnRequestSummary,
 } from "./order-return.mapper.js";
 
+import {
+  getAdminOrderReturnReplacementSummaryByReturnRequest,
+  getCustomerOrderReturnReplacementSummaryByReturnRequest,
+} from "./order-return-replacement.service.js";
+
+import {
+  mapAdminOrderReturnReplacementSummary,
+  mapCustomerOrderReturnReplacementSummary,
+} from "./order-return-replacement.mapper.js";
+
 /*
 |--------------------------------------------------------------------------
 | Create Customer Order Return Request
@@ -122,7 +132,8 @@ export const getCustomerOrderReturnRequestsController = async (
 | Get Customer Order Return Request
 |--------------------------------------------------------------------------
 |
-| GET /api/v1/orders/returns/:returnRequestId
+| GET
+| /api/v1/orders/returns/:returnRequestId
 |--------------------------------------------------------------------------
 */
 
@@ -134,12 +145,44 @@ export const getCustomerOrderReturnRequestController = async (
 
   const customerId = request.user._id;
 
+  /*
+    |--------------------------------------------------------------------------
+    | Load Owned Return First
+    |--------------------------------------------------------------------------
+    |
+    | Do not query Replacement before ownership of the Return has been
+    | established.
+    |--------------------------------------------------------------------------
+    */
+
   const returnRequest = await getCustomerOrderReturnRequestById(
     returnRequestId,
     customerId,
   );
 
+  /*
+    |--------------------------------------------------------------------------
+    | Find Linked Replacement
+    |--------------------------------------------------------------------------
+    */
+
+  const replacement =
+    await getCustomerOrderReturnReplacementSummaryByReturnRequest(
+      returnRequestId,
+      customerId,
+    );
+
   const mappedReturnRequest = toCustomerOrderReturnRequest(returnRequest);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Attach Customer-Safe Replacement Summary
+    |--------------------------------------------------------------------------
+    */
+
+  mappedReturnRequest.replacement = replacement
+    ? mapCustomerOrderReturnReplacementSummary(replacement)
+    : null;
 
   return response.status(200).json({
     success: true,
@@ -249,7 +292,8 @@ export const getAdminOrderReturnRequestsController = async (
 | Get Admin Order Return Request
 |--------------------------------------------------------------------------
 |
-| GET /api/v1/admin/order-returns/:returnRequestId
+| GET
+| /api/v1/admin/order-returns/:returnRequestId
 |--------------------------------------------------------------------------
 */
 
@@ -259,9 +303,34 @@ export const getAdminOrderReturnRequestController = async (
 ) => {
   const { returnRequestId } = request.validated.params;
 
+  /*
+    |--------------------------------------------------------------------------
+    | Load Return
+    |--------------------------------------------------------------------------
+    */
+
   const returnRequest = await getAdminOrderReturnRequestById(returnRequestId);
 
+  /*
+    |--------------------------------------------------------------------------
+    | Load Linked Replacement
+    |--------------------------------------------------------------------------
+    */
+
+  const replacement =
+    await getAdminOrderReturnReplacementSummaryByReturnRequest(returnRequestId);
+
   const mappedReturnRequest = toAdminOrderReturnRequest(returnRequest);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Attach Admin Replacement Summary
+    |--------------------------------------------------------------------------
+    */
+
+  mappedReturnRequest.replacement = replacement
+    ? mapAdminOrderReturnReplacementSummary(replacement)
+    : null;
 
   return response.status(200).json({
     success: true,
