@@ -197,3 +197,24 @@ export const shipOrderReturnReplacementRequestSchema = z.strictObject({
 
   query: emptyObjectSchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Return Replacement Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/deliver
+|
+| Delivery actor, timestamp and status are backend-controlled.
+| Therefore the request body is intentionally empty.
+|--------------------------------------------------------------------------
+*/
+
+export const deliverOrderReturnReplacementRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: returnReplacementIdParamsSchema,
+
+  query: emptyObjectSchema,
+});

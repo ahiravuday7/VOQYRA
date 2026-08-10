@@ -3734,6 +3734,73 @@ reservedStock - quantity
   ↓
 shipped
 |--------------------------------------------------------------------------
+Part 154 — Replacement Delivery Workflow
+
+Now we implement the final normal replacement fulfillment transition:
+
+processing
+   ↓
+shipped
+   ↓
+delivered
+
+The important rule here is:
+
+Product stock          → NO CHANGE
+Product reservedStock  → NO CHANGE
+Inventory Ledger       → NO NEW ENTRY
+
+Why? Because Part 152 already committed inventory when the replacement was shipped.
+14. Full replacement lifecycle so far
+Return completed
+      ↓
+Replacement created
+      ↓
+pending
+      ↓
+inventory reserve
+      ↓
+reserved
+      ↓
+warehouse starts work
+      ↓
+processing
+      ↓
+inventory commit
+      ↓
+shipped
+      ↓
+courier delivers
+      ↓
+delivered ✅
+
+Inventory flow:
+
+CREATE REPLACEMENT
+stock         10
+reservedStock  0
+       ↓ reserve 2
+stock         10
+reservedStock  2
+
+PROCESSING
+stock         10
+reservedStock  2
+       ↓ no change
+
+SHIPMENT
+       ↓ commit 2
+stock          8
+reservedStock  0
+
+DELIVERY
+       ↓ no change
+stock          8
+reservedStock  0
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

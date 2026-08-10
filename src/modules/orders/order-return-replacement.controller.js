@@ -4,6 +4,7 @@ import {
   createAdminOrderReturnReplacement,
   processAdminOrderReturnReplacement,
   shipAdminOrderReturnReplacement,
+  deliverAdminOrderReturnReplacement,
 } from "./order-return-replacement.service.js";
 
 /*
@@ -106,6 +107,40 @@ export const shipAdminReturnReplacementController = async (
     success: true,
 
     message: "Return replacement shipped successfully",
+
+    data: {
+      replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Admin Return Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/deliver
+|--------------------------------------------------------------------------
+*/
+
+export const deliverAdminReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const adminId = request.user._id;
+
+  const replacement = await deliverAdminOrderReturnReplacement(
+    replacementId,
+    adminId,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacement delivered successfully",
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),

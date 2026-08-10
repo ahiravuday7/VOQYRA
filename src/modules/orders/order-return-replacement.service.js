@@ -25,6 +25,7 @@ import {
   findOrderReturnReplacementById,
   markOrderReturnReplacementProcessingAtomically,
   saveOrderReturnReplacementDocument,
+  markOrderReturnReplacementDeliveredAtomically,
 } from "./order-return-replacement.repository.js";
 
 /*
@@ -443,6 +444,229 @@ const createReturnReplacementCommitInventoryConflictError = ({
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replacement Delivery Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementDeliveryNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyDeliveredError = (replacement) => {
+  return new AppError(
+    "This Return replacement has already been delivered",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_DELIVERED",
+
+      details: {
+        status: replacement.status,
+
+        deliveredAt: replacement.shipment?.deliveredAt ?? null,
+      },
+    },
+  );
+};
+
+const createReturnReplacementDeliveryStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return replacement cannot be delivered from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_DELIVERY_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        requiredStatus: ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED,
+      },
+    },
+  );
+};
+
+const createReturnReplacementDeliveryShipmentStateInvalidError = (
+  replacement,
+) => {
+  return new AppError(
+    "This Return replacement does not contain valid shipment information for delivery",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_DELIVERY_SHIPMENT_STATE_INVALID",
+
+      details: {
+        replacementId: String(replacement._id),
+
+        status: replacement.status,
+      },
+    },
+  );
+};
+
+const createReturnReplacementDeliveryConflictError = () => {
+  return new AppError(
+    "The Return replacement changed while delivery was being completed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_DELIVERY_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Check Replacement Delivery Shipment State
+|--------------------------------------------------------------------------
+*/
+
+const replacementHasValidDeliveryShipmentState = (replacement) => {
+  const shipment = replacement.shipment;
+
+  if (!shipment) {
+    return false;
+  }
+
+  const hasReservation = Boolean(replacement.reservation?.reservedAt);
+
+  const hasProcessing = Boolean(replacement.processing?.processedAt);
+
+  const hasShipment = Boolean(
+    shipment.carrier &&
+    shipment.trackingNumber &&
+    shipment.shippedBy &&
+    shipment.shippedAt,
+  );
+
+  const hasTerminalConflict = Boolean(
+    replacement.cancellation?.cancelledAt || replacement.failure?.failedAt,
+  );
+
+  return hasReservation && hasProcessing && hasShipment && !hasTerminalConflict;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Replacement Delivery
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementDelivery = async (replacementId) => {
+  const replacement = await findOrderReturnReplacementById(replacementId);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing
+    |--------------------------------------------------------------------------
+    */
+
+  if (!replacement) {
+    throw createReturnReplacementDeliveryNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Already Delivered
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    replacement.status === ORDER_RETURN_REPLACEMENT_STATUS.DELIVERED ||
+    replacement.shipment?.deliveredAt
+  ) {
+    throw createReturnReplacementAlreadyDeliveredError(replacement);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Wrong Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (replacement.status !== ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED) {
+    throw createReturnReplacementDeliveryStatusInvalidError(replacement.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Evidence Invalid
+    |--------------------------------------------------------------------------
+    */
+
+  if (!replacementHasValidDeliveryShipmentState(replacement)) {
+    throw createReturnReplacementDeliveryShipmentStateInvalidError(replacement);
+  }
+
+  /*
+   * State still appears valid, so another concurrent
+   * operation likely modified the document.
+   */
+
+  throw createReturnReplacementDeliveryConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Admin Order Return Replacement
+|--------------------------------------------------------------------------
+|
+| Single-document atomic transition:
+|
+| shipped -> delivered
+|
+| IMPORTANT:
+|
+| Inventory was committed when shipment was created.
+| Delivery MUST NOT modify Product inventory.
+|--------------------------------------------------------------------------
+*/
+
+export const deliverAdminOrderReturnReplacement = async (
+  replacementId,
+  adminId,
+) => {
+  if (!replacementId) {
+    throw new Error(
+      "Replacement ID is required to deliver a Return replacement",
+    );
+  }
+
+  if (!adminId) {
+    throw new Error("Admin ID is required to deliver a Return replacement");
+  }
+
+  const deliveredAt = new Date();
+
+  /*
+    |--------------------------------------------------------------------------
+    | Atomic Delivery Transition
+    |--------------------------------------------------------------------------
+    */
+
+  const deliveredReplacement =
+    await markOrderReturnReplacementDeliveredAtomically({
+      replacementId,
+
+      adminId,
+
+      deliveredAt,
+    });
+
+  if (deliveredReplacement) {
+    return deliveredReplacement;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Determine Failure Reason
+    |--------------------------------------------------------------------------
+    */
+
+  return diagnoseFailedReturnReplacementDelivery(replacementId);
 };
 
 /*

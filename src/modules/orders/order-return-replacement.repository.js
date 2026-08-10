@@ -144,3 +144,100 @@ export const markOrderReturnReplacementProcessingAtomically = ({
     },
   );
 };
+
+/*
+|--------------------------------------------------------------------------
+| Mark Replacement Delivered Atomically
+|--------------------------------------------------------------------------
+|
+| Only:
+|
+| shipped -> delivered
+|
+| No Product inventory operation happens here.
+|--------------------------------------------------------------------------
+*/
+
+export const markOrderReturnReplacementDeliveredAtomically = ({
+  replacementId,
+  adminId,
+  deliveredAt,
+}) => {
+  return OrderReturnReplacement.findOneAndUpdate(
+    {
+      _id: replacementId,
+
+      status: ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Valid Reservation / Processing History
+        |--------------------------------------------------------------------------
+        */
+
+      "reservation.reservedAt": {
+        $ne: null,
+      },
+
+      "processing.processedAt": {
+        $ne: null,
+      },
+
+      /*
+        |--------------------------------------------------------------------------
+        | Shipment Must Be Complete
+        |--------------------------------------------------------------------------
+        */
+
+      "shipment.carrier": {
+        $ne: null,
+      },
+
+      "shipment.trackingNumber": {
+        $ne: null,
+      },
+
+      "shipment.shippedBy": {
+        $ne: null,
+      },
+
+      "shipment.shippedAt": {
+        $ne: null,
+      },
+
+      /*
+        |--------------------------------------------------------------------------
+        | Delivery Must Not Already Exist
+        |--------------------------------------------------------------------------
+        */
+
+      "shipment.deliveredAt": null,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Terminal Conflict Protection
+        |--------------------------------------------------------------------------
+        */
+
+      "cancellation.cancelledAt": null,
+
+      "failure.failedAt": null,
+    },
+
+    {
+      $set: {
+        status: ORDER_RETURN_REPLACEMENT_STATUS.DELIVERED,
+
+        "shipment.deliveredBy": adminId,
+
+        "shipment.deliveredAt": deliveredAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  );
+};

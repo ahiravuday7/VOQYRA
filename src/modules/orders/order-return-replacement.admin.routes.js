@@ -9,11 +9,13 @@ import { USER_ROLES } from "../../shared/constants/user.constants.js";
 import {
   processAdminReturnReplacementController,
   shipAdminReturnReplacementController,
+  deliverAdminReturnReplacementController,
 } from "./order-return-replacement.controller.js";
 
 import {
   processOrderReturnReplacementRequestSchema,
   shipOrderReturnReplacementRequestSchema,
+  deliverOrderReturnReplacementRequestSchema,
 } from "./order-return-replacement.validation.js";
 
 const router = Router();
@@ -60,6 +62,24 @@ router.post(
   validateRequest(shipOrderReturnReplacementRequestSchema),
 
   shipAdminReturnReplacementController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Deliver Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/deliver
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:replacementId/deliver",
+
+  validateRequest(deliverOrderReturnReplacementRequestSchema),
+
+  deliverAdminReturnReplacementController,
 );
 
 export default router;
