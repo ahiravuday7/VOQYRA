@@ -6,9 +6,15 @@ import validateRequest from "../../middlewares/validate-request.middleware.js";
 
 import { USER_ROLES } from "../../shared/constants/user.constants.js";
 
-import { processAdminReturnReplacementController } from "./order-return-replacement.controller.js";
+import {
+  processAdminReturnReplacementController,
+  shipAdminReturnReplacementController,
+} from "./order-return-replacement.controller.js";
 
-import { processOrderReturnReplacementRequestSchema } from "./order-return-replacement.validation.js";
+import {
+  processOrderReturnReplacementRequestSchema,
+  shipOrderReturnReplacementRequestSchema,
+} from "./order-return-replacement.validation.js";
 
 const router = Router();
 
@@ -36,6 +42,24 @@ router.post(
   validateRequest(processOrderReturnReplacementRequestSchema),
 
   processAdminReturnReplacementController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Ship Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/ship
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:replacementId/ship",
+
+  validateRequest(shipOrderReturnReplacementRequestSchema),
+
+  shipAdminReturnReplacementController,
 );
 
 export default router;

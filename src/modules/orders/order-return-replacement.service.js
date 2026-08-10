@@ -13,6 +13,7 @@ import { createProductInventoryLedgerEntry } from "../products/product-inventory
 import {
   findProductVariantInventorySnapshot,
   reserveVariantStockAtomically,
+  commitOrderVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import { findAdminOrderReturnRequestForProcessing } from "./order-return.repository.js";
@@ -337,6 +338,559 @@ const createReturnReplacementProcessingConflictError = () => {
       errorCode: "ORDER_RETURN_REPLACEMENT_PROCESSING_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replacement Shipment Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementShipmentNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyShippedError = (replacement) => {
+  return new AppError("This Return replacement has already been shipped", 409, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_SHIPPED",
+
+    details: {
+      status: replacement.status,
+
+      trackingNumber: replacement.shipment?.trackingNumber ?? null,
+
+      shippedAt: replacement.shipment?.shippedAt ?? null,
+    },
+  });
+};
+
+const createReturnReplacementShipmentStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return replacement cannot be shipped from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_SHIPMENT_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        requiredStatus: ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+      },
+    },
+  );
+};
+
+const createReturnReplacementShipmentStateInvalidError = (replacement) => {
+  return new AppError(
+    "This Return replacement does not contain a valid processing state for shipment",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_SHIPMENT_STATE_INVALID",
+
+      details: {
+        replacementId: String(replacement._id),
+
+        status: replacement.status,
+      },
+    },
+  );
+};
+
+const createReturnReplacementCommitInventoryStateInvalidError = ({
+  productId,
+  variantId,
+  requestedQuantity,
+  stock,
+  reservedStock,
+}) => {
+  return new AppError(
+    "Replacement inventory cannot be committed from its current state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_COMMIT_INVENTORY_STATE_INVALID",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+
+        requestedQuantity,
+
+        stock,
+
+        reservedStock,
+      },
+    },
+  );
+};
+
+const createReturnReplacementCommitInventoryConflictError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "Replacement inventory changed while shipment was being processed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_COMMIT_INVENTORY_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Replacement Can Ship
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderReturnReplacementCanShip = (replacement) => {
+  if (replacement.status === ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED) {
+    throw createReturnReplacementAlreadyShippedError(replacement);
+  }
+
+  if (replacement.status !== ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING) {
+    throw createReturnReplacementShipmentStatusInvalidError(replacement.status);
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reservation Evidence
+  |--------------------------------------------------------------------------
+  */
+
+  const hasReservationEvidence = Boolean(
+    replacement.reservation?.reservedBy && replacement.reservation?.reservedAt,
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Processing Evidence
+  |--------------------------------------------------------------------------
+  */
+
+  const hasProcessingEvidence = Boolean(
+    replacement.processing?.processedBy && replacement.processing?.processedAt,
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Existing Shipment Evidence
+  |--------------------------------------------------------------------------
+  */
+
+  const hasShipmentEvidence = Boolean(
+    replacement.shipment?.carrier ||
+    replacement.shipment?.trackingNumber ||
+    replacement.shipment?.trackingUrl ||
+    replacement.shipment?.shippedBy ||
+    replacement.shipment?.shippedAt,
+  );
+
+  const hasTerminalConflict = Boolean(
+    replacement.cancellation?.cancelledAt || replacement.failure?.failedAt,
+  );
+
+  if (
+    !hasReservationEvidence ||
+    !hasProcessingEvidence ||
+    hasShipmentEvidence ||
+    hasTerminalConflict
+  ) {
+    throw createReturnReplacementShipmentStateInvalidError(replacement);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Replacement Inventory Commit
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementCommit = async ({
+  productId,
+  variantId,
+  requestedQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  if (!snapshot || !snapshot.variant) {
+    throw createReturnReplacementCommitInventoryStateInvalidError({
+      productId,
+
+      variantId,
+
+      requestedQuantity,
+
+      stock: null,
+
+      reservedStock: null,
+    });
+  }
+
+  const { stock, reservedStock } = snapshot.variant;
+
+  const inventoryIsValid =
+    Number.isSafeInteger(stock) &&
+    Number.isSafeInteger(reservedStock) &&
+    stock >= 0 &&
+    reservedStock >= 0 &&
+    reservedStock <= stock;
+
+  if (
+    !inventoryIsValid ||
+    reservedStock < requestedQuantity ||
+    stock < requestedQuantity
+  ) {
+    throw createReturnReplacementCommitInventoryStateInvalidError({
+      productId,
+
+      variantId,
+
+      requestedQuantity,
+
+      stock,
+
+      reservedStock,
+    });
+  }
+
+  /*
+   * Snapshot looks valid but the atomic commit failed.
+   * Treat this as a concurrent inventory conflict.
+   */
+
+  throw createReturnReplacementCommitInventoryConflictError({
+    productId,
+
+    variantId,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Replacement Commit Ledger
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementCommitLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  replacementNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReplacementVariant(
+    updatedProduct,
+    variantId,
+  );
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * Commit performs:
+   *
+   * stock         -= quantity
+   * reservedStock -= quantity
+   *
+   * Therefore reconstruct BEFORE values by adding
+   * quantity back to both AFTER values.
+   */
+
+  const beforeStock = afterStock + quantity;
+
+  const beforeReservedStock = afterReservedStock + quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.COMMIT,
+
+      quantity,
+
+      stockDelta: -quantity,
+
+      reservedStockDelta: -quantity,
+
+      before: buildReplacementInventoryState(beforeStock, beforeReservedStock),
+
+      after: buildReplacementInventoryState(afterStock, afterReservedStock),
+
+      referenceId: replacementNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Commit Replacement Items In Transaction
+|--------------------------------------------------------------------------
+*/
+
+const commitReturnReplacementItemsInTransaction = async (
+  replacement,
+  { actorUserId, session },
+) => {
+  requireActiveReplacementTransaction(session);
+
+  for (const replacementItem of replacement.items ?? []) {
+    const quantity = Number(replacementItem.replacementQuantity);
+
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      throw createReturnReplacementInventoryInvalidError({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        stock: null,
+
+        reservedStock: null,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Atomic Commit
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedProduct = await commitVariantStockAtomically({
+      productId: replacementItem.product,
+
+      variantId: replacementItem.variantId,
+
+      quantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedReturnReplacementCommit({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        requestedQuantity: quantity,
+
+        session,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Immutable Inventory Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    await createReturnReplacementCommitLedgerEntry({
+      updatedProduct,
+
+      variantId: replacementItem.variantId,
+
+      quantity,
+
+      replacementNumber: replacement.replacementNumber,
+
+      actorUserId,
+
+      session,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Replacement Shipment
+|--------------------------------------------------------------------------
+|
+| Transaction:
+|
+| load replacement
+|      ↓
+| processing-state validation
+|      ↓
+| commit every reserved Product variant
+|      ↓
+| create commit ledger(s)
+|      ↓
+| replacement -> shipped
+|      ↓
+| save shipment audit
+|      ↓
+| commit everything
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderReturnReplacementShipment = async ({
+  replacementId,
+  adminId,
+  shipmentData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let shippedReplacement;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveReplacementTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Replacement
+          |--------------------------------------------------------------------------
+          */
+
+        const replacement = await findOrderReturnReplacementById(
+          replacementId,
+          {
+            session,
+          },
+        );
+
+        if (!replacement) {
+          throw createReturnReplacementShipmentNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate Current State
+          |--------------------------------------------------------------------------
+          */
+
+        assertOrderReturnReplacementCanShip(replacement);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Commit Reserved Replacement Inventory
+          |--------------------------------------------------------------------------
+          */
+
+        await commitReturnReplacementItemsInTransaction(replacement, {
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Shipment Audit
+          |--------------------------------------------------------------------------
+          */
+
+        const shippedAt = new Date();
+
+        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED;
+
+        replacement.shipment = {
+          carrier: shipmentData.carrier,
+
+          trackingNumber: shipmentData.trackingNumber,
+
+          trackingUrl: shipmentData.trackingUrl ?? null,
+
+          note: shipmentData.note ?? null,
+
+          shippedBy: adminId,
+
+          shippedAt,
+
+          deliveredBy: null,
+
+          deliveredAt: null,
+        };
+
+        /*
+          |--------------------------------------------------------------------------
+          | Persist Replacement
+          |--------------------------------------------------------------------------
+          */
+
+        shippedReplacement = await saveOrderReturnReplacementDocument(
+          replacement,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return shippedReplacement;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Ship Admin Order Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const shipAdminOrderReturnReplacement = async (
+  replacementId,
+  adminId,
+  shipmentData,
+) => {
+  if (!replacementId) {
+    throw new Error("Replacement ID is required to ship a Return replacement");
+  }
+
+  if (!adminId) {
+    throw new Error("Admin ID is required to ship a Return replacement");
+  }
+
+  if (!shipmentData) {
+    throw new Error("Shipment data is required to ship a Return replacement");
+  }
+
+  return executeAtomicOrderReturnReplacementShipment({
+    replacementId,
+
+    adminId,
+
+    shipmentData,
+  });
 };
 
 /*

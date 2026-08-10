@@ -3627,6 +3627,73 @@ processing
         ▼
 future shipment
 |--------------------------------------------------------------------------
+Part 152 — Replacement Shipment + Atomic Inventory Commit
+
+We now implement:
+
+reserved
+   ↓
+processing
+   ↓
+shipped
+
+At shipment, the replacement reservation finally becomes a real stock movement:
+
+stock         -= replacementQuantity
+reservedStock -= replacementQuantity
+
+and a commit Inventory Ledger entry is created.
+
+Small note: the uploaded src(4).zip is a snapshot from before Parts 150–151, so this Part assumes you applied the Part 150 processing files locally.
+
+15. Inventory behavior
+
+Suppose after replacement creation:
+
+stock         = 10
+reservedStock = 2
+available     = 8
+
+Processing:
+
+stock         = 10
+reservedStock = 2
+available     = 8
+
+Shipment:
+
+stock         = 8
+reservedStock = 0
+available     = 8
+
+Ledger history for the replacement:
+
+RPL-20260810-XXXX
+    reserve
+    quantity = 2
+
+RPL-20260810-XXXX
+    commit
+    quantity = 2
+
+So the full inventory lifecycle becomes:
+
+replacement created
+      ↓
+reserve
+      ↓
+reservedStock +2
+
+processing
+      ↓
+NO inventory movement
+
+shipment
+      ↓
+commit
+      ↓
+stock -2
+reservedStock -2
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
