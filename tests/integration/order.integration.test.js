@@ -1375,6 +1375,71 @@ const createReservedReplacementFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Processing Replacement Fixture
+|--------------------------------------------------------------------------
+|
+| Creates:
+|
+| completed Return
+|      ↓
+| replacement created
+|      ↓
+| reserved
+|      ↓
+| processing
+|--------------------------------------------------------------------------
+*/
+
+const createProcessingReplacementFixture = async ({
+  adminAgent,
+  adminId,
+  customerId,
+
+  productOverrides = {},
+
+  quantity = 2,
+  resellableQuantity = 1,
+  damagedQuantity = 1,
+  rejectedQuantity = 0,
+}) => {
+  const fixture = await createReservedReplacementFixture({
+    adminAgent,
+    adminId,
+    customerId,
+
+    productOverrides,
+
+    quantity,
+    resellableQuantity,
+    damagedQuantity,
+    rejectedQuantity,
+  });
+
+  const processingResponse = await adminAgent
+    .post(
+      `/api/v1/admin/order-return-replacements/${fixture.replacement.id}/process`,
+    )
+    .send({
+      note: "Replacement prepared for shipment integration testing.",
+    })
+    .expect(200);
+
+  const processingReplacement = processingResponse.body.data.replacement;
+
+  const storedProcessingReplacement = await OrderReturnReplacement.findById(
+    fixture.replacement.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    processingReplacement,
+    storedProcessingReplacement,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -18422,5 +18487,1077 @@ describe("Admin Return replacement processing", () => {
         operation: "reserve",
       }),
     ).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Shipment
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement shipment", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when shipping a replacement without authentication", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-UNAUTH-123",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to ship a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-CUSTOMER-123",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Replacement ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when the shipment replacement ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post(
+        "/api/v1/admin/order-return-replacements/not-a-valid-object-id/ship",
+      )
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-INVALID-ID",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "replacementId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Shipment Request Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects invalid and backend-controlled shipment fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/ship`)
+      .send({
+        carrier: "A",
+
+        trackingNumber: "X",
+
+        trackingUrl: "not-a-valid-url",
+
+        status: "shipped",
+
+        shippedBy: new mongoose.Types.ObjectId().toString(),
+
+        shippedAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details.length).toBeGreaterThan(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the shipment replacement does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-MISSING-123",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Must Be Processing
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects shipping a replacement that is still reserved", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    expect(replacement.status).toBe("reserved");
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-NOT-PROCESSING",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_SHIPMENT_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("reserved");
+
+    /*
+     * Inventory reservation must remain untouched.
+     */
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(10);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Successful Shipment + Inventory Commit
+  |--------------------------------------------------------------------------
+  */
+
+  it("ships a processing replacement and atomically commits reserved inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant, returnRequest } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+
+        productOverrides: {
+          variants: [
+            {
+              sku: "RPL-SHIP-BLK-M",
+
+              size: "M",
+
+              color: {
+                name: "Black",
+
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 300,
+
+                sellingPrice: 799,
+
+                discountPrice: 699,
+
+                currency: "INR",
+              },
+
+              inventory: {
+                stock: 10,
+
+                reservedStock: 0,
+
+                lowStockThreshold: 2,
+              },
+
+              shipping: {
+                weightInGrams: 250,
+              },
+
+              isActive: true,
+            },
+          ],
+        },
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Before Shipment
+    |--------------------------------------------------------------------------
+    */
+
+    const productBeforeShipment = await Product.findById(product._id).lean();
+
+    const variantBeforeShipment = findProductVariant(
+      productBeforeShipment,
+      variant._id,
+    );
+
+    /*
+     * Replacement creation reserved 2.
+     */
+
+    expect(variantBeforeShipment.inventory.stock).toBe(10);
+
+    expect(variantBeforeShipment.inventory.reservedStock).toBe(2);
+
+    expect(
+      variantBeforeShipment.inventory.stock -
+        variantBeforeShipment.inventory.reservedStock,
+    ).toBe(8);
+
+    const ledgerBeforeShipment = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerBeforeShipment).toHaveLength(1);
+
+    expect(ledgerBeforeShipment[0].operation).toBe("reserve");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ship
+    |--------------------------------------------------------------------------
+    */
+
+    const shipmentData = {
+      carrier: "Blue Dart",
+
+      trackingNumber: "RPL-BD-123456789",
+
+      trackingUrl: "https://tracking.example.com/RPL-BD-123456789",
+
+      note: "Replacement package handed over to courier.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send(shipmentData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement shipped successfully",
+    );
+
+    const shippedReplacement = response.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Response Shipment State
+    |--------------------------------------------------------------------------
+    */
+
+    expect(shippedReplacement.status).toBe("shipped");
+
+    expect(shippedReplacement.shipment).toMatchObject({
+      carrier: shipmentData.carrier,
+
+      trackingNumber: shipmentData.trackingNumber,
+
+      trackingUrl: shipmentData.trackingUrl,
+
+      note: shipmentData.note,
+
+      shippedBy: String(admin._id),
+
+      deliveredBy: null,
+
+      deliveredAt: null,
+    });
+
+    expect(shippedReplacement.shipment.shippedAt).toBeTruthy();
+
+    /*
+     * Existing processing audit must remain.
+     */
+
+    expect(shippedReplacement.processing.processedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stored Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("shipped");
+
+    expect(storedReplacement.shipment.carrier).toBe("Blue Dart");
+
+    expect(storedReplacement.shipment.trackingNumber).toBe("RPL-BD-123456789");
+
+    expect(String(storedReplacement.shipment.shippedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReplacement.shipment.shippedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Inventory Commit
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterShipment = await Product.findById(product._id).lean();
+
+    const variantAfterShipment = findProductVariant(
+      productAfterShipment,
+      variant._id,
+    );
+
+    /*
+     * COMMIT 2:
+     *
+     * stock         10 -> 8
+     * reservedStock  2 -> 0
+     */
+
+    expect(variantAfterShipment.inventory.stock).toBe(8);
+
+    expect(variantAfterShipment.inventory.reservedStock).toBe(0);
+
+    /*
+     * Available stock remains unchanged:
+     *
+     * before = 10 - 2 = 8
+     * after  =  8 - 0 = 8
+     */
+
+    expect(
+      variantAfterShipment.inventory.stock -
+        variantAfterShipment.inventory.reservedStock,
+    ).toBe(8);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserve + Commit Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    const commitLedger = ledgerEntries[1];
+
+    expect(commitLedger.quantity).toBe(2);
+
+    expect(commitLedger.stockDelta).toBe(-2);
+
+    expect(commitLedger.reservedStockDelta).toBe(-2);
+
+    expect(commitLedger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(commitLedger.after).toMatchObject({
+      stock: 8,
+
+      reservedStock: 0,
+
+      availableStock: 8,
+    });
+
+    expect(String(commitLedger.actor)).toBe(String(admin._id));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Return Remains Completed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReturn = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturn.status).toBe("completed");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Shipment
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects shipping the same replacement twice without committing inventory twice", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/ship`;
+
+    const firstResponse = await adminAgent.post(url).send({
+      carrier: "Blue Dart",
+
+      trackingNumber: "RPL-FIRST-SHIP",
+    });
+
+    expect(firstResponse.status).toBe(200);
+
+    const secondResponse = await adminAgent.post(url).send({
+      carrier: "Delhivery",
+
+      trackingNumber: "RPL-SECOND-SHIP",
+    });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_SHIPPED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stock Deducted Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Only One Commit Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+     * Original shipment information must remain.
+     */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.shipment.trackingNumber).toBe("RPL-FIRST-SHIP");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Corrupted Reservation State
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back shipment when reserved Product inventory is missing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+     * Replacement believes 2 units are reserved.
+     *
+     * Corrupt Product inventory so the reservation
+     * no longer exists.
+     */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": variant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-CORRUPT-INVENTORY",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_COMMIT_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Shipment Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("processing");
+
+    expect(unchangedReplacement.shipment?.shippedAt ?? null).toBeNull();
+
+    expect(unchangedReplacement.shipment?.trackingNumber ?? null).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pre-existing Inventory Corruption Remains
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Commit Ledger Survives
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+     * Original reservation Ledger still exists.
+     */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Multi-Item Transaction Rollback
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back an earlier replacement inventory commit when a later item fails", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-COMMIT-FIRST",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+
+        {
+          sku: "RPL-COMMIT-SECOND",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = product.variants[0];
+
+    const secondVariant = product.variants[1];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Completed Multi-Item Return
+    |--------------------------------------------------------------------------
+    */
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant: firstVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+
+        {
+          product,
+
+          variant: secondVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Replacement -> Reserve Both
+    |--------------------------------------------------------------------------
+    */
+
+    const creationResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({})
+      .expect(201);
+
+    const replacement = creationResponse.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Move To Processing
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/process`)
+      .send({
+        note: "Preparing multi-item replacement shipment.",
+      })
+      .expect(200);
+
+    /*
+     * Both variants should now hold two reservations.
+     */
+
+    const productAfterReservation = await Product.findById(product._id).lean();
+
+    expect(
+      findProductVariant(productAfterReservation, firstVariant._id).inventory
+        .reservedStock,
+    ).toBe(2);
+
+    expect(
+      findProductVariant(productAfterReservation, secondVariant._id).inventory
+        .reservedStock,
+    ).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Second Variant
+    |--------------------------------------------------------------------------
+    |
+    | First commit should execute inside transaction.
+    | Second commit should fail.
+    | Entire transaction must then roll back.
+    |--------------------------------------------------------------------------
+    */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": secondVariant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-MULTI-ROLLBACK",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_COMMIT_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Commit Must Be Rolled Back
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalFirstVariant = findProductVariant(
+      finalProduct,
+      firstVariant._id,
+    );
+
+    const finalSecondVariant = findProductVariant(
+      finalProduct,
+      secondVariant._id,
+    );
+
+    expect(finalFirstVariant.inventory.stock).toBe(10);
+
+    expect(finalFirstVariant.inventory.reservedStock).toBe(2);
+
+    /*
+     * Pre-existing second-variant corruption remains.
+     */
+
+    expect(finalSecondVariant.inventory.stock).toBe(10);
+
+    expect(finalSecondVariant.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Must Remain Processing
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("processing");
+
+    expect(unchangedReplacement.shipment?.shippedAt ?? null).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Commit Ledgers Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+     * Two original reserve ledgers remain.
+     */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Shipment
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent replacement shipment and commits inventory once", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/ship`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-CONCURRENT-A",
+      }),
+
+      secondAdminAgent.post(url).send({
+        carrier: "Delhivery",
+
+        trackingNumber: "RPL-CONCURRENT-B",
+      }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect(conflictResponses[0].body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_SHIPPED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Inventory Commit
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Shipment State
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("shipped");
+
+    expect(["RPL-CONCURRENT-A", "RPL-CONCURRENT-B"]).toContain(
+      storedReplacement.shipment.trackingNumber,
+    );
   });
 });

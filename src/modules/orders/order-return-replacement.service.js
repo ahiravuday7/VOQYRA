@@ -13,7 +13,7 @@ import { createProductInventoryLedgerEntry } from "../products/product-inventory
 import {
   findProductVariantInventorySnapshot,
   reserveVariantStockAtomically,
-  commitOrderVariantStockAtomically,
+  commitVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import { findAdminOrderReturnRequestForProcessing } from "./order-return.repository.js";

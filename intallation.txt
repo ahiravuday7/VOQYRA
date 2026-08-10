@@ -3695,6 +3695,44 @@ commit
 stock -2
 reservedStock -2
 |--------------------------------------------------------------------------
+Part 153 — Replacement Shipment Integration Tests
+
+Now we verify the Part 152 shipment workflow:
+
+reserved
+   ↓
+processing
+   ↓
+shipped
+   ↓
+inventory COMMIT
+
+Your existing Part 149 fixture already creates the trusted completed Return structure, so we’ll continue reusing it rather than duplicating the Return lifecycle.
+
+Update only:
+
+tests/integration/order.integration.test.js
+
+No beforeEach() change is required.
+
+If these pass, the replacement inventory lifecycle will be solid:
+
+CREATE
+  ↓
+reserved
+  ↓
+reservedStock + quantity
+  ↓
+PROCESS
+  ↓
+no inventory movement
+  ↓
+SHIP
+  ↓
+stock - quantity
+reservedStock - quantity
+  ↓
+shipped
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
