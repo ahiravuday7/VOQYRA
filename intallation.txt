@@ -4205,6 +4205,20 @@ cancelled + failed audits together ❌
 
 The key inventory invariant remains the one already documented in your project: commit finalizes reserved units by reducing both physical and reserved stock, whereas release only removes the reservation and restores availability.
 |--------------------------------------------------------------------------
+Part 166 — Replacement Workflow Final Consistency Tests
+
+This Part does not change production code. We now verify that every completed replacement path leaves the database in a logically consistent state.
+
+Your integration suite already imports OrderReturnReplacement and ProductInventoryLedger, so no new model import is required.
+
+The inventory rules we are enforcing are:
+
+commit → reduce physical stock and reserved stock.
+release → physical stock unchanged; reserved stock reduced.
+
+Update only:
+
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

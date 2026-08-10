@@ -1737,6 +1737,36 @@ const createAdminOrderReturnReplacementReadFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Get Replacement Inventory Ledger
+|--------------------------------------------------------------------------
+*/
+
+const getReplacementInventoryLedger = async (replacementNumber) => {
+  return ProductInventoryLedger.find({
+    referenceId: replacementNumber,
+  })
+    .sort({
+      createdAt: 1,
+
+      _id: 1,
+    })
+    .lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Sum Replacement Quantity
+|--------------------------------------------------------------------------
+*/
+
+const getTotalReplacementQuantity = (replacement) => {
+  return (replacement.items ?? []).reduce((total, item) => {
+    return total + Number(item.replacementQuantity ?? 0);
+  }, 0);
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -24574,5 +24604,576 @@ describe("Admin Return replacement cross-operation concurrency", () => {
 
       expect(storedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
     }
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Return Replacement Final Consistency
+|--------------------------------------------------------------------------
+*/
+
+describe("Return replacement final consistency", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Delivered Path
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps delivered replacement state, audit history, inventory, and Ledger consistent", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Create -> Reserved -> Processing -> Shipped
+      |--------------------------------------------------------------------------
+      */
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Deliver
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({})
+      .expect(200);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Stored Replacement
+      |--------------------------------------------------------------------------
+      */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("delivered");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Required Lifecycle Evidence
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.reservation.reservedBy).toBeTruthy();
+
+    expect(storedReplacement.reservation.reservedAt).toBeTruthy();
+
+    expect(storedReplacement.processing.processedBy).toBeTruthy();
+
+    expect(storedReplacement.processing.processedAt).toBeTruthy();
+
+    expect(storedReplacement.shipment.shippedBy).toBeTruthy();
+
+    expect(storedReplacement.shipment.shippedAt).toBeTruthy();
+
+    expect(storedReplacement.shipment.deliveredBy).toBeTruthy();
+
+    expect(storedReplacement.shipment.deliveredAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Impossible Terminal Audits Must Not Exist
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+
+    expect(storedReplacement.failure?.failedAt ?? null).toBeNull();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Audit Ordering
+      |--------------------------------------------------------------------------
+      */
+
+    expect(
+      new Date(storedReplacement.reservation.reservedAt).getTime(),
+    ).toBeLessThanOrEqual(
+      new Date(storedReplacement.processing.processedAt).getTime(),
+    );
+
+    expect(
+      new Date(storedReplacement.processing.processedAt).getTime(),
+    ).toBeLessThanOrEqual(
+      new Date(storedReplacement.shipment.shippedAt).getTime(),
+    );
+
+    expect(
+      new Date(storedReplacement.shipment.shippedAt).getTime(),
+    ).toBeLessThanOrEqual(
+      new Date(storedReplacement.shipment.deliveredAt).getTime(),
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory
+      |--------------------------------------------------------------------------
+      */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(8);
+
+    expect(storedVariant.inventory.reservedStock).toBe(0);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerEntries = await getReplacementInventoryLedger(
+      replacement.replacementNumber,
+    );
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    const totalReplacementQuantity =
+      getTotalReplacementQuantity(storedReplacement);
+
+    expect(totalReplacementQuantity).toBe(2);
+
+    expect(ledgerEntries[0].quantity).toBe(totalReplacementQuantity);
+
+    expect(ledgerEntries[1].quantity).toBe(totalReplacementQuantity);
+
+    expect(ledgerEntries[0].referenceId).toBe(
+      storedReplacement.replacementNumber,
+    );
+
+    expect(ledgerEntries[1].referenceId).toBe(
+      storedReplacement.replacementNumber,
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancelled Path
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps cancelled replacement state and released inventory consistent", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Replacement cancelled during consistency testing.",
+      })
+      .expect(200);
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Terminal State
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.status).toBe("cancelled");
+
+    expect(storedReplacement.cancellation.reason).toBe(
+      "Replacement cancelled during consistency testing.",
+    );
+
+    expect(storedReplacement.cancellation.cancelledBy).toBeTruthy();
+
+    expect(storedReplacement.cancellation.cancelledAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Previous Valid History Remains
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.reservation.reservedAt).toBeTruthy();
+
+    expect(storedReplacement.processing.processedAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Shipment / Failure Must Not Exist
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.shipment?.shippedAt ?? null).toBeNull();
+
+    expect(storedReplacement.shipment?.deliveredAt ?? null).toBeNull();
+
+    expect(storedReplacement.failure?.failedAt ?? null).toBeNull();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Audit Ordering
+      |--------------------------------------------------------------------------
+      */
+
+    expect(
+      new Date(storedReplacement.processing.processedAt).getTime(),
+    ).toBeLessThanOrEqual(
+      new Date(storedReplacement.cancellation.cancelledAt).getTime(),
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory
+      |--------------------------------------------------------------------------
+      */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(10);
+
+    expect(storedVariant.inventory.reservedStock).toBe(0);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerEntries = await getReplacementInventoryLedger(
+      replacement.replacementNumber,
+    );
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "release",
+    ]);
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    const quantity = getTotalReplacementQuantity(storedReplacement);
+
+    expect(ledgerEntries[0].quantity).toBe(quantity);
+
+    expect(ledgerEntries[1].quantity).toBe(quantity);
+
+    /*
+     * Cancellation must never produce a commit.
+     */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Failed Path
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps failed replacement state and released inventory consistent", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Replacement fulfillment failed during consistency testing.",
+      })
+      .expect(200);
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Terminal State
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.status).toBe("failed");
+
+    expect(storedReplacement.failure.reason).toBe(
+      "Replacement fulfillment failed during consistency testing.",
+    );
+
+    expect(storedReplacement.failure.failedBy).toBeTruthy();
+
+    expect(storedReplacement.failure.failedAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Valid Earlier State Remains
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.reservation.reservedAt).toBeTruthy();
+
+    expect(storedReplacement.processing.processedAt).toBeTruthy();
+
+    /*
+      |--------------------------------------------------------------------------
+      | No Conflicting Terminal Evidence
+      |--------------------------------------------------------------------------
+      */
+
+    expect(storedReplacement.shipment?.shippedAt ?? null).toBeNull();
+
+    expect(storedReplacement.shipment?.deliveredAt ?? null).toBeNull();
+
+    expect(storedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Audit Ordering
+      |--------------------------------------------------------------------------
+      */
+
+    expect(
+      new Date(storedReplacement.processing.processedAt).getTime(),
+    ).toBeLessThanOrEqual(
+      new Date(storedReplacement.failure.failedAt).getTime(),
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory
+      |--------------------------------------------------------------------------
+      */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(10);
+
+    expect(storedVariant.inventory.reservedStock).toBe(0);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerEntries = await getReplacementInventoryLedger(
+      replacement.replacementNumber,
+    );
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "release",
+    ]);
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Terminal State Cannot Be Reused
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not allow a delivered replacement to enter another terminal workflow", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Deliver Successfully
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({})
+      .expect(200);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Snapshot Before Invalid Operations
+      |--------------------------------------------------------------------------
+      */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const ledgerBefore = await getReplacementInventoryLedger(
+      replacement.replacementNumber,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cannot Cancel
+      |--------------------------------------------------------------------------
+      */
+
+    const cancellationResponse = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Invalid cancellation after delivery.",
+      });
+
+    expect(cancellationResponse.status).toBe(409);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cannot Fail
+      |--------------------------------------------------------------------------
+      */
+
+    const failureResponse = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Invalid failure after delivery.",
+      });
+
+    expect(failureResponse.status).toBe(409);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cannot Ship Again
+      |--------------------------------------------------------------------------
+      */
+
+    const shipmentResponse = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/ship`)
+      .send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "INVALID-SECOND-SHIPMENT",
+      });
+
+    expect(shipmentResponse.status).toBe(409);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Final State Still Delivered
+      |--------------------------------------------------------------------------
+      */
+
+    const finalReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(finalReplacement.status).toBe("delivered");
+
+    expect(finalReplacement.shipment.deliveredAt).toBeTruthy();
+
+    expect(finalReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+
+    expect(finalReplacement.failure?.failedAt ?? null).toBeNull();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory Must Not Move Again
+      |--------------------------------------------------------------------------
+      */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger Must Remain Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerAfter = await getReplacementInventoryLedger(
+      replacement.replacementNumber,
+    );
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
   });
 });
