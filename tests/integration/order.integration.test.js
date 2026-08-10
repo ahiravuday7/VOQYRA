@@ -21160,3 +21160,1026 @@ describe("Admin Return replacement cancellation", () => {
     expect(storedReplacement.cancellation.cancelledAt).toBeTruthy();
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Failure
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement failure", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when failing a replacement without authentication", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/fail`)
+      .send({
+        reason: "Replacement fulfillment could not continue.",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to fail a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/fail`)
+      .send({
+        reason: "Replacement fulfillment could not continue.",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Replacement ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when the failure replacement ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post(
+        "/api/v1/admin/order-return-replacements/not-a-valid-object-id/fail",
+      )
+      .send({
+        reason: "Replacement fulfillment could not continue.",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects invalid and backend-controlled failure fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/fail`)
+      .send({
+        reason: "No",
+
+        status: "failed",
+
+        failedBy: new mongoose.Types.ObjectId().toString(),
+
+        failedAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the failed replacement does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/fail`)
+      .send({
+        reason: "Replacement fulfillment could not continue.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reserved -> Failed
+  |--------------------------------------------------------------------------
+  */
+
+  it("fails a reserved replacement and releases its reserved inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant, returnRequest } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Before Failure
+    |--------------------------------------------------------------------------
+    */
+
+    const productBeforeFailure = await Product.findById(product._id).lean();
+
+    const variantBeforeFailure = findProductVariant(
+      productBeforeFailure,
+      variant._id,
+    );
+
+    expect(replacement.status).toBe("reserved");
+
+    expect(variantBeforeFailure.inventory.stock).toBe(10);
+
+    expect(variantBeforeFailure.inventory.reservedStock).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fail Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const failureData = {
+      reason: "Replacement fulfillment could not continue.",
+
+      note: "Reserved units were unsuitable for dispatch.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send(failureData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement marked as failed successfully",
+    );
+
+    const failedReplacement = response.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failure State
+    |--------------------------------------------------------------------------
+    */
+
+    expect(failedReplacement.status).toBe("failed");
+
+    expect(failedReplacement.failure).toMatchObject({
+      reason: failureData.reason,
+
+      note: failureData.note,
+
+      failedBy: String(admin._id),
+    });
+
+    expect(failedReplacement.failure.failedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stored Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("failed");
+
+    expect(storedReplacement.failure.reason).toBe(failureData.reason);
+
+    expect(String(storedReplacement.failure.failedBy)).toBe(String(admin._id));
+
+    expect(storedReplacement.failure.failedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Released
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterFailure = await Product.findById(product._id).lean();
+
+    const variantAfterFailure = findProductVariant(
+      productAfterFailure,
+      variant._id,
+    );
+
+    expect(variantAfterFailure.inventory.stock).toBe(10);
+
+    expect(variantAfterFailure.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserve -> Release Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "release",
+    ]);
+
+    const releaseLedger = ledgerEntries[1];
+
+    expect(releaseLedger.quantity).toBe(2);
+
+    expect(releaseLedger.stockDelta).toBe(0);
+
+    expect(releaseLedger.reservedStockDelta).toBe(-2);
+
+    expect(releaseLedger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(releaseLedger.after).toMatchObject({
+      stock: 10,
+
+      reservedStock: 0,
+
+      availableStock: 10,
+    });
+
+    expect(String(releaseLedger.actor)).toBe(String(admin._id));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Return Request Remains Completed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReturn = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturn.status).toBe("completed");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Processing -> Failed
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows a processing replacement to fail and releases its reservation", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Warehouse could not complete replacement fulfillment.",
+
+        note: "Failure occurred before dispatch.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacement.status).toBe("failed");
+
+    /*
+     * Processing does not commit inventory,
+     * so the existing reservation must be released.
+     */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Failure
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects failing the same replacement twice without releasing inventory twice", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/fail`;
+
+    const firstResponse = await adminAgent.post(url).send({
+      reason: "Initial replacement fulfillment failure.",
+    });
+
+    expect(firstResponse.status).toBe(200);
+
+    const firstFailedAt = firstResponse.body.data.replacement.failure.failedAt;
+
+    const secondResponse = await adminAgent.post(url).send({
+      reason: "Duplicate replacement fulfillment failure.",
+    });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_FAILED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Failure Audit Preserved
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("failed");
+
+    expect(storedReplacement.failure.failedAt.toISOString()).toBe(
+      firstFailedAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reservation Released Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Shipped Replacement Cannot Fail
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects failure after replacement inventory has been committed for shipment", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Attempt to fail replacement after shipment.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_FAILURE_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("shipped");
+
+    /*
+     * Shipment committed inventory already.
+     * Failure must not release anything.
+     */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Delivered Replacement Cannot Fail
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects failure after the replacement has been delivered", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({})
+      .expect(200);
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Attempt to fail replacement after delivery.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_FAILURE_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("delivered");
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Corrupted Reservation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back failure when the reserved Product inventory is missing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+     * Replacement owns reservation quantity = 2.
+     *
+     * Corrupt persisted Product inventory directly.
+     */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": variant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Inventory state failure rollback test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    /*
+     * Part 158 reuses the Part 156 release diagnostics.
+     */
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Must Not Become Failed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("processing");
+
+    expect(unchangedReplacement.failure?.failedAt ?? null).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Release Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Multi-Item Failure Rollback
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back an earlier reservation release when a later failure item cannot be released", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-FAIL-FIRST",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+
+        {
+          sku: "RPL-FAIL-SECOND",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = product.variants[0];
+
+    const secondVariant = product.variants[1];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Completed Two-Item Replacement Return
+    |--------------------------------------------------------------------------
+    */
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant: firstVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+
+        {
+          product,
+
+          variant: secondVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserve Both Replacement Items
+    |--------------------------------------------------------------------------
+    */
+
+    const creationResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({})
+      .expect(201);
+
+    const replacement = creationResponse.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Second Reservation
+    |--------------------------------------------------------------------------
+    */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": secondVariant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fail Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/fail`)
+      .send({
+        reason: "Multi-item replacement failure rollback test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Release Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalFirstVariant = findProductVariant(
+      finalProduct,
+      firstVariant._id,
+    );
+
+    const finalSecondVariant = findProductVariant(
+      finalProduct,
+      secondVariant._id,
+    );
+
+    expect(finalFirstVariant.inventory.stock).toBe(10);
+
+    expect(finalFirstVariant.inventory.reservedStock).toBe(2);
+
+    /*
+     * Deliberate second-item corruption remains.
+     */
+
+    expect(finalSecondVariant.inventory.stock).toBe(10);
+
+    expect(finalSecondVariant.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement State Rolled Back
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("reserved");
+
+    expect(unchangedReplacement.failure?.failedAt ?? null).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Release Ledgers Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Failure
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent replacement failure and releases inventory once", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/fail`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({
+        reason: "Concurrent fulfillment failure from first admin.",
+      }),
+
+      secondAdminAgent.post(url).send({
+        reason: "Concurrent fulfillment failure from second admin.",
+      }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REPLACEMENT_ALREADY_FAILED",
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_CONFLICT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Released Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Final Failure State
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("failed");
+
+    expect(storedReplacement.failure.failedAt).toBeTruthy();
+
+    expect(String(storedReplacement.failure.failedBy)).toBeTruthy();
+
+    /*
+     * One reserve + one release.
+     */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+      }),
+    ).toBe(2);
+  });
+});

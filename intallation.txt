@@ -3900,6 +3900,40 @@ shipped
    ▼
 delivered
 |--------------------------------------------------------------------------
+Part 159 — Replacement Failure Integration Tests
+
+Now we test the Part 158 workflow:
+
+reserved ──┐
+           ├──→ failed
+processing ┘
+
+Failure must release the replacement reservation:
+
+stock          unchanged
+reservedStock  -= replacementQuantity
+
+Ledger:
+reserve
+release
+
+Your test file already contains the required replacement model and test infrastructure, so we only update:
+
+tests/integration/order.integration.test.js
+
+The existing replacement fixture builds inspected/completed replacement Returns with trusted quantities, which is exactly what these tests reuse.
+If these pass, the replacement lifecycle now supports all primary terminal paths:
+
+                    ┌──→ cancelled
+reserved ───────────┤
+   │                └──→ failed
+   ▼
+processing ─────────┬──→ cancelled
+   │                └──→ failed
+   ▼
+shipped
+   ▼
+delivered
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
