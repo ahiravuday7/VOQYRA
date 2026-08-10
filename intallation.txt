@@ -3798,6 +3798,23 @@ DELIVERY
 stock          8
 reservedStock  0
 |--------------------------------------------------------------------------
+Part 155 — Replacement Delivery Integration Tests
+
+Now we test:
+
+shipped
+   ↓
+delivered
+
+Delivery must not touch inventory again because shipment already committed it.
+
+Update only:
+
+tests/integration/order.integration.test.js
+
+Your current test file already follows this fixture/helper-based structure.
+
+No beforeEach() update is needed.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

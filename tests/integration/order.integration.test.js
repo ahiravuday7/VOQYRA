@@ -1440,6 +1440,90 @@ const createProcessingReplacementFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Shipped Replacement Fixture
+|--------------------------------------------------------------------------
+|
+| Creates:
+|
+| completed Return
+|      ↓
+| reserved replacement
+|      ↓
+| processing
+|      ↓
+| shipped
+|--------------------------------------------------------------------------
+*/
+
+const createShippedReplacementFixture = async ({
+  adminAgent,
+  adminId,
+  customerId,
+
+  productOverrides = {},
+
+  quantity = 2,
+  resellableQuantity = 1,
+  damagedQuantity = 1,
+  rejectedQuantity = 0,
+
+  shipmentData = {},
+}) => {
+  const fixture = await createProcessingReplacementFixture({
+    adminAgent,
+    adminId,
+    customerId,
+
+    productOverrides,
+
+    quantity,
+    resellableQuantity,
+    damagedQuantity,
+    rejectedQuantity,
+  });
+
+  const resolvedShipmentData = {
+    carrier: shipmentData.carrier ?? "Blue Dart",
+
+    trackingNumber:
+      shipmentData.trackingNumber ??
+      `RPL-${new mongoose.Types.ObjectId()
+        .toString()
+        .slice(-12)
+        .toUpperCase()}`,
+
+    trackingUrl:
+      shipmentData.trackingUrl ?? "https://tracking.example.com/replacement",
+
+    note: shipmentData.note ?? "Replacement shipped for delivery testing.",
+  };
+
+  const shipmentResponse = await adminAgent
+    .post(
+      `/api/v1/admin/order-return-replacements/${fixture.replacement.id}/ship`,
+    )
+    .send(resolvedShipmentData)
+    .expect(200);
+
+  const shippedReplacement = shipmentResponse.body.data.replacement;
+
+  const storedShippedReplacement = await OrderReturnReplacement.findById(
+    fixture.replacement.id,
+  ).lean();
+
+  return {
+    ...fixture,
+
+    shipmentData: resolvedShipmentData,
+
+    shippedReplacement,
+
+    storedShippedReplacement,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -19559,5 +19643,687 @@ describe("Admin Return replacement shipment", () => {
     expect(["RPL-CONCURRENT-A", "RPL-CONCURRENT-B"]).toContain(
       storedReplacement.shipment.trackingNumber,
     );
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Delivery
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement delivery", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when delivering a replacement without authentication", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to deliver a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Replacement ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when the delivery replacement ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post(
+        "/api/v1/admin/order-return-replacements/not-a-valid-object-id/deliver",
+      )
+      .send({});
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "replacementId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Request Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects backend-controlled delivery fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/deliver`)
+      .send({
+        status: "delivered",
+
+        deliveredBy: new mongoose.Types.ObjectId().toString(),
+
+        deliveredAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the delivery replacement does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Must Already Be Shipped
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects delivering a replacement that is still processing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_DELIVERY_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("processing");
+
+    expect(response.body.details.requiredStatus).toBe("shipped");
+
+    /*
+     * Inventory is still reserved because
+     * shipment never happened.
+     */
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(10);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Successful Delivery
+  |--------------------------------------------------------------------------
+  */
+
+  it("delivers a shipped replacement without changing Product inventory or inventory Ledger", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant, returnRequest, shippedReplacement } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+
+        productOverrides: {
+          variants: [
+            {
+              sku: "RPL-DELIVER-M",
+
+              size: "M",
+
+              color: {
+                name: "Black",
+
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 300,
+
+                sellingPrice: 799,
+
+                discountPrice: 699,
+
+                currency: "INR",
+              },
+
+              inventory: {
+                stock: 10,
+
+                reservedStock: 0,
+
+                lowStockThreshold: 2,
+              },
+
+              shipping: {
+                weightInGrams: 250,
+              },
+
+              isActive: true,
+            },
+          ],
+        },
+      });
+
+    expect(shippedReplacement.status).toBe("shipped");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Before Delivery
+    |--------------------------------------------------------------------------
+    |
+    | Replacement quantity = 2
+    |
+    | Creation reserved 2.
+    | Shipment committed 2.
+    |--------------------------------------------------------------------------
+    */
+
+    const productBeforeDelivery = await Product.findById(product._id).lean();
+
+    const variantBeforeDelivery = findProductVariant(
+      productBeforeDelivery,
+      variant._id,
+    );
+
+    expect(variantBeforeDelivery.inventory.stock).toBe(8);
+
+    expect(variantBeforeDelivery.inventory.reservedStock).toBe(0);
+
+    const ledgerBeforeDelivery = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerBeforeDelivery).toHaveLength(2);
+
+    expect(ledgerBeforeDelivery.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deliver
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement delivered successfully",
+    );
+
+    const deliveredReplacement = response.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | API Delivery State
+    |--------------------------------------------------------------------------
+    */
+
+    expect(deliveredReplacement.status).toBe("delivered");
+
+    expect(deliveredReplacement.shipment.deliveredBy).toBe(String(admin._id));
+
+    expect(deliveredReplacement.shipment.deliveredAt).toBeTruthy();
+
+    /*
+     * Existing shipment information must remain.
+     */
+
+    expect(deliveredReplacement.shipment.carrier).toBe(
+      shippedReplacement.shipment.carrier,
+    );
+
+    expect(deliveredReplacement.shipment.trackingNumber).toBe(
+      shippedReplacement.shipment.trackingNumber,
+    );
+
+    expect(deliveredReplacement.shipment.shippedAt).toBe(
+      shippedReplacement.shipment.shippedAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stored Delivery
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("delivered");
+
+    expect(String(storedReplacement.shipment.deliveredBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReplacement.shipment.deliveredAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Not Change
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterDelivery = await Product.findById(product._id).lean();
+
+    const variantAfterDelivery = findProductVariant(
+      productAfterDelivery,
+      variant._id,
+    );
+
+    expect(variantAfterDelivery.inventory.stock).toBe(
+      variantBeforeDelivery.inventory.stock,
+    );
+
+    expect(variantAfterDelivery.inventory.reservedStock).toBe(
+      variantBeforeDelivery.inventory.reservedStock,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ledger Must Not Change
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerAfterDelivery = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfterDelivery).toHaveLength(2);
+
+    expect(ledgerAfterDelivery.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "commit",
+    ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Return Remains Completed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReturn = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturn.status).toBe("completed");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Delivery
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects delivering the same replacement twice", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/deliver`;
+
+    const firstResponse = await adminAgent.post(url).send({});
+
+    expect(firstResponse.status).toBe(200);
+
+    const firstDeliveredAt =
+      firstResponse.body.data.replacement.shipment.deliveredAt;
+
+    const secondResponse = await adminAgent.post(url).send({});
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_DELIVERED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Delivery Audit Preserved
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("delivered");
+
+    expect(storedReplacement.shipment.deliveredAt.toISOString()).toBe(
+      firstDeliveredAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Still Committed Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Corrupted Shipment Evidence
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects delivery when required shipment evidence is missing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Shipment Evidence
+    |--------------------------------------------------------------------------
+    |
+    | Keep:
+    |
+    | status = shipped
+    |
+    | but remove evidence required for delivery.
+    |--------------------------------------------------------------------------
+    */
+
+    await OrderReturnReplacement.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(replacement.id),
+      },
+
+      {
+        $set: {
+          "shipment.shippedAt": null,
+        },
+      },
+    );
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments({
+      referenceId: replacement.replacementNumber,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/deliver`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_DELIVERY_SHIPMENT_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Must Remain Shipped
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("shipped");
+
+    expect(unchangedReplacement.shipment.deliveredAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Already Committed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(8);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Delivery Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+      }),
+    ).toBe(ledgerCountBefore);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Delivery
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent replacement delivery", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: secondAdminAgent,
+
+      user: secondAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/deliver`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({}),
+
+      secondAdminAgent.post(url).send({}),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect(conflictResponses[0].body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_DELIVERED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Delivery Audit
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("delivered");
+
+    expect(storedReplacement.shipment.deliveredAt).toBeTruthy();
+
+    expect([String(firstAdmin._id), String(secondAdmin._id)]).toContain(
+      String(storedReplacement.shipment.deliveredBy),
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Stay Committed Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+      }),
+    ).toBe(2);
   });
 });
