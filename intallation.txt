@@ -3352,6 +3352,31 @@ Also import the new audit model if it is not already imported:
 
 import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
 |--------------------------------------------------------------------------
+Part 143: Multi-Return Cumulative Refund Tests
+
+Now we test the case that Part 140 was specifically designed for: multiple separate Return Requests against the same Order. 💰🔒
+
+We want to prove:
+
+Order payment = paid
+        ↓
+Return A refund
+        ↓
+partially-refunded
+        ↓
+Return B refund
+        ↓
+refunded
+
+and also guarantee:
+
+total Return refunds <= original Order grandTotal
+
+Update:
+
+tests/integration/order.integration.test.js
+
+Before continuing, your Part 142 tests should no longer have the OrderReturnRefundAudit is not defined error after adding its import.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

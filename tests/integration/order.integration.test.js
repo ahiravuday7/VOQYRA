@@ -956,6 +956,169 @@ const createCompletedCustomerReturnRequestFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create and Complete Return for Existing Order
+|--------------------------------------------------------------------------
+|
+| This helper does NOT create another Order.
+|
+| It creates a new Return Request against an existing delivered Order and
+| moves it through:
+|
+| requested
+|   ↓
+| approved
+|   ↓
+| in-transit
+|   ↓
+| received
+|   ↓
+| inspected
+|   ↓
+| completed
+|--------------------------------------------------------------------------
+*/
+
+const createCompletedReturnForExistingOrder = async ({
+  adminAgent,
+  customerAgent,
+
+  orderId,
+  orderItemId,
+
+  quantity = 1,
+
+  requestedResolution = "refund",
+
+  resellableQuantity = quantity,
+  damagedQuantity = 0,
+  rejectedQuantity = 0,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Create Return Request
+    |--------------------------------------------------------------------------
+    */
+
+  const createResponse = await customerAgent
+    .post(`/api/v1/orders/${orderId}/returns`)
+    .send({
+      requestedResolution,
+
+      items: [
+        {
+          orderItemId: String(orderItemId),
+
+          quantity,
+
+          reason: "defective",
+
+          details: "Additional Return Request for cumulative refund testing.",
+        },
+      ],
+
+      customerNote: "Please process this additional Return Request.",
+    })
+    .expect(201);
+
+  const createdReturnRequest = createResponse.body.data.returnRequest;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Approve
+    |--------------------------------------------------------------------------
+    */
+
+  await adminAgent
+    .post(`/api/v1/admin/order-returns/${createdReturnRequest.id}/approve`)
+    .send({
+      adminNote: "Additional Return Request approved.",
+    })
+    .expect(200);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Mark In Transit
+    |--------------------------------------------------------------------------
+    */
+
+  const trackingSuffix = new mongoose.Types.ObjectId()
+    .toString()
+    .slice(-10)
+    .toUpperCase();
+
+  await adminAgent
+    .post(
+      `/api/v1/admin/order-returns/${createdReturnRequest.id}/mark-in-transit`,
+    )
+    .send({
+      carrier: "Blue Dart",
+
+      trackingNumber: `RET-${trackingSuffix}`,
+
+      note: "Additional Return shipment is in transit.",
+    })
+    .expect(200);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Receive
+    |--------------------------------------------------------------------------
+    */
+
+  await adminAgent
+    .post(`/api/v1/admin/order-returns/${createdReturnRequest.id}/receive`)
+    .send({
+      note: "Additional Return parcel received at warehouse.",
+    })
+    .expect(200);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inspect
+    |--------------------------------------------------------------------------
+    */
+
+  await adminAgent
+    .post(`/api/v1/admin/order-returns/${createdReturnRequest.id}/inspect`)
+    .send({
+      items: [
+        {
+          orderItemId: String(orderItemId),
+
+          resellableQuantity,
+
+          damagedQuantity,
+
+          rejectedQuantity,
+
+          note: "Additional Return item inspected.",
+        },
+      ],
+    })
+    .expect(200);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Complete
+    |--------------------------------------------------------------------------
+    */
+
+  const completionResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${createdReturnRequest.id}/complete`)
+    .send({
+      adminNote: "Additional Return processing completed.",
+    })
+    .expect(200);
+
+  return {
+    createdReturnRequest,
+
+    completedReturnRequest: completionResponse.body.data.returnRequest,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -15614,5 +15777,719 @@ describe("Admin Return refund", () => {
     expect(order.status).toBe("refunded");
 
     expect(order.payment.status).toBe("refunded");
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Multi-Return Cumulative Refund
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin multi-Return cumulative refund", () => {
+  it("moves one Order from paid to partially-refunded and then refunded across two separate Return Requests", async () => {
+    const { agent: adminAgent, user: admin } =
+      await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Return
+    |--------------------------------------------------------------------------
+    |
+    | Order quantity = 2
+    | First Return   = 1
+    |--------------------------------------------------------------------------
+    */
+
+    const firstFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const {
+      createdOrder,
+      orderItem,
+
+      returnRequest: firstReturnRequest,
+    } = firstFixture;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Trusted Order Values
+    |--------------------------------------------------------------------------
+    */
+
+    const initialOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(initialOrder.payment.status).toBe("paid");
+
+    const trustedOrderItem = initialOrder.items.find(
+      (item) => String(item._id) === String(orderItem._id),
+    );
+
+    expect(trustedOrderItem).toBeTruthy();
+
+    const unitRefundAmount = Number(trustedOrderItem.pricing.unitFinalPrice);
+
+    const orderGrandTotal = Number(initialOrder.totals.grandTotal);
+
+    /*
+     * For this fixture:
+     *
+     * 2 units × unitFinalPrice
+     *
+     * should equal the complete Order value.
+     */
+
+    expect(unitRefundAmount * 2).toBe(orderGrandTotal);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Refund First Return
+    |--------------------------------------------------------------------------
+    */
+
+    const firstReferenceId = `RFND-MULTI-A-${new mongoose.Types.ObjectId().toString()}`;
+
+    const firstRefundResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${firstReturnRequest.id}/refund`)
+      .send({
+        referenceId: firstReferenceId,
+
+        note: "First partial Return refund.",
+      });
+
+    expect(firstRefundResponse.status).toBe(200);
+
+    expect(firstRefundResponse.body.data.returnRequest.refund.amount).toBe(
+      unitRefundAmount,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order Must Now Be Partially Refunded
+    |--------------------------------------------------------------------------
+    */
+
+    const orderAfterFirstRefund = await Order.findById(createdOrder.id).lean();
+
+    expect(orderAfterFirstRefund.payment.status).toBe("partially-refunded");
+
+    expect(orderAfterFirstRefund.payment.refundedAt).toBeNull();
+
+    expect(orderAfterFirstRefund.status).not.toBe("refunded");
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Audit
+    |--------------------------------------------------------------------------
+    */
+
+    const firstAudit = await OrderReturnRefundAudit.findOne({
+      returnRequest: firstReturnRequest.id,
+    }).lean();
+
+    expect(firstAudit).toBeTruthy();
+
+    expect(firstAudit.previousPaymentStatus).toBe("paid");
+
+    expect(firstAudit.paymentStatus).toBe("partially-refunded");
+
+    expect(firstAudit.previousCumulativeRefundAmount).toBe(0);
+
+    expect(firstAudit.cumulativeRefundAmount).toBe(unitRefundAmount);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Second Return Against SAME Order
+    |--------------------------------------------------------------------------
+    |
+    | First completed Return consumes 1.
+    |
+    | Purchased quantity = 2
+    |
+    | Remaining returnable quantity = 1.
+    |--------------------------------------------------------------------------
+    */
+
+    const { completedReturnRequest: secondReturnRequest } =
+      await createCompletedReturnForExistingOrder({
+        adminAgent,
+        customerAgent,
+
+        orderId: createdOrder.id,
+
+        orderItemId: orderItem._id,
+
+        quantity: 1,
+
+        requestedResolution: "refund",
+
+        resellableQuantity: 1,
+
+        damagedQuantity: 0,
+
+        rejectedQuantity: 0,
+      });
+
+    expect(secondReturnRequest.status).toBe("completed");
+
+    expect(secondReturnRequest.id).not.toBe(firstReturnRequest.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Refund Second Return
+    |--------------------------------------------------------------------------
+    */
+
+    const secondReferenceId = `RFND-MULTI-B-${new mongoose.Types.ObjectId().toString()}`;
+
+    const secondRefundResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${secondReturnRequest.id}/refund`)
+      .send({
+        referenceId: secondReferenceId,
+
+        note: "Second Return completes the Order refund.",
+      });
+
+    expect(secondRefundResponse.status).toBe(200);
+
+    expect(secondRefundResponse.body.data.returnRequest.refund.amount).toBe(
+      unitRefundAmount,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entire Order Must Now Be Fully Refunded
+    |--------------------------------------------------------------------------
+    */
+
+    const fullyRefundedOrder = await Order.findById(createdOrder.id).lean();
+
+    expect(fullyRefundedOrder.status).toBe("refunded");
+
+    expect(fullyRefundedOrder.payment.status).toBe("refunded");
+
+    expect(fullyRefundedOrder.payment.refundedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Final Order-Level Refund Snapshot
+    |--------------------------------------------------------------------------
+    */
+
+    expect(fullyRefundedOrder.refund.amount).toBe(orderGrandTotal);
+
+    expect(fullyRefundedOrder.refund.currency).toBe(
+      initialOrder.totals.currency,
+    );
+
+    expect(fullyRefundedOrder.refund.referenceId).toBe(secondReferenceId);
+
+    expect(String(fullyRefundedOrder.refund.refundedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(fullyRefundedOrder.refund.refundedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Two Immutable Return Refund Audits
+    |--------------------------------------------------------------------------
+    */
+
+    const audits = await OrderReturnRefundAudit.find({
+      order: createdOrder.id,
+    })
+      .sort({
+        refundedAt: 1,
+      })
+      .lean();
+
+    expect(audits).toHaveLength(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Refund Audit
+    |--------------------------------------------------------------------------
+    */
+
+    expect(audits[0].amount).toBe(unitRefundAmount);
+
+    expect(audits[0].previousCumulativeRefundAmount).toBe(0);
+
+    expect(audits[0].cumulativeRefundAmount).toBe(unitRefundAmount);
+
+    expect(audits[0].paymentStatus).toBe("partially-refunded");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Refund Audit
+    |--------------------------------------------------------------------------
+    */
+
+    expect(audits[1].amount).toBe(unitRefundAmount);
+
+    expect(audits[1].previousPaymentStatus).toBe("partially-refunded");
+
+    expect(audits[1].paymentStatus).toBe("refunded");
+
+    expect(audits[1].previousCumulativeRefundAmount).toBe(unitRefundAmount);
+
+    expect(audits[1].cumulativeRefundAmount).toBe(orderGrandTotal);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Audit Totals Must Equal Order Total
+    |--------------------------------------------------------------------------
+    */
+
+    const totalRefunded = audits.reduce(
+      (total, audit) => total + Number(audit.amount),
+      0,
+    );
+
+    expect(totalRefunded).toBe(orderGrandTotal);
+  });
+
+  it("prevents a third Return Request after separate completed Returns have consumed the full purchased quantity", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order quantity = 2
+    | First Return   = 1
+    |--------------------------------------------------------------------------
+    */
+
+    const firstFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const { createdOrder, orderItem } = firstFixture;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Return = remaining 1
+    |--------------------------------------------------------------------------
+    */
+
+    await createCompletedReturnForExistingOrder({
+      adminAgent,
+      customerAgent,
+
+      orderId: createdOrder.id,
+
+      orderItemId: orderItem._id,
+
+      quantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Third Return Should Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const thirdResponse = await customerAgent
+      .post(`/api/v1/orders/${createdOrder.id}/returns`)
+      .send({
+        requestedResolution: "refund",
+
+        items: [
+          {
+            orderItemId: String(orderItem._id),
+
+            quantity: 1,
+
+            reason: "defective",
+
+            details: "Attempting to return more than purchased quantity.",
+          },
+        ],
+      });
+
+    expect(thirdResponse.status).toBe(409);
+
+    expect(thirdResponse.body.errorCode).toBe("ORDER_RETURN_QUANTITY_EXCEEDED");
+  });
+
+  it("prevents a Return refund when cumulative financial refunds would exceed the Order grand total", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Return
+    |--------------------------------------------------------------------------
+    */
+
+    const firstFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const {
+      createdOrder,
+      orderItem,
+
+      returnRequest: firstReturnRequest,
+    } = firstFixture;
+
+    const initialOrder = await Order.findById(createdOrder.id).lean();
+
+    const grandTotal = Number(initialOrder.totals.grandTotal);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Legitimate First Refund
+    |--------------------------------------------------------------------------
+    */
+
+    const firstReferenceId = `RFND-OVER-A-${new mongoose.Types.ObjectId().toString()}`;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${firstReturnRequest.id}/refund`)
+      .send({
+        referenceId: firstReferenceId,
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Second Completed Return
+    |--------------------------------------------------------------------------
+    */
+
+    const { completedReturnRequest: secondReturnRequest } =
+      await createCompletedReturnForExistingOrder({
+        adminAgent,
+        customerAgent,
+
+        orderId: createdOrder.id,
+
+        orderItemId: orderItem._id,
+
+        quantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Previous Audit
+    |--------------------------------------------------------------------------
+    |
+    | Audit model itself is immutable through Mongoose.
+    |
+    | Native collection access is deliberately used only for this
+    | corruption-defense integration test.
+    |--------------------------------------------------------------------------
+    */
+
+    await OrderReturnRefundAudit.collection.updateOne(
+      {
+        returnRequest: new mongoose.Types.ObjectId(firstReturnRequest.id),
+      },
+      {
+        $set: {
+          amount: grandTotal,
+
+          cumulativeRefundAmount: grandTotal,
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Attempt Second Refund
+    |--------------------------------------------------------------------------
+    */
+
+    const secondReferenceId = `RFND-OVER-B-${new mongoose.Types.ObjectId().toString()}`;
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${secondReturnRequest.id}/refund`)
+      .send({
+        referenceId: secondReferenceId,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REFUND_EXCEEDS_ORDER_TOTAL",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Return Must Remain Unrefunded
+    |--------------------------------------------------------------------------
+    */
+
+    const storedSecondReturn = await OrderReturnRequest.findById(
+      secondReturnRequest.id,
+    ).lean();
+
+    expect(storedSecondReturn.refund.refundedAt).toBeNull();
+
+    expect(storedSecondReturn.refund.referenceId).toBeNull();
+
+    expect(storedSecondReturn.refund.amount).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Second Financial Audit
+    |--------------------------------------------------------------------------
+    */
+
+    const secondAudit = await OrderReturnRefundAudit.findOne({
+      returnRequest: secondReturnRequest.id,
+    }).lean();
+
+    expect(secondAudit).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Reference Must Not Be Persisted
+    |--------------------------------------------------------------------------
+    */
+
+    const referenceAudit = await OrderReturnRefundAudit.findOne({
+      referenceId: secondReferenceId,
+    }).lean();
+
+    expect(referenceAudit).toBeNull();
+  });
+
+  it("prevents a Return refund when cumulative financial refunds would exceed the Order grand total", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Return
+    |--------------------------------------------------------------------------
+    */
+
+    const firstFixture = await createCompletedCustomerReturnRequestFixture({
+      adminAgent,
+      customerAgent,
+
+      orderedQuantity: 2,
+
+      returnQuantity: 1,
+
+      requestedResolution: "refund",
+    });
+
+    const {
+      createdOrder,
+      orderItem,
+
+      returnRequest: firstReturnRequest,
+    } = firstFixture;
+
+    const initialOrder = await Order.findById(createdOrder.id).lean();
+
+    const grandTotal = Number(initialOrder.totals.grandTotal);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Legitimate First Refund
+    |--------------------------------------------------------------------------
+    */
+
+    const firstReferenceId = `RFND-OVER-A-${new mongoose.Types.ObjectId().toString()}`;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${firstReturnRequest.id}/refund`)
+      .send({
+        referenceId: firstReferenceId,
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Second Completed Return
+    |--------------------------------------------------------------------------
+    */
+
+    const { completedReturnRequest: secondReturnRequest } =
+      await createCompletedReturnForExistingOrder({
+        adminAgent,
+        customerAgent,
+
+        orderId: createdOrder.id,
+
+        orderItemId: orderItem._id,
+
+        quantity: 1,
+
+        requestedResolution: "refund",
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Previous Audit
+    |--------------------------------------------------------------------------
+    |
+    | Audit model itself is immutable through Mongoose.
+    |
+    | Native collection access is deliberately used only for this
+    | corruption-defense integration test.
+    |--------------------------------------------------------------------------
+    */
+
+    await OrderReturnRefundAudit.collection.updateOne(
+      {
+        returnRequest: new mongoose.Types.ObjectId(firstReturnRequest.id),
+      },
+      {
+        $set: {
+          amount: grandTotal,
+
+          cumulativeRefundAmount: grandTotal,
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Attempt Second Refund
+    |--------------------------------------------------------------------------
+    */
+
+    const secondReferenceId = `RFND-OVER-B-${new mongoose.Types.ObjectId().toString()}`;
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${secondReturnRequest.id}/refund`)
+      .send({
+        referenceId: secondReferenceId,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REFUND_EXCEEDS_ORDER_TOTAL",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Return Must Remain Unrefunded
+    |--------------------------------------------------------------------------
+    */
+
+    const storedSecondReturn = await OrderReturnRequest.findById(
+      secondReturnRequest.id,
+    ).lean();
+
+    expect(storedSecondReturn.refund.refundedAt).toBeNull();
+
+    expect(storedSecondReturn.refund.referenceId).toBeNull();
+
+    expect(storedSecondReturn.refund.amount).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Second Financial Audit
+    |--------------------------------------------------------------------------
+    */
+
+    const secondAudit = await OrderReturnRefundAudit.findOne({
+      returnRequest: secondReturnRequest.id,
+    }).lean();
+
+    expect(secondAudit).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Reference Must Not Be Persisted
+    |--------------------------------------------------------------------------
+    */
+
+    const referenceAudit = await OrderReturnRefundAudit.findOne({
+      referenceId: secondReferenceId,
+    }).lean();
+
+    expect(referenceAudit).toBeNull();
+  });
+
+  it("prevents modification of an existing Return refund audit through Mongoose", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { returnRequest } = await createCompletedCustomerReturnRequestFixture(
+      {
+        adminAgent,
+        customerAgent,
+
+        orderedQuantity: 1,
+
+        returnQuantity: 1,
+
+        requestedResolution: "refund",
+      },
+    );
+
+    const referenceId = `RFND-IMMUTABLE-${new mongoose.Types.ObjectId().toString()}`;
+
+    await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest.id}/refund`)
+      .send({
+        referenceId,
+      })
+      .expect(200);
+
+    const audit = await OrderReturnRefundAudit.findOne({
+      returnRequest: returnRequest.id,
+    });
+
+    expect(audit).toBeTruthy();
+
+    const originalAmount = audit.amount;
+
+    audit.amount = originalAmount + 100;
+
+    await expect(audit.save()).rejects.toThrow(
+      "Order Return Refund Audit records are immutable",
+    );
+
+    /*
+     * Database still contains original amount.
+     */
+
+    const unchangedAudit = await OrderReturnRefundAudit.findById(
+      audit._id,
+    ).lean();
+
+    expect(unchangedAudit.amount).toBe(originalAmount);
   });
 });
