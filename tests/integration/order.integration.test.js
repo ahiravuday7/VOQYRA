@@ -22,6 +22,8 @@ import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 
 import OrderReturnRequest from "../../src/modules/orders/order-return.model.js";
 
+import OrderReturnReplacement from "../../src/modules/orders/order-return-replacement.model.js";
+
 import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
@@ -1119,6 +1121,166 @@ const createCompletedReturnForExistingOrder = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Completed Replacement Return Fixture
+|--------------------------------------------------------------------------
+|
+| This fixture intentionally creates the already-completed Return state
+| directly.
+|
+| Earlier integration tests already verify the complete Return lifecycle.
+| These tests isolate the replacement-creation workflow.
+|--------------------------------------------------------------------------
+*/
+
+const createCompletedReplacementReturnFixture = async ({
+  customerId,
+  adminId,
+
+  items,
+
+  requestedResolution = "replacement",
+
+  status = "completed",
+}) => {
+  if (!customerId) {
+    throw new Error("Replacement Return fixture requires a customer ID");
+  }
+
+  if (!adminId) {
+    throw new Error("Replacement Return fixture requires an admin ID");
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("Replacement Return fixture requires at least one item");
+  }
+
+  fixtureSequence += 1;
+
+  const now = new Date();
+
+  const returnItems = items.map(
+    ({
+      product,
+      variant,
+
+      quantity = 2,
+
+      resellableQuantity = 1,
+
+      damagedQuantity = 1,
+
+      rejectedQuantity = 0,
+
+      reason = "defective",
+    }) => {
+      return {
+        orderItemId: new mongoose.Types.ObjectId(),
+
+        product: product._id,
+
+        variantId: variant._id,
+
+        sku: variant.sku,
+
+        productName: product.name,
+
+        size: variant.size ?? null,
+
+        color: {
+          name: variant.color?.name ?? null,
+
+          code: variant.color?.code ?? null,
+        },
+
+        quantity,
+
+        reason,
+
+        details: null,
+
+        inspection: {
+          status: "inspected",
+
+          resellableQuantity,
+
+          damagedQuantity,
+
+          rejectedQuantity,
+
+          note: "Replacement integration-test inspection",
+
+          inspectedBy: adminId,
+
+          inspectedAt: now,
+        },
+      };
+    },
+  );
+
+  return OrderReturnRequest.create({
+    returnRequestNumber: `RET-20260810-RPL${String(fixtureSequence).padStart(
+      6,
+      "0",
+    )}`,
+
+    order: new mongoose.Types.ObjectId(),
+
+    orderNumber: `ORD-RPL-${fixtureSequence}`,
+
+    customer: customerId,
+
+    items: returnItems,
+
+    requestedResolution,
+
+    status,
+
+    customerNote: "Replacement requested",
+
+    adminNote: null,
+
+    approval: {
+      approvedBy: adminId,
+
+      approvedAt: now,
+    },
+
+    shipment: {
+      carrier: "Blue Dart",
+
+      trackingNumber: `RET-RPL-${fixtureSequence}`,
+
+      trackingUrl: null,
+
+      note: null,
+
+      markedInTransitBy: adminId,
+
+      markedInTransitAt: now,
+    },
+
+    receipt: {
+      note: "Received for replacement testing",
+
+      receivedBy: adminId,
+
+      receivedAt: now,
+    },
+
+    completion: {
+      completedBy: adminId,
+
+      completedAt: now,
+    },
+
+    createdBy: customerId,
+
+    updatedBy: adminId,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -1132,6 +1294,10 @@ const findProductVariant = (product, variantId) => {
 beforeEach(async () => {
   await Promise.all([
     Order.deleteMany({}),
+
+    OrderReturnRequest.deleteMany({}),
+
+    OrderReturnReplacement.deleteMany({}),
 
     ProductInventoryLedger.deleteMany({}),
 
@@ -16491,5 +16657,1007 @@ describe("Admin multi-Return cumulative refund", () => {
     ).lean();
 
     expect(unchangedAudit.amount).toBe(originalAmount);
+  });
+});
+
+describe("Admin Return replacement creation", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when the request is unauthenticated", async () => {
+    const returnRequestId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(401);
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to create a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(403);
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Request Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects admin-controlled replacement fields in the request body", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/replacement`)
+      .send({
+        quantity: 100,
+
+        replacementQuantity: 100,
+
+        status: "shipped",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Return
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the Return Request does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const returnRequestId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequestId}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REQUEST_NOT_FOUND");
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Return Must Be Completed
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects a replacement before the Return Request is completed", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      status: "inspected",
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_STATUS_INVALID",
+    );
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Resolution Must Be Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects a completed refund-resolution Return Request", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      requestedResolution: "refund",
+
+      items: [
+        {
+          product,
+
+          variant,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_RESOLUTION_INVALID",
+    );
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Successful Trusted Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("creates a trusted replacement and atomically reserves inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * returned = 3
+     *
+     * accepted:
+     * resellable = 1
+     * damaged    = 1
+     *
+     * rejected   = 1
+     *
+     * trusted replacement quantity = 2
+     */
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 3,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 1,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(201);
+
+    expect(response.body.success).toBe(true);
+
+    const replacement = response.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Response
+    |--------------------------------------------------------------------------
+    */
+
+    expect(replacement.replacementNumber).toMatch(/^RPL-\d{8}-[A-F0-9]{12}$/);
+
+    expect(replacement.status).toBe("reserved");
+
+    expect(replacement.returnRequestId).toBe(String(returnRequest._id));
+
+    expect(replacement.items).toHaveLength(1);
+
+    expect(replacement.items[0].returnedQuantity).toBe(3);
+
+    /*
+     * Must come from inspection:
+     *
+     * 1 resellable
+     * +
+     * 1 damaged
+     * =
+     * 2 replacement units
+     */
+
+    expect(replacement.items[0].replacementQuantity).toBe(2);
+
+    expect(replacement.items[0].productId).toBe(String(product._id));
+
+    expect(replacement.items[0].variantId).toBe(String(variant._id));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Persisted Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findOne({
+      returnRequest: returnRequest._id,
+    }).lean();
+
+    expect(storedReplacement).not.toBeNull();
+
+    expect(storedReplacement.status).toBe("reserved");
+
+    expect(storedReplacement.items[0].replacementQuantity).toBe(2);
+
+    expect(String(storedReplacement.reservation.reservedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReplacement.reservation.reservedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Inventory
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    /*
+     * Reservation must NOT reduce physical stock.
+     */
+
+    expect(updatedVariant.inventory.stock).toBe(10);
+
+    expect(updatedVariant.inventory.reservedStock).toBe(2);
+
+    expect(
+      updatedVariant.inventory.stock - updatedVariant.inventory.reservedStock,
+    ).toBe(8);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Replacement Inventory Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    }).lean();
+
+    expect(ledgerEntries).toHaveLength(1);
+
+    const ledger = ledgerEntries[0];
+
+    expect(ledger.operation).toBe("reserve");
+
+    expect(ledger.quantity).toBe(2);
+
+    expect(ledger.stockDelta).toBe(0);
+
+    expect(ledger.reservedStockDelta).toBe(2);
+
+    expect(ledger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 0,
+
+      availableStock: 10,
+    });
+
+    expect(ledger.after).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(String(ledger.actor)).toBe(String(admin._id));
+
+    /*
+    |--------------------------------------------------------------------------
+    | Return Must Remain Completed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReturn = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturn.status).toBe("completed");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Nothing Eligible
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects a Return whose complete quantity was rejected during inspection", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 2,
+
+          resellableQuantity: 0,
+
+          damagedQuantity: 0,
+
+          rejectedQuantity: 2,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_NOTHING_ELIGIBLE",
+    );
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Insufficient Replacement Stock
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back replacement creation when available stock is insufficient", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-LOW-STOCK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          /*
+           * Available =
+           * 2 - 1
+           * = 1
+           *
+           * Replacement needs 2.
+           */
+
+          inventory: {
+            stock: 2,
+
+            reservedStock: 1,
+
+            lowStockThreshold: 1,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_INSUFFICIENT_STOCK",
+    );
+
+    /*
+     * Replacement creation must roll back.
+     */
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+
+    /*
+     * Inventory must remain unchanged.
+     */
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(2);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(1);
+
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("does not reserve inventory twice when replacement creation is repeated", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const url = `/api/v1/admin/order-returns/${returnRequest._id}/replacement`;
+
+    const firstResponse = await adminAgent.post(url).send({});
+
+    expect(firstResponse.status).toBe(201);
+
+    const secondResponse = await adminAgent.post(url).send({});
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_EXISTS",
+    );
+
+    expect(
+      await OrderReturnReplacement.countDocuments({
+        returnRequest: returnRequest._id,
+      }),
+    ).toBe(1);
+
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    /*
+     * Only one reservation of quantity 2.
+     */
+
+    expect(updatedVariant.inventory.reservedStock).toBe(2);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        operation: "reserve",
+
+        referenceId: firstResponse.body.data.replacement.replacementNumber,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Multi-Item Rollback
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back an earlier replacement reservation when a later item fails", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-AVAILABLE-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 1,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+
+        {
+          sku: "RPL-UNAVAILABLE-L",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          /*
+           * Available = 1
+           * replacement needs = 2
+           */
+
+          inventory: {
+            stock: 2,
+
+            reservedStock: 1,
+
+            lowStockThreshold: 1,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = product.variants[0];
+
+    const secondVariant = product.variants[1];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant: firstVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+
+        {
+          product,
+
+          variant: secondVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_INSUFFICIENT_STOCK",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Entire Transaction Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedFirstVariant = findProductVariant(
+      updatedProduct,
+      firstVariant._id,
+    );
+
+    const updatedSecondVariant = findProductVariant(
+      updatedProduct,
+      secondVariant._id,
+    );
+
+    /*
+     * First reservation happened earlier inside the transaction,
+     * but it must not survive.
+     */
+
+    expect(updatedFirstVariant.inventory.reservedStock).toBe(1);
+
+    expect(updatedSecondVariant.inventory.reservedStock).toBe(1);
+
+    expect(await OrderReturnReplacement.countDocuments()).toBe(0);
+
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Replacement Creation
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent replacement and reserves inventory once", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: firstAdmin._id,
+
+      items: [
+        {
+          product,
+
+          variant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const url = `/api/v1/admin/order-returns/${returnRequest._id}/replacement`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({}),
+
+      secondAdminAgent.post(url).send({}),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successResponses = responses.filter(
+      (response) => response.status === 201,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect(conflictResponses[0].body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_EXISTS",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await OrderReturnReplacement.countDocuments({
+        returnRequest: returnRequest._id,
+      }),
+    ).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Reserved Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    expect(updatedVariant.inventory.stock).toBe(10);
+
+    expect(updatedVariant.inventory.reservedStock).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Replacement Reservation Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const replacement = await OrderReturnReplacement.findOne({
+      returnRequest: returnRequest._id,
+    }).lean();
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(1);
   });
 });

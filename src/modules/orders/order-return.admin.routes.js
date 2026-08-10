@@ -20,6 +20,9 @@ import {
   refundAdminOrderReturnRequestController,
 } from "./order-return.controller.js";
 
+import { createAdminReturnReplacementController } from "./order-return-replacement.controller.js";
+import { createOrderReturnReplacementRequestSchema } from "./order-return-replacement.validation.js";
+
 import {
   adminOrderReturnDetailsRequestSchema,
   adminOrderReturnListRequestSchema,
@@ -153,6 +156,21 @@ router.post(
   "/:returnRequestId/refund",
   validateRequest(adminOrderReturnRefundRequestSchema),
   refundAdminOrderReturnRequestController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Create Return Replacement
+|--------------------------------------------------------------------------
+|
+| POST /api/v1/admin/order-returns/:returnRequestId/replacement
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:returnRequestId/replacement",
+  validateRequest(createOrderReturnReplacementRequestSchema),
+  createAdminReturnReplacementController,
 );
 
 /*

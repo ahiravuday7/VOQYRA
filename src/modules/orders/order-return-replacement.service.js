@@ -826,6 +826,28 @@ export const createAdminOrderReturnReplacement = async (
 
 /*
 |--------------------------------------------------------------------------
+| Check Whether Return Has Financial Refund Evidence
+|--------------------------------------------------------------------------
+*/
+
+const orderReturnRequestHasRefundEvidence = (returnRequest) => {
+  const refund = returnRequest.refund;
+
+  if (!refund) {
+    return false;
+  }
+
+  return Boolean(
+    refund.refundedAt ||
+    refund.refundedBy ||
+    refund.referenceId ||
+    Number(refund.refundedQuantity ?? 0) > 0 ||
+    Number(refund.amount ?? 0) > 0,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Assert Replacement Return Eligibility
 |--------------------------------------------------------------------------
 |
@@ -868,7 +890,7 @@ export const assertOrderReturnCanCreateReplacement = (returnRequest) => {
   |--------------------------------------------------------------------------
   */
 
-  if (returnRequest.refund) {
+  if (orderReturnRequestHasRefundEvidence(returnRequest)) {
     throw createReturnReplacementRefundConflictError();
   }
 };

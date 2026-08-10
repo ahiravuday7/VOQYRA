@@ -3549,7 +3549,29 @@ POST /api/v1/admin/order-returns/:returnRequestId/replacement
 The existing Return architecture already uses separate admin endpoints for operations such as refund, and replacement must remain its own workflow rather than being treated as a refund.
 
 We are not adding processing, shipping, delivery, commit, or cancellation yet.
+For testing this API:
+
+POST /api/v1/admin/order-returns/:returnRequestId/replacement
+
+the Return Request must compulsorily have:
+
+status = "completed"
+
+and:
+
+requestedResolution = "replacement"
 |--------------------------------------------------------------------------
+Part 149 — Replacement Creation Integration Tests
+
+Now we test the endpoint before adding processing/shipping:
+
+POST /api/v1/admin/order-returns/:returnRequestId/replacement
+
+For this Part, update only:
+
+tests/integration/order.integration.test.js
+
+I’m going to use a small direct completed-Return fixture for these tests instead of replaying the entire requested → approved → ... → completed lifecycle every time. That keeps Part 149 focused specifically on replacement creation. Your Return model supports the trusted item/inspection structure we need, including the rule that inspected quantities must exactly equal returned quantity.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
