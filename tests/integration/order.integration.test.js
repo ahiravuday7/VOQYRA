@@ -20327,3 +20327,836 @@ describe("Admin Return replacement delivery", () => {
     ).toBe(2);
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Cancellation
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement cancellation", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when cancelling a replacement without authentication", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/cancel`)
+      .send({
+        reason: "Replacement is no longer required.",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to cancel a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/cancel`)
+      .send({
+        reason: "Replacement is no longer required.",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Replacement ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when the cancellation replacement ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post(
+        "/api/v1/admin/order-return-replacements/not-a-valid-object-id/cancel",
+      )
+      .send({
+        reason: "Replacement is no longer required.",
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects invalid and backend-controlled cancellation fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/cancel`)
+      .send({
+        reason: "No",
+
+        status: "cancelled",
+
+        cancelledBy: new mongoose.Types.ObjectId().toString(),
+
+        cancelledAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the replacement does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/cancel`)
+      .send({
+        reason: "Replacement is no longer required.",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reserved Replacement Cancellation
+  |--------------------------------------------------------------------------
+  */
+
+  it("cancels a reserved replacement and releases its inventory reservation", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Before Cancellation
+    |--------------------------------------------------------------------------
+    */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    expect(replacement.status).toBe("reserved");
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cancel
+    |--------------------------------------------------------------------------
+    */
+
+    const cancellationData = {
+      reason: "Customer no longer requires the replacement.",
+
+      note: "Cancelled before warehouse processing started.",
+    };
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send(cancellationData);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement cancelled successfully",
+    );
+
+    const cancelledReplacement = response.body.data.replacement;
+
+    expect(cancelledReplacement.status).toBe("cancelled");
+
+    expect(cancelledReplacement.cancellation).toMatchObject({
+      reason: cancellationData.reason,
+
+      note: cancellationData.note,
+
+      cancelledBy: String(admin._id),
+    });
+
+    expect(cancelledReplacement.cancellation.cancelledAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Release
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(10);
+
+    expect(variantAfter.inventory.reservedStock).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reserve → Release Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "release",
+    ]);
+
+    const releaseLedger = ledgerEntries[1];
+
+    expect(releaseLedger.quantity).toBe(2);
+
+    expect(releaseLedger.stockDelta).toBe(0);
+
+    expect(releaseLedger.reservedStockDelta).toBe(-2);
+
+    expect(releaseLedger.before).toMatchObject({
+      stock: 10,
+
+      reservedStock: 2,
+
+      availableStock: 8,
+    });
+
+    expect(releaseLedger.after).toMatchObject({
+      stock: 10,
+
+      reservedStock: 0,
+
+      availableStock: 10,
+    });
+
+    expect(String(releaseLedger.actor)).toBe(String(admin._id));
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Processing Replacement Cancellation
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows cancellation while the replacement is processing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Replacement fulfilment was cancelled before dispatch.",
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacement.status).toBe("cancelled");
+
+    /*
+     * Processing does not consume the reservation,
+     * therefore cancellation must release it.
+     */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Cancellation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects cancelling the same replacement twice without releasing inventory twice", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/cancel`;
+
+    await adminAgent
+      .post(url)
+      .send({
+        reason: "First valid replacement cancellation.",
+      })
+      .expect(200);
+
+    const secondResponse = await adminAgent.post(url).send({
+      reason: "Second duplicate replacement cancellation.",
+    });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_CANCELLED",
+    );
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Shipped Replacement Cannot Be Cancelled
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects cancellation after the replacement has been shipped", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createShippedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Attempt cancellation after shipment.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_CANCELLATION_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("shipped");
+
+    /*
+     * Shipment already committed the replacement.
+     * Cancellation must NOT restore or release anything.
+     */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(8);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Corrupted Reserved Inventory
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back cancellation when the Product reservation is missing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+     * Replacement owns reservation = 2,
+     * but deliberately corrupt Product inventory.
+     */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": variant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Cancellation inventory rollback test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+     * Replacement cancellation must roll back.
+     */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("processing");
+
+    expect(unchangedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Multi-Item Rollback
+  |--------------------------------------------------------------------------
+  */
+
+  it("rolls back an earlier reservation release when a later replacement item fails", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "RPL-CANCEL-FIRST",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 700,
+
+            discountPrice: 600,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+
+        {
+          sku: "RPL-CANCEL-SECOND",
+
+          size: "L",
+
+          color: {
+            name: "Blue",
+
+            code: "#0000FF",
+          },
+
+          pricing: {
+            buyingPrice: 350,
+
+            sellingPrice: 800,
+
+            discountPrice: 700,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 10,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 2,
+          },
+
+          shipping: {
+            weightInGrams: 270,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const firstVariant = product.variants[0];
+
+    const secondVariant = product.variants[1];
+
+    const returnRequest = await createCompletedReplacementReturnFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      items: [
+        {
+          product,
+
+          variant: firstVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+
+        {
+          product,
+
+          variant: secondVariant,
+
+          quantity: 2,
+
+          resellableQuantity: 1,
+
+          damagedQuantity: 1,
+
+          rejectedQuantity: 0,
+        },
+      ],
+    });
+
+    const creationResponse = await adminAgent
+      .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+      .send({})
+      .expect(201);
+
+    const replacement = creationResponse.body.data.replacement;
+
+    /*
+     * Both variants now have reservedStock = 2.
+     */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": secondVariant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/cancel`)
+      .send({
+        reason: "Multi-item cancellation rollback test.",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Release Must Roll Back
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalFirstVariant = findProductVariant(
+      finalProduct,
+      firstVariant._id,
+    );
+
+    const finalSecondVariant = findProductVariant(
+      finalProduct,
+      secondVariant._id,
+    );
+
+    expect(finalFirstVariant.inventory.stock).toBe(10);
+
+    expect(finalFirstVariant.inventory.reservedStock).toBe(2);
+
+    /*
+     * Existing corruption stays as it was.
+     */
+
+    expect(finalSecondVariant.inventory.stock).toBe(10);
+
+    expect(finalSecondVariant.inventory.reservedStock).toBe(0);
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("reserved");
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+     * Original two reservation Ledger entries remain.
+     */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Cancellation
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent replacement cancellation and releases inventory once", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/cancel`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({
+        reason: "Concurrent cancellation from first admin.",
+      }),
+
+      secondAdminAgent.post(url).send({
+        reason: "Concurrent cancellation from second admin.",
+      }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REPLACEMENT_ALREADY_CANCELLED",
+      "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_CONFLICT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Released Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(finalProduct, variant._id);
+
+    expect(finalVariant.inventory.stock).toBe(10);
+
+    expect(finalVariant.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Cancelled Replacement State
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("cancelled");
+
+    expect(storedReplacement.cancellation.cancelledAt).toBeTruthy();
+  });
+});

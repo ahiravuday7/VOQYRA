@@ -3847,6 +3847,26 @@ releaseVariantStockAtomically({
 
 It intentionally does not require the Product or variant to remain active, which is exactly right for releasing an existing reservation.
 |--------------------------------------------------------------------------
+Part 157 — Replacement Cancellation Integration Tests
+
+Now we verify the Part 156 cancellation workflow:
+
+reserved ──┐
+           ├──→ cancelled
+processing ┘
+
+with:
+
+stock          unchanged
+reservedStock  released
+Ledger         reserve → release
+
+Your existing integration file already imports OrderReturnReplacement, Product, and ProductInventoryLedger, and uses the same authenticated-agent/fixture structure we need here.
+Update only:
+
+tests/integration/order.integration.test.js
+
+No new import or beforeEach() change is required if you already applied the Part 149 cleanup.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
