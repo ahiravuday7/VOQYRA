@@ -4148,6 +4148,62 @@ commit Ledger        → removed
 
 So the state claim is not prematurely permanent.
 |--------------------------------------------------------------------------
+Part 165 — Cross-Operation Concurrency Integration Tests
+
+Now we test the dangerous races that Part 164 was designed to prevent:
+
+ship   vs cancel
+ship   vs fail
+cancel vs fail
+
+The rule is simple:
+
+Exactly one operation may win. Exactly one inventory terminal action may survive.
+
+Your inventory design already requires atomic updates specifically to prevent two concurrent operations from acting on the same available/reserved stock.
+Update only:
+
+tests/integration/order.integration.test.js
+
+No new imports or beforeEach() changes are required.
+
+What these 3 tests prove
+SHIP vs CANCEL
+
+Only one HTTP 200                 ✅
+Other request receives 409        ✅
+
+If ship wins:
+stock          -= quantity
+reservedStock  -= quantity
+Ledger         = reserve + commit
+
+If cancel wins:
+stock          unchanged
+reservedStock  -= quantity
+Ledger         = reserve + release
+SHIP vs FAIL
+
+Only one wins                     ✅
+
+shipped:
+reserve + commit
+
+failed:
+reserve + release
+
+Never:
+reserve + commit + release        ❌
+CANCEL vs FAIL
+
+Only one terminal status          ✅
+Inventory released once           ✅
+Exactly one release Ledger        ✅
+
+Never:
+cancelled + failed audits together ❌
+
+The key inventory invariant remains the one already documented in your project: commit finalizes reserved units by reducing both physical and reserved stock, whereas release only removes the reservation and restores availability.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

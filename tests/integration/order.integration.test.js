@@ -24050,3 +24050,529 @@ describe("Customer Return replacement read APIs", () => {
     expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Cross-Operation Concurrency
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement cross-operation concurrency", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Ship vs Cancel
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one of shipment or cancellation to win", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Start From Processing
+      |--------------------------------------------------------------------------
+      |
+      | Both:
+      |
+      | ship
+      | cancel
+      |
+      | are racing against the same reserved inventory.
+      |--------------------------------------------------------------------------
+      */
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const shipmentUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/ship`;
+
+    const cancellationUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/cancel`;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Fire Both Simultaneously
+      |--------------------------------------------------------------------------
+      */
+
+    const [shipmentResponse, cancellationResponse] = await Promise.all([
+      firstAdminAgent.post(shipmentUrl).send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-RACE-SHIP-CANCEL",
+      }),
+
+      secondAdminAgent.post(cancellationUrl).send({
+        reason: "Concurrent cancellation while shipment started.",
+      }),
+    ]);
+
+    const responses = [shipmentResponse, cancellationResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Exactly One Winner
+      |--------------------------------------------------------------------------
+      */
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REPLACEMENT_SHIPMENT_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_SHIPMENT_CONFLICT",
+
+      "ORDER_RETURN_REPLACEMENT_CANCELLATION_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_CANCELLATION_CONFLICT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Final Replacement
+      |--------------------------------------------------------------------------
+      */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(["shipped", "cancelled"]).toContain(storedReplacement.status);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Final Product
+      |--------------------------------------------------------------------------
+      */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    /*
+     * One original reservation plus exactly
+     * one terminal inventory operation.
+     */
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries[0].operation).toBe("reserve");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Shipment Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "shipped") {
+      expect(storedVariant.inventory.stock).toBe(8);
+
+      expect(storedVariant.inventory.reservedStock).toBe(0);
+
+      expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+        "reserve",
+        "commit",
+      ]);
+
+      expect(storedReplacement.shipment.shippedAt).toBeTruthy();
+
+      expect(storedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cancellation Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "cancelled") {
+      expect(storedVariant.inventory.stock).toBe(10);
+
+      expect(storedVariant.inventory.reservedStock).toBe(0);
+
+      expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+        "reserve",
+        "release",
+      ]);
+
+      expect(storedReplacement.cancellation.cancelledAt).toBeTruthy();
+
+      expect(storedReplacement.shipment?.shippedAt ?? null).toBeNull();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Never Both
+      |--------------------------------------------------------------------------
+      */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBeLessThanOrEqual(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Ship vs Fail
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one of shipment or failure to win", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const shipmentUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/ship`;
+
+    const failureUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/fail`;
+
+    const [shipmentResponse, failureResponse] = await Promise.all([
+      firstAdminAgent.post(shipmentUrl).send({
+        carrier: "Blue Dart",
+
+        trackingNumber: "RPL-RACE-SHIP-FAIL",
+      }),
+
+      secondAdminAgent.post(failureUrl).send({
+        reason: "Concurrent warehouse fulfillment failure.",
+      }),
+    ]);
+
+    const responses = [shipmentResponse, failureResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REPLACEMENT_SHIPMENT_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_SHIPMENT_CONFLICT",
+
+      "ORDER_RETURN_REPLACEMENT_FAILURE_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_FAILURE_CONFLICT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Final Replacement State
+      |--------------------------------------------------------------------------
+      */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(["shipped", "failed"]).toContain(storedReplacement.status);
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries[0].operation).toBe("reserve");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Shipment Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "shipped") {
+      expect(storedVariant.inventory.stock).toBe(8);
+
+      expect(storedVariant.inventory.reservedStock).toBe(0);
+
+      expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+        "reserve",
+        "commit",
+      ]);
+
+      expect(storedReplacement.shipment.shippedAt).toBeTruthy();
+
+      expect(storedReplacement.failure?.failedAt ?? null).toBeNull();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Failure Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "failed") {
+      expect(storedVariant.inventory.stock).toBe(10);
+
+      expect(storedVariant.inventory.reservedStock).toBe(0);
+
+      expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+        "reserve",
+        "release",
+      ]);
+
+      expect(storedReplacement.failure.failedAt).toBeTruthy();
+
+      expect(storedReplacement.shipment?.shippedAt ?? null).toBeNull();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Only One Terminal Inventory Operation
+      |--------------------------------------------------------------------------
+      */
+
+    const commitCount = await ProductInventoryLedger.countDocuments({
+      referenceId: replacement.replacementNumber,
+
+      operation: "commit",
+    });
+
+    const releaseCount = await ProductInventoryLedger.countDocuments({
+      referenceId: replacement.replacementNumber,
+
+      operation: "release",
+    });
+
+    expect(commitCount + releaseCount).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancel vs Fail
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one of cancellation or failure to win and releases inventory once", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { agent: secondAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+     * Processing is eligible for BOTH:
+     *
+     * cancel
+     * fail
+     */
+
+    const { replacement, product, variant } =
+      await createProcessingReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const cancellationUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/cancel`;
+
+    const failureUrl = `/api/v1/admin/order-return-replacements/${replacement.id}/fail`;
+
+    const [cancellationResponse, failureResponse] = await Promise.all([
+      firstAdminAgent.post(cancellationUrl).send({
+        reason: "Concurrent replacement cancellation.",
+      }),
+
+      secondAdminAgent.post(failureUrl).send({
+        reason: "Concurrent replacement fulfillment failure.",
+      }),
+    ]);
+
+    const responses = [cancellationResponse, failureResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | One Winner
+      |--------------------------------------------------------------------------
+      */
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_RETURN_REPLACEMENT_CANCELLATION_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_CANCELLATION_CONFLICT",
+
+      "ORDER_RETURN_REPLACEMENT_FAILURE_STATUS_INVALID",
+
+      "ORDER_RETURN_REPLACEMENT_FAILURE_CONFLICT",
+    ]).toContain(conflictResponses[0].body.errorCode);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Final State
+      |--------------------------------------------------------------------------
+      */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(["cancelled", "failed"]).toContain(storedReplacement.status);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory Released Exactly Once
+      |--------------------------------------------------------------------------
+      */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(10);
+
+    expect(storedVariant.inventory.reservedStock).toBe(0);
+
+    const ledgerEntries = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerEntries).toHaveLength(2);
+
+    expect(ledgerEntries.map((entry) => entry.operation)).toEqual([
+      "reserve",
+      "release",
+    ]);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cancellation Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "cancelled") {
+      expect(storedReplacement.cancellation.cancelledAt).toBeTruthy();
+
+      expect(storedReplacement.failure?.failedAt ?? null).toBeNull();
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Failure Won
+      |--------------------------------------------------------------------------
+      */
+
+    if (storedReplacement.status === "failed") {
+      expect(storedReplacement.failure.failedAt).toBeTruthy();
+
+      expect(storedReplacement.cancellation?.cancelledAt ?? null).toBeNull();
+    }
+  });
+});
