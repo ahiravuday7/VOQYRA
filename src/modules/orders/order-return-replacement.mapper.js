@@ -241,3 +241,63 @@ export const mapAdminOrderReturnReplacement = (replacement) => {
     updatedAt: normalizedReplacement.updatedAt,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Summary Mapper
+|--------------------------------------------------------------------------
+*/
+
+export const mapAdminOrderReturnReplacementSummary = (replacement) => {
+  const normalizedReplacement = normalizeReplacement(replacement);
+
+  if (!normalizedReplacement) {
+    return null;
+  }
+
+  const items = normalizedReplacement.items ?? [];
+
+  const totalReplacementQuantity = items.reduce((total, item) => {
+    const quantity = Number(item.replacementQuantity);
+
+    return total + (Number.isSafeInteger(quantity) ? quantity : 0);
+  }, 0);
+
+  return {
+    id: normalizeId(normalizedReplacement._id),
+
+    replacementNumber: normalizedReplacement.replacementNumber,
+
+    returnRequestId: normalizeId(normalizedReplacement.returnRequest),
+
+    returnRequestNumber: normalizedReplacement.returnRequestNumber,
+
+    orderId: normalizeId(normalizedReplacement.order),
+
+    orderNumber: normalizedReplacement.orderNumber,
+
+    customerId: normalizeId(normalizedReplacement.customer),
+
+    status: normalizedReplacement.status,
+
+    itemCount: items.length,
+
+    totalReplacementQuantity,
+
+    reservedAt: normalizedReplacement.reservation?.reservedAt ?? null,
+
+    processedAt: normalizedReplacement.processing?.processedAt ?? null,
+
+    shippedAt: normalizedReplacement.shipment?.shippedAt ?? null,
+
+    deliveredAt: normalizedReplacement.shipment?.deliveredAt ?? null,
+
+    cancelledAt: normalizedReplacement.cancellation?.cancelledAt ?? null,
+
+    failedAt: normalizedReplacement.failure?.failedAt ?? null,
+
+    createdAt: normalizedReplacement.createdAt,
+
+    updatedAt: normalizedReplacement.updatedAt,
+  };
+};

@@ -4,6 +4,16 @@ import OrderReturnReplacement, {
 
 /*
 |--------------------------------------------------------------------------
+| Escape Replacement Search
+|--------------------------------------------------------------------------
+*/
+
+const escapeReplacementSearchExpression = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Return Replacement
 |--------------------------------------------------------------------------
 */
@@ -240,4 +250,145 @@ export const markOrderReturnReplacementDeliveredAtomically = ({
       runValidators: true,
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Replacement List Filter
+|--------------------------------------------------------------------------
+*/
+
+const buildAdminOrderReturnReplacementListFilter = ({
+  search,
+  status,
+  orderId,
+  customerId,
+} = {}) => {
+  const filter = {};
+
+  /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+
+  if (search) {
+    const safeSearch = escapeReplacementSearchExpression(search);
+
+    const searchExpression = new RegExp(safeSearch, "i");
+
+    filter.$or = [
+      {
+        replacementNumber: searchExpression,
+      },
+
+      {
+        returnRequestNumber: searchExpression,
+      },
+
+      {
+        orderNumber: searchExpression,
+      },
+    ];
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (status) {
+    filter.status = status;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Order
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderId) {
+    filter.order = orderId;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer
+    |--------------------------------------------------------------------------
+    */
+
+  if (customerId) {
+    filter.customer = customerId;
+  }
+
+  return filter;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Return Replacements
+|--------------------------------------------------------------------------
+*/
+
+export const listAdminOrderReturnReplacements = async ({
+  page = 1,
+  limit = 20,
+
+  search,
+  status,
+  orderId,
+  customerId,
+
+  sortBy = "createdAt",
+  sortDirection = "desc",
+} = {}) => {
+  const filter = buildAdminOrderReturnReplacementListFilter({
+    search,
+    status,
+    orderId,
+    customerId,
+  });
+
+  const skip = (page - 1) * limit;
+
+  const sortValue = sortDirection === "asc" ? 1 : -1;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Records + Count
+    |--------------------------------------------------------------------------
+    |
+    | These are independent read operations.
+    |--------------------------------------------------------------------------
+    */
+
+  const [replacements, total] = await Promise.all([
+    OrderReturnReplacement.find(filter)
+      .sort({
+        [sortBy]: sortValue,
+
+        _id: sortValue,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    OrderReturnReplacement.countDocuments(filter),
+  ]);
+
+  return {
+    replacements,
+    total,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Return Replacement by ID
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminOrderReturnReplacementById = (replacementId) => {
+  return OrderReturnReplacement.findById(replacementId).lean();
 };

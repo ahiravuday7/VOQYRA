@@ -27,6 +27,8 @@ import {
   markOrderReturnReplacementProcessingAtomically,
   saveOrderReturnReplacementDocument,
   markOrderReturnReplacementDeliveredAtomically,
+  findAdminOrderReturnReplacementById,
+  listAdminOrderReturnReplacements,
 } from "./order-return-replacement.repository.js";
 
 /*
@@ -690,6 +692,75 @@ const createReturnReplacementFailureStateInvalidError = (replacement) => {
       },
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Replacement Read Error
+|--------------------------------------------------------------------------
+*/
+
+const createAdminOrderReturnReplacementNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Replacements
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnReplacements = async (filters = {}) => {
+  const {
+    page = 1,
+
+    limit = 20,
+  } = filters;
+
+  const { replacements, total } =
+    await listAdminOrderReturnReplacements(filters);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  return {
+    replacements,
+
+    pagination: {
+      page,
+
+      limit,
+
+      total,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Replacement by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnReplacementById = async (replacementId) => {
+  if (!replacementId) {
+    throw new Error("Replacement ID is required");
+  }
+
+  const replacement = await findAdminOrderReturnReplacementById(replacementId);
+
+  if (!replacement) {
+    throw createAdminOrderReturnReplacementNotFoundError();
+  }
+
+  return replacement;
 };
 
 /*

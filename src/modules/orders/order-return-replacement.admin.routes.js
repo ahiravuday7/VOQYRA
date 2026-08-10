@@ -12,6 +12,8 @@ import {
   deliverAdminReturnReplacementController,
   cancelAdminReturnReplacementController,
   failAdminReturnReplacementController,
+  getAdminReturnReplacementController,
+  getAdminReturnReplacementsController,
 } from "./order-return-replacement.controller.js";
 
 import {
@@ -20,6 +22,8 @@ import {
   deliverOrderReturnReplacementRequestSchema,
   cancelOrderReturnReplacementRequestSchema,
   failOrderReturnReplacementRequestSchema,
+  adminOrderReturnReplacementDetailsRequestSchema,
+  adminOrderReturnReplacementListRequestSchema,
 } from "./order-return-replacement.validation.js";
 
 const router = Router();
@@ -31,6 +35,24 @@ const router = Router();
 */
 
 router.use(authenticate, authorizeRoles(USER_ROLES.ADMIN));
+
+/*
+|--------------------------------------------------------------------------
+| Admin Replacement List
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-return-replacements
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/",
+
+  validateRequest(adminOrderReturnReplacementListRequestSchema),
+
+  getAdminReturnReplacementsController,
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -120,6 +142,24 @@ router.post(
   validateRequest(failOrderReturnReplacementRequestSchema),
 
   failAdminReturnReplacementController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Replacement Details
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-return-replacements/:replacementId
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:replacementId",
+
+  validateRequest(adminOrderReturnReplacementDetailsRequestSchema),
+
+  getAdminReturnReplacementController,
 );
 
 export default router;

@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { ORDER_RETURN_REPLACEMENT_STATUS_VALUES } from "./order-return-replacement.model.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -11,6 +12,37 @@ const objectIdSchema = z
   .trim()
   .regex(/^[a-f\d]{24}$/i, {
     error: "Return Request ID must be a valid MongoDB ObjectId",
+  });
+
+/*
+|--------------------------------------------------------------------------
+| Replacement List Values
+|--------------------------------------------------------------------------
+*/
+
+const ORDER_RETURN_REPLACEMENT_LIST_SORT_VALUES = Object.freeze([
+  "createdAt",
+  "updatedAt",
+  "replacementNumber",
+  "status",
+]);
+
+const ORDER_RETURN_REPLACEMENT_SORT_DIRECTION_VALUES = Object.freeze([
+  "asc",
+  "desc",
+]);
+
+/*
+|--------------------------------------------------------------------------
+| Replacement List Object ID
+|--------------------------------------------------------------------------
+*/
+
+const replacementListObjectIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-f\d]{24}$/i, {
+    error: "ID must be a valid MongoDB ObjectId",
   });
 
 /*
@@ -208,6 +240,38 @@ const failOrderReturnReplacementBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Admin Replacement List Query
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnReplacementListQuerySchema = z.strictObject({
+  page: z.coerce.number().int().min(1).default(1),
+
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+
+  search: z.string().trim().min(1).max(100).optional(),
+
+  status: z
+    .enum(ORDER_RETURN_REPLACEMENT_STATUS_VALUES, {
+      error: "Replacement status is invalid",
+    })
+    .optional(),
+
+  orderId: replacementListObjectIdSchema.optional(),
+
+  customerId: replacementListObjectIdSchema.optional(),
+
+  sortBy: z
+    .enum(ORDER_RETURN_REPLACEMENT_LIST_SORT_VALUES)
+    .default("createdAt"),
+
+  sortDirection: z
+    .enum(ORDER_RETURN_REPLACEMENT_SORT_DIRECTION_VALUES)
+    .default("desc"),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Process Return Replacement Request
 |--------------------------------------------------------------------------
 |
@@ -315,6 +379,34 @@ export const cancelOrderReturnReplacementRequestSchema = z.strictObject({
 
 export const failOrderReturnReplacementRequestSchema = z.strictObject({
   body: failOrderReturnReplacementBodySchema,
+
+  params: returnReplacementIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Replacement List Request
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnReplacementListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminOrderReturnReplacementListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Replacement Details Request
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnReplacementDetailsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
 
   params: returnReplacementIdParamsSchema,
 

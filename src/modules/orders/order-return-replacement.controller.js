@@ -1,4 +1,7 @@
-import { mapAdminOrderReturnReplacement } from "./order-return-replacement.mapper.js";
+import {
+  mapAdminOrderReturnReplacement,
+  mapAdminOrderReturnReplacementSummary,
+} from "./order-return-replacement.mapper.js";
 
 import {
   createAdminOrderReturnReplacement,
@@ -7,6 +10,8 @@ import {
   deliverAdminOrderReturnReplacement,
   cancelAdminOrderReturnReplacement,
   failAdminOrderReturnReplacement,
+  getAdminOrderReturnReplacementById,
+  getAdminOrderReturnReplacements,
 } from "./order-return-replacement.service.js";
 
 /*
@@ -209,6 +214,71 @@ export const failAdminReturnReplacementController = async (
     success: true,
 
     message: "Return replacement marked as failed successfully",
+
+    data: {
+      replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Replacements
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-return-replacements
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminReturnReplacementsController = async (
+  request,
+  response,
+) => {
+  const filters = request.validated.query;
+
+  const { replacements, pagination } =
+    await getAdminOrderReturnReplacements(filters);
+
+  const mappedReplacements = replacements.map(
+    mapAdminOrderReturnReplacementSummary,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return replacements retrieved successfully",
+
+    data: {
+      replacements: mappedReplacements,
+
+      pagination,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Replacement
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-return-replacements/:replacementId
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const replacement = await getAdminOrderReturnReplacementById(replacementId);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return replacement retrieved successfully",
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),
