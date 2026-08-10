@@ -4220,6 +4220,256 @@ Update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 167 — Replacement Module Final QA / Regression Run
+
+At this point, don’t add new production code yet. We should prove that Parts 144–166 work together without regression.
+
+One important reason: earlier your Part 153 shipment suite had 500 failures, so this final QA step must confirm shipment and every downstream workflow are healthy before we call the replacement module complete.
+
+1. First — application import check
+
+Run:
+
+node --input-type=module -e "import('./src/app.js').then(() => console.log('Replacement module application import: PASS')).catch(console.error)"
+
+Expected:
+
+Replacement module application import: PASS
+
+If this fails, stop there and send me the error.
+
+2. Verify important repository exports
+
+Run:
+
+node --input-type=module -e "import('./src/modules/orders/order-return-replacement.repository.js').then(r => console.log({ customerList: typeof r.listCustomerOrderReturnReplacements, customerDetails: typeof r.findCustomerOrderReturnReplacementById, adminList: typeof r.listAdminOrderReturnReplacements, adminDetails: typeof r.findAdminOrderReturnReplacementById, shipTransition: typeof r.transitionOrderReturnReplacementToShippedAtomically, cancelTransition: typeof r.transitionOrderReturnReplacementToCancelledAtomically, failTransition: typeof r.transitionOrderReturnReplacementToFailedAtomically })).catch(console.error)"
+
+Expected:
+
+{
+  customerList: 'function',
+  customerDetails: 'function',
+  adminList: 'function',
+  adminDetails: 'function',
+  shipTransition: 'function',
+  cancelTransition: 'function',
+  failTransition: 'function'
+}
+
+3. Verify service exports
+
+Run:
+
+node --input-type=module -e "import('./src/modules/orders/order-return-replacement.service.js').then(s => console.log({ create: typeof s.createAdminOrderReturnReplacement, process: typeof s.processAdminOrderReturnReplacement, ship: typeof s.shipAdminOrderReturnReplacement, deliver: typeof s.deliverAdminOrderReturnReplacement, cancel: typeof s.cancelAdminOrderReturnReplacement, fail: typeof s.failAdminOrderReturnReplacement, adminList: typeof s.getAdminOrderReturnReplacements, adminDetails: typeof s.getAdminOrderReturnReplacementById, customerList: typeof s.getCustomerOrderReturnReplacements, customerDetails: typeof s.getCustomerOrderReturnReplacementById })).catch(console.error)"
+
+Every value should be:
+
+'function'
+
+4. Run all replacement tests together
+
+Now instead of running each Part separately, run every test whose name contains replacement:
+
+npx vitest run tests/integration/order.integration.test.js -t "replacement" --testTimeout=120000 --no-file-parallelism
+
+This is the important Part 167 test.
+
+It should cover the replacement functionality we built:
+
+Replacement creation
+    ↓
+inventory reservation
+
+reserved
+    ↓
+processing
+
+processing
+    ↓
+shipment
+    ↓
+inventory commit
+
+shipped
+    ↓
+delivered
+
+reserved / processing
+    ↓
+cancelled
+    ↓
+inventory release
+
+reserved / processing
+    ↓
+failed
+    ↓
+inventory release
+
+Admin reads
+Customer reads
+Privacy
+Ownership
+Concurrency
+Cross-operation concurrency
+Final consistency
+Pass requirement
+
+We want:
+
+Test Files  1 passed
+Tests       ... passed | ... skipped
+
+and most importantly:
+
+0 failed
+
+5. If replacement-only suite passes, run the complete Order integration suite
+
+This is essential because replacement work touched shared components such as:
+
+Product inventory
+Inventory Ledger
+Order routes
+Return routes
+Authentication
+Validation
+MongoDB transactions
+
+Run:
+
+npx vitest run tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism
+
+This tests everything, not just replacements.
+
+We need:
+
+0 failed
+
+before closing this backend section.
+
+6. Final replacement invariants
+
+Once the suite passes, these rules should hold.
+
+Normal delivered replacement
+Return = completed
+
+Replacement:
+reserved
+→ processing
+→ shipped
+→ delivered
+
+Ledger:
+reserve
+→ commit
+
+Physical inventory:
+stock decreases once
+
+reservedStock:
+increases once
+decreases once
+Cancelled replacement
+reserved / processing
+→ cancelled
+
+Ledger:
+reserve
+→ release
+
+stock:
+unchanged
+
+reservedStock:
+returns to original value
+Failed replacement
+reserved / processing
+→ failed
+
+Ledger:
+reserve
+→ release
+
+stock:
+unchanged
+Cross-operation races
+ship vs cancel
+ship vs fail
+cancel vs fail
+
+must result in:
+
+exactly one winner
+exactly one terminal state
+exactly one terminal inventory operation
+
+Never:
+
+commit + release for the same replacement ❌
+
+cancelled + failed                     ❌
+
+shipped + cancelled                    ❌
+
+shipped + failed                       ❌
+
+double commit                          ❌
+
+double release                         ❌
+
+7. Security/privacy checks
+
+Admin details may see:
+
+reservedBy
+processedBy
+processing.note
+shippedBy
+shipment.note
+deliveredBy
+cancelledBy
+cancellation.note
+failedBy
+failure.note
+
+Customer details must not expose those.
+
+Customer can see:
+
+replacement status
+product/item information
+replacement quantity
+carrier
+tracking number
+tracking URL
+shippedAt
+deliveredAt
+customer-safe cancellation reason
+customer-safe failure reason
+
+And customer ownership must always come from:
+
+request.user._id
+
+never:
+
+customerId from request
+What I want you to run now
+
+Start with this:
+
+npx vitest run tests/integration/order.integration.test.js -t "replacement" --testTimeout=120000 --no-file-parallelism
+
+If it produces any failures, send me the complete failure output before we go to Part 168.
+
+If it gives 0 failures, run the full Order suite next.
+
+Part 168 will only start after this regression checkpoint is clean.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
