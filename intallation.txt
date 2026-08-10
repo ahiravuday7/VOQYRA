@@ -3378,6 +3378,136 @@ tests/integration/order.integration.test.js
 
 Before continuing, your Part 142 tests should no longer have the OrderReturnRefundAudit is not defined error after adding its import.
 |--------------------------------------------------------------------------
+Part 144 — Replacement Return Workflow Design
+
+We’ll now design the replacement path separately from refunds. The important rule is:
+
+A Return Request must resolve through either refund or replacement — never both.
+
+That matches the direction already established for the project: replacement should have its own state/history and must not be treated as a financial refund.
+
+1. Existing return flow stays unchanged
+
+For a replacement request, the physical return process remains:
+
+Order delivered
+      ↓
+Return requested
+      ↓
+requested
+      ↓
+approved
+      ↓
+in-transit
+      ↓
+received
+      ↓
+inspected
+      ↓
+completed
+      ↓
+replacement processing
+
+Everything through completed remains exactly the same.
+
+That means we do not modify:
+
+return creation
+approval
+shipment
+receipt
+inspection
+resellable stock restoration
+existing refund workflow
+
+Final Architecture:
+The replacement process begins after Return completion, just like the financial refund currently begins after completion.
+                        ORIGINAL ORDER
+                              │
+                              ▼
+                       RETURN REQUEST
+                              │
+            ┌─────────────────┴──────────────────┐
+            │                                    │
+     resolution=refund                 resolution=replacement
+            │                                    │
+            ▼                                    ▼
+     RETURN REFUND                       REPLACEMENT
+            │                                    │
+            ▼                                    ▼
+  ReturnRefundAudit                     reserve stock
+                                                 │
+                                                 ▼
+                                             process
+                                                 │
+                                                 ▼
+                                          commit stock
+                                                 │
+                                                 ▼
+                                              shipped
+                                                 │
+                                                 ▼
+                                            delivered
+And inventory stays clean:
+
+Returned item inspection
+        ↓
+Return completion
+        ↓
+resellable stock restored
+
+Replacement creation
+        ↓
+replacement stock reserved
+
+Replacement shipment
+        ↓
+replacement reservation committed
+
+Proposed APIs
+
+We'll implement these gradually rather than all at once.
+
+Eventually:
+
+POST
+/api/v1/admin/order-returns/:returnRequestId/replacement
+
+Create replacement + reserve stock.
+
+Then:
+
+POST
+/api/v1/admin/order-return-replacements/:replacementId/process
+
+Then:
+
+POST
+/api/v1/admin/order-return-replacements/:replacementId/ship
+
+Then:
+
+POST
+/api/v1/admin/order-return-replacements/:replacementId/deliver
+
+Potential cancellation:
+
+POST
+/api/v1/admin/order-return-replacements/:replacementId/cance
+|--------------------------------------------------------------------------
+Part 145 — Replacement Constants + OrderReturnReplacement Model
+
+Now we start coding the replacement workflow. We’ll create a dedicated replacement entity, as planned, rather than mixing replacement data into refund logic.
+
+For this part, update/create only one file:
+
+src/modules/orders/order-return-replacement.model.js
+
+No routes, controllers, services, or inventory changes yet.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
