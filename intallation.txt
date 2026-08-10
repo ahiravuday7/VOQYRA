@@ -3538,6 +3538,17 @@ src/modules/orders/order-return-replacement.service.js
 
 No controller or route yet.
 |--------------------------------------------------------------------------
+Part 148 — Replacement Mapper + Controller + Admin Route
+
+Now we expose the replacement creation transaction from Part 147 through the API.
+
+This Part adds only:
+
+POST /api/v1/admin/order-returns/:returnRequestId/replacement
+
+The existing Return architecture already uses separate admin endpoints for operations such as refund, and replacement must remain its own workflow rather than being treated as a refund.
+
+We are not adding processing, shipping, delivery, commit, or cancellation yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

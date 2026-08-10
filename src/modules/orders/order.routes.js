@@ -31,6 +31,9 @@ import {
   cancelCustomerOrderReturnRequestController,
 } from "./order-return.controller.js";
 
+import { createAdminReturnReplacementController } from "./order-return-replacement.controller.js";
+import { createOrderReturnReplacementRequestSchema } from "./order-return-replacement.validation.js";
+
 const router = Router();
 
 /*
@@ -151,6 +154,24 @@ router.post(
   "/:orderId/cancel",
   validateRequest(cancelCustomerOrderRequestSchema),
   cancelCustomerOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Create Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/admin/order-returns/:returnRequestId/replacement",
+
+  authenticate,
+
+  authorizeRoles(USER_ROLES.ADMIN),
+
+  validateRequest(createOrderReturnReplacementRequestSchema),
+
+  createAdminReturnReplacementController,
 );
 
 /*
