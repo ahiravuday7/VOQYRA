@@ -142,6 +142,39 @@ const shipOrderReturnReplacementBodySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Cancel Return Replacement Body
+|--------------------------------------------------------------------------
+*/
+
+const cancelOrderReturnReplacementBodySchema = z.strictObject({
+  reason: z
+    .string({
+      error: "Cancellation reason is required",
+    })
+    .trim()
+    .min(5, {
+      error: "Cancellation reason must contain at least 5 characters",
+    })
+    .max(500, {
+      error: "Cancellation reason cannot exceed 500 characters",
+    }),
+
+  note: z
+    .string({
+      error: "Cancellation note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Cancellation note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Cancellation note cannot exceed 500 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Process Return Replacement Request
 |--------------------------------------------------------------------------
 |
@@ -213,6 +246,24 @@ export const shipOrderReturnReplacementRequestSchema = z.strictObject({
 
 export const deliverOrderReturnReplacementRequestSchema = z.strictObject({
   body: emptyObjectSchema,
+
+  params: returnReplacementIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Return Replacement Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/cancel
+|--------------------------------------------------------------------------
+*/
+
+export const cancelOrderReturnReplacementRequestSchema = z.strictObject({
+  body: cancelOrderReturnReplacementBodySchema,
 
   params: returnReplacementIdParamsSchema,
 

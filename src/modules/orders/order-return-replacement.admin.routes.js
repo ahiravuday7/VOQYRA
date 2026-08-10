@@ -10,12 +10,14 @@ import {
   processAdminReturnReplacementController,
   shipAdminReturnReplacementController,
   deliverAdminReturnReplacementController,
+  cancelAdminReturnReplacementController,
 } from "./order-return-replacement.controller.js";
 
 import {
   processOrderReturnReplacementRequestSchema,
   shipOrderReturnReplacementRequestSchema,
   deliverOrderReturnReplacementRequestSchema,
+  cancelOrderReturnReplacementRequestSchema,
 } from "./order-return-replacement.validation.js";
 
 const router = Router();
@@ -80,6 +82,24 @@ router.post(
   validateRequest(deliverOrderReturnReplacementRequestSchema),
 
   deliverAdminReturnReplacementController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/cancel
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:replacementId/cancel",
+
+  validateRequest(cancelOrderReturnReplacementRequestSchema),
+
+  cancelAdminReturnReplacementController,
 );
 
 export default router;

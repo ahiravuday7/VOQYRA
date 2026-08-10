@@ -14,6 +14,7 @@ import {
   findProductVariantInventorySnapshot,
   reserveVariantStockAtomically,
   commitVariantStockAtomically,
+  releaseVariantStockAtomically,
 } from "../products/product.repository.js";
 
 import { findAdminOrderReturnRequestForProcessing } from "./order-return.repository.js";
@@ -516,6 +517,548 @@ const createReturnReplacementDeliveryConflictError = () => {
       errorCode: "ORDER_RETURN_REPLACEMENT_DELIVERY_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replacement Cancellation Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementCancellationNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyCancelledError = (replacement) => {
+  return new AppError(
+    "This Return replacement has already been cancelled",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_CANCELLED",
+
+      details: {
+        status: replacement.status,
+
+        cancelledAt: replacement.cancellation?.cancelledAt ?? null,
+      },
+    },
+  );
+};
+
+const createReturnReplacementCancellationStatusInvalidError = (
+  currentStatus,
+) => {
+  return new AppError(
+    "This Return replacement cannot be cancelled from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_CANCELLATION_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        allowedStatuses: [
+          ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+          ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+        ],
+      },
+    },
+  );
+};
+
+const createReturnReplacementCancellationStateInvalidError = (replacement) => {
+  return new AppError(
+    "This Return replacement does not contain a valid reserved state for cancellation",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_CANCELLATION_STATE_INVALID",
+
+      details: {
+        replacementId: String(replacement._id),
+
+        status: replacement.status,
+      },
+    },
+  );
+};
+
+const createReturnReplacementReleaseInventoryStateInvalidError = ({
+  productId,
+  variantId,
+  requestedQuantity,
+  stock,
+  reservedStock,
+}) => {
+  return new AppError(
+    "Replacement reserved inventory cannot be released from its current state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_STATE_INVALID",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+
+        requestedQuantity,
+
+        stock,
+
+        reservedStock,
+      },
+    },
+  );
+};
+
+const createReturnReplacementReleaseInventoryConflictError = ({
+  productId,
+  variantId,
+}) => {
+  return new AppError(
+    "Replacement inventory changed while cancellation was being processed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_RELEASE_INVENTORY_CONFLICT",
+
+      details: {
+        productId: String(productId),
+
+        variantId: String(variantId),
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Replacement Can Be Cancelled
+|--------------------------------------------------------------------------
+*/
+
+const assertOrderReturnReplacementCanBeCancelled = (replacement) => {
+  if (
+    replacement.status === ORDER_RETURN_REPLACEMENT_STATUS.CANCELLED ||
+    replacement.cancellation?.cancelledAt
+  ) {
+    throw createReturnReplacementAlreadyCancelledError(replacement);
+  }
+
+  const allowedStatuses = [
+    ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+    ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+  ];
+
+  if (!allowedStatuses.includes(replacement.status)) {
+    throw createReturnReplacementCancellationStatusInvalidError(
+      replacement.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Reservation Evidence Must Exist
+    |--------------------------------------------------------------------------
+    */
+
+  const hasReservation = Boolean(
+    replacement.reservation?.reservedBy && replacement.reservation?.reservedAt,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Shipment Must NOT Have Started
+    |--------------------------------------------------------------------------
+    */
+
+  const hasShipmentEvidence = Boolean(
+    replacement.shipment?.carrier ||
+    replacement.shipment?.trackingNumber ||
+    replacement.shipment?.shippedBy ||
+    replacement.shipment?.shippedAt ||
+    replacement.shipment?.deliveredAt,
+  );
+
+  const hasFailure = Boolean(replacement.failure?.failedAt);
+
+  if (!hasReservation || hasShipmentEvidence || hasFailure) {
+    throw createReturnReplacementCancellationStateInvalidError(replacement);
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Replacement Reservation Release
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementRelease = async ({
+  productId,
+  variantId,
+  releaseQuantity,
+  session,
+}) => {
+  const snapshot = await findProductVariantInventorySnapshot(
+    productId,
+    variantId,
+    {
+      session,
+    },
+  );
+
+  if (!snapshot || !snapshot.variant) {
+    throw createReturnReplacementReleaseInventoryStateInvalidError({
+      productId,
+
+      variantId,
+
+      requestedQuantity: releaseQuantity,
+
+      stock: null,
+
+      reservedStock: null,
+    });
+  }
+
+  const stock = Number(snapshot.variant.stock);
+
+  const reservedStock = Number(snapshot.variant.reservedStock);
+
+  const inventoryIsValid =
+    Number.isSafeInteger(stock) &&
+    Number.isSafeInteger(reservedStock) &&
+    stock >= 0 &&
+    reservedStock >= 0 &&
+    reservedStock <= stock;
+
+  if (!inventoryIsValid || reservedStock < releaseQuantity) {
+    throw createReturnReplacementReleaseInventoryStateInvalidError({
+      productId,
+
+      variantId,
+
+      requestedQuantity: releaseQuantity,
+
+      stock,
+
+      reservedStock,
+    });
+  }
+
+  /*
+   * Inventory still appears valid but the atomic
+   * release did not match.
+   *
+   * Treat this as a concurrent change.
+   */
+
+  throw createReturnReplacementReleaseInventoryConflictError({
+    productId,
+
+    variantId,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Replacement Release Ledger
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementReleaseLedgerEntry = async ({
+  updatedProduct,
+  variantId,
+  quantity,
+  replacementNumber,
+  actorUserId,
+  session,
+}) => {
+  const updatedVariant = findUpdatedReplacementVariant(
+    updatedProduct,
+    variantId,
+  );
+
+  const afterStock = updatedVariant.inventory?.stock ?? 0;
+
+  const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
+
+  /*
+   * Release changes only reservedStock.
+   *
+   * BEFORE:
+   *
+   * reservedStock =
+   * afterReservedStock + quantity
+   */
+
+  const beforeReservedStock = afterReservedStock + quantity;
+
+  await createProductInventoryLedgerEntry(
+    {
+      product: updatedProduct._id,
+
+      variantId: updatedVariant._id,
+
+      sku: updatedVariant.sku,
+
+      operation: PRODUCT_INVENTORY_OPERATIONS.RELEASE,
+
+      quantity,
+
+      stockDelta: 0,
+
+      reservedStockDelta: -quantity,
+
+      before: buildReplacementInventoryState(afterStock, beforeReservedStock),
+
+      after: buildReplacementInventoryState(afterStock, afterReservedStock),
+
+      referenceId: replacementNumber,
+
+      actor: actorUserId,
+    },
+
+    session,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Release Replacement Items In Transaction
+|--------------------------------------------------------------------------
+*/
+
+const releaseReturnReplacementItemsInTransaction = async (
+  replacement,
+  { actorUserId, session },
+) => {
+  requireActiveReplacementTransaction(session);
+
+  for (const replacementItem of replacement.items ?? []) {
+    const releaseQuantity = Number(replacementItem.replacementQuantity);
+
+    if (!Number.isSafeInteger(releaseQuantity) || releaseQuantity <= 0) {
+      throw createReturnReplacementInventoryInvalidError({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        stock: null,
+
+        reservedStock: null,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Release Reservation Atomically
+      |--------------------------------------------------------------------------
+      */
+
+    const updatedProduct = await releaseVariantStockAtomically({
+      productId: replacementItem.product,
+
+      variantId: replacementItem.variantId,
+
+      quantity: releaseQuantity,
+
+      actorUserId,
+
+      session,
+    });
+
+    if (!updatedProduct) {
+      await diagnoseFailedReturnReplacementRelease({
+        productId: replacementItem.product,
+
+        variantId: replacementItem.variantId,
+
+        releaseQuantity,
+
+        session,
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Immutable Release Ledger
+      |--------------------------------------------------------------------------
+      */
+
+    await createReturnReplacementReleaseLedgerEntry({
+      updatedProduct,
+
+      variantId: replacementItem.variantId,
+
+      quantity: releaseQuantity,
+
+      replacementNumber: replacement.replacementNumber,
+
+      actorUserId,
+
+      session,
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Replacement Cancellation
+|--------------------------------------------------------------------------
+|
+| load Replacement
+|       ↓
+| validate cancellation state
+|       ↓
+| release reserved Product inventory
+|       ↓
+| create release Ledger entries
+|       ↓
+| Replacement -> cancelled
+|       ↓
+| save cancellation audit
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderReturnReplacementCancellation = async ({
+  replacementId,
+  adminId,
+  cancellationData,
+}) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let cancelledReplacement;
+
+    await session.withTransaction(
+      async () => {
+        requireActiveReplacementTransaction(session);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Replacement
+          |--------------------------------------------------------------------------
+          */
+
+        const replacement = await findOrderReturnReplacementById(
+          replacementId,
+          {
+            session,
+          },
+        );
+
+        if (!replacement) {
+          throw createReturnReplacementCancellationNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Validate
+          |--------------------------------------------------------------------------
+          */
+
+        assertOrderReturnReplacementCanBeCancelled(replacement);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Release Inventory Reservations
+          |--------------------------------------------------------------------------
+          */
+
+        await releaseReturnReplacementItemsInTransaction(replacement, {
+          actorUserId: adminId,
+
+          session,
+        });
+
+        /*
+          |--------------------------------------------------------------------------
+          | Cancellation Audit
+          |--------------------------------------------------------------------------
+          */
+
+        const cancelledAt = new Date();
+
+        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.CANCELLED;
+
+        replacement.cancellation = {
+          reason: cancellationData.reason,
+
+          note: cancellationData.note ?? null,
+
+          cancelledBy: adminId,
+
+          cancelledAt,
+        };
+
+        /*
+          |--------------------------------------------------------------------------
+          | Save
+          |--------------------------------------------------------------------------
+          */
+
+        cancelledReplacement = await saveOrderReturnReplacementDocument(
+          replacement,
+          {
+            session,
+          },
+        );
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return cancelledReplacement;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Admin Order Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const cancelAdminOrderReturnReplacement = async (
+  replacementId,
+  adminId,
+  cancellationData,
+) => {
+  if (!replacementId) {
+    throw new Error(
+      "Replacement ID is required to cancel a Return replacement",
+    );
+  }
+
+  if (!adminId) {
+    throw new Error("Admin ID is required to cancel a Return replacement");
+  }
+
+  if (!cancellationData) {
+    throw new Error("Cancellation data is required");
+  }
+
+  return executeAtomicOrderReturnReplacementCancellation({
+    replacementId,
+
+    adminId,
+
+    cancellationData,
+  });
 };
 
 /*

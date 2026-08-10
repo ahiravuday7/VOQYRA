@@ -5,6 +5,7 @@ import {
   processAdminOrderReturnReplacement,
   shipAdminOrderReturnReplacement,
   deliverAdminOrderReturnReplacement,
+  cancelAdminOrderReturnReplacement,
 } from "./order-return-replacement.service.js";
 
 /*
@@ -141,6 +142,39 @@ export const deliverAdminReturnReplacementController = async (
     success: true,
 
     message: "Return replacement delivered successfully",
+
+    data: {
+      replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Admin Return Replacement
+|--------------------------------------------------------------------------
+*/
+
+export const cancelAdminReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const cancellationData = request.validated.body;
+
+  const adminId = request.user._id;
+
+  const replacement = await cancelAdminOrderReturnReplacement(
+    replacementId,
+    adminId,
+    cancellationData,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacement cancelled successfully",
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),

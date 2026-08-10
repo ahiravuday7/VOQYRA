@@ -3816,6 +3816,36 @@ Your current test file already follows this fixture/helper-based structure.
 
 No beforeEach() update is needed.
 |--------------------------------------------------------------------------
+Part 156 — Replacement Cancellation + Reserved Inventory Release
+
+Now we handle cancellation before shipment:
+
+reserved ──┐
+           ├──→ cancelled
+processing ┘
+
+Cancellation is not allowed after:
+
+shipped
+delivered
+
+And because the replacement inventory is still only reserved before shipment:
+
+stock          → unchanged
+reservedStock  → decreases
+Ledger         → RELEASE entry
+
+I checked your actual Product repository: you already have the exact helper we need:
+
+releaseVariantStockAtomically({
+  productId,
+  variantId,
+  quantity,
+  actorUserId,
+  session,
+})
+
+It intentionally does not require the Product or variant to remain active, which is exactly right for releasing an existing reservation.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
