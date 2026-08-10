@@ -4010,6 +4010,24 @@ failedBy
 
 We’ll enforce this in both the repository projection and mapper.
 |--------------------------------------------------------------------------
+Part 163 — Customer Replacement Read Integration Tests
+
+Assuming you applied the controller fix from the previous step, we can now test the Part 162 customer APIs:
+
+GET /api/v1/orders/replacements
+GET /api/v1/orders/replacements/:replacementId
+
+Your integration suite already uses createAuthenticatedAdminAgent() / createAuthenticatedCustomerAgent() and the same fixture-first structure, so we’ll continue with that pattern.
+
+Update only:
+
+tests/integration/order.integration.test.js
+
+We will reuse these helpers from earlier Parts:
+
+createAdminOrderReturnReplacementReadFixture
+createReservedReplacementFixture
+findProductVariant
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

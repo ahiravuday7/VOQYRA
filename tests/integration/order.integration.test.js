@@ -23183,3 +23183,870 @@ describe("Admin Return replacement read APIs", () => {
     expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Replacement Read APIs
+|--------------------------------------------------------------------------
+*/
+
+describe("Customer Return replacement read APIs", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | List Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when replacement list is requested without authentication", async () => {
+    const response = await request(app).get("/api/v1/orders/replacements");
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Admin Cannot Use Customer Replacement API
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when an admin requests the customer replacement list", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get("/api/v1/orders/replacements");
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Customer Ownership + Summary Privacy
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns only replacements owned by the authenticated customer", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: firstCustomerAgent,
+
+      user: firstCustomer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { user: secondCustomer } = await createAuthenticatedCustomerAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Customer Replacements
+    |--------------------------------------------------------------------------
+    */
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: firstCustomer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-OWN-A",
+
+      status: "reserved",
+
+      replacementQuantities: [1, 2],
+    });
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: firstCustomer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-OWN-B",
+
+      status: "processing",
+
+      replacementQuantities: [3],
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Another Customer Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: secondCustomer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-OTHER",
+
+      status: "reserved",
+    });
+
+    const response = await firstCustomerAgent.get(
+      "/api/v1/orders/replacements?sortBy=replacementNumber&sortDirection=asc",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacements retrieved successfully",
+    );
+
+    const { replacements, pagination } = response.body.data;
+
+    expect(replacements).toHaveLength(2);
+
+    expect(
+      replacements.map((replacement) => replacement.replacementNumber),
+    ).toEqual(["RPL-CUSTOMER-OWN-A", "RPL-CUSTOMER-OWN-B"]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Summary
+    |--------------------------------------------------------------------------
+    */
+
+    expect(replacements[0]).toMatchObject({
+      replacementNumber: "RPL-CUSTOMER-OWN-A",
+
+      status: "reserved",
+
+      itemCount: 2,
+
+      totalReplacementQuantity: 3,
+    });
+
+    expect(replacements[1]).toMatchObject({
+      replacementNumber: "RPL-CUSTOMER-OWN-B",
+
+      status: "processing",
+
+      itemCount: 1,
+
+      totalReplacementQuantity: 3,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Internal Information Must Not Be Exposed
+    |--------------------------------------------------------------------------
+    */
+
+    expect(replacements[0].customerId).toBeUndefined();
+
+    expect(replacements[0].reservation).toBeUndefined();
+
+    expect(replacements[0].processing).toBeUndefined();
+
+    expect(replacements[0].shipment).toBeUndefined();
+
+    expect(replacements[0].items).toBeUndefined();
+
+    expect(pagination.total).toBe(2);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Pagination
+  |--------------------------------------------------------------------------
+  */
+
+  it("paginates customer replacement history", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    for (const replacementNumber of [
+      "RPL-CUST-PAGE-A",
+      "RPL-CUST-PAGE-B",
+      "RPL-CUST-PAGE-C",
+    ]) {
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        replacementNumber,
+      });
+    }
+
+    const response = await customerAgent.get(
+      "/api/v1/orders/replacements?page=2&limit=2&sortBy=replacementNumber&sortDirection=asc",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacements).toHaveLength(1);
+
+    expect(response.body.data.replacements[0].replacementNumber).toBe(
+      "RPL-CUST-PAGE-C",
+    );
+
+    expect(response.body.data.pagination).toEqual({
+      page: 2,
+
+      limit: 2,
+
+      total: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: true,
+
+      hasNextPage: false,
+    });
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Status Filter
+  |--------------------------------------------------------------------------
+  */
+
+  it("filters customer replacements by status without exposing other customers", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const { user: otherCustomer } = await createAuthenticatedCustomerAgent();
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUST-RESERVED",
+
+      status: "reserved",
+    });
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUST-SHIPPED",
+
+      status: "shipped",
+    });
+
+    /*
+     * Same status but owned by another customer.
+     */
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: otherCustomer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-OTHER-SHIPPED",
+
+      status: "shipped",
+    });
+
+    const response = await customerAgent.get(
+      "/api/v1/orders/replacements?status=shipped",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacements).toHaveLength(1);
+
+    expect(response.body.data.replacements[0]).toMatchObject({
+      replacementNumber: "RPL-CUST-SHIPPED",
+
+      status: "shipped",
+    });
+
+    expect(response.body.data.replacements[0].shippedAt).toBeTruthy();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Search
+  |--------------------------------------------------------------------------
+  */
+
+  it("searches the customer's replacement, Return, and Order references", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUST-SEARCH-ALPHA",
+
+      returnRequestNumber: "RET-CUST-SEARCH-BRAVO",
+
+      orderNumber: "ORD-CUST-SEARCH-CHARLIE",
+    });
+
+    const replacementSearch = await customerAgent.get(
+      "/api/v1/orders/replacements?search=SEARCH-ALPHA",
+    );
+
+    expect(replacementSearch.status).toBe(200);
+
+    expect(replacementSearch.body.data.replacements).toHaveLength(1);
+
+    const returnSearch = await customerAgent.get(
+      "/api/v1/orders/replacements?search=SEARCH-BRAVO",
+    );
+
+    expect(returnSearch.body.data.replacements).toHaveLength(1);
+
+    const orderSearch = await customerAgent.get(
+      "/api/v1/orders/replacements?search=SEARCH-CHARLIE",
+    );
+
+    expect(orderSearch.body.data.replacements).toHaveLength(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Order Filter
+  |--------------------------------------------------------------------------
+  */
+
+  it("filters customer replacements by Order ID", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const firstOrderId = new mongoose.Types.ObjectId();
+
+    const secondOrderId = new mongoose.Types.ObjectId();
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      orderId: firstOrderId,
+
+      replacementNumber: "RPL-CUST-ORDER-A",
+    });
+
+    await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      orderId: secondOrderId,
+
+      replacementNumber: "RPL-CUST-ORDER-B",
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements?orderId=${secondOrderId}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacements).toHaveLength(1);
+
+    expect(response.body.data.replacements[0].replacementNumber).toBe(
+      "RPL-CUST-ORDER-B",
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Query Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects invalid customer replacement list filters", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const invalidStatusResponse = await customerAgent.get(
+      "/api/v1/orders/replacements?status=invalid-status",
+    );
+
+    expect(invalidStatusResponse.status).toBe(400);
+
+    expect(invalidStatusResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    const invalidOrderResponse = await customerAgent.get(
+      "/api/v1/orders/replacements?orderId=invalid-id",
+    );
+
+    expect(invalidOrderResponse.status).toBe(400);
+
+    const unknownFieldResponse = await customerAgent.get(
+      "/api/v1/orders/replacements?customerId=123456789012345678901234",
+    );
+
+    /*
+     * Customer may not choose customerId.
+     *
+     * Ownership always comes from request.user._id.
+     */
+
+    expect(unknownFieldResponse.status).toBe(400);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Details Authentication / Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("protects customer replacement details from unauthenticated and admin requests", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const unauthenticatedResponse = await request(app).get(
+      `/api/v1/orders/replacements/${replacementId}`,
+    );
+
+    expect(unauthenticatedResponse.status).toBe(401);
+
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const adminResponse = await adminAgent.get(
+      `/api/v1/orders/replacements/${replacementId}`,
+    );
+
+    expect(adminResponse.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Shipped Replacement Details
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns customer-safe shipment tracking while hiding internal admin information", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-SHIPPED-DETAILS",
+
+      returnRequestNumber: "RET-CUSTOMER-SHIPPED",
+
+      orderNumber: "ORD-CUSTOMER-SHIPPED",
+
+      status: "shipped",
+
+      replacementQuantities: [2],
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements/${replacement._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement retrieved successfully",
+    );
+
+    const responseReplacement = response.body.data.replacement;
+
+    expect(responseReplacement).toMatchObject({
+      id: String(replacement._id),
+
+      replacementNumber: "RPL-CUSTOMER-SHIPPED-DETAILS",
+
+      returnRequestNumber: "RET-CUSTOMER-SHIPPED",
+
+      orderNumber: "ORD-CUSTOMER-SHIPPED",
+
+      status: "shipped",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Item Snapshot
+    |--------------------------------------------------------------------------
+    */
+
+    expect(responseReplacement.items).toHaveLength(1);
+
+    expect(responseReplacement.items[0].replacementQuantity).toBe(2);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Lifecycle
+    |--------------------------------------------------------------------------
+    */
+
+    expect(responseReplacement.reservation.reservedAt).toBeTruthy();
+
+    expect(responseReplacement.processing.processedAt).toBeTruthy();
+
+    expect(responseReplacement.shipment).toMatchObject({
+      carrier: "Blue Dart",
+
+      trackingNumber: expect.any(String),
+
+      trackingUrl: expect.any(String),
+
+      deliveredAt: null,
+    });
+
+    expect(responseReplacement.shipment.shippedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Internal Fields MUST Be Hidden
+    |--------------------------------------------------------------------------
+    */
+
+    expect(responseReplacement.customerId).toBeUndefined();
+
+    expect(responseReplacement.reservation.reservedBy).toBeUndefined();
+
+    expect(responseReplacement.processing.processedBy).toBeUndefined();
+
+    expect(responseReplacement.processing.note).toBeUndefined();
+
+    expect(responseReplacement.shipment.shippedBy).toBeUndefined();
+
+    expect(responseReplacement.shipment.deliveredBy).toBeUndefined();
+
+    expect(responseReplacement.shipment.note).toBeUndefined();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Delivered Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("shows delivered replacement status and delivered timestamp", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-DELIVERED",
+
+      status: "delivered",
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements/${replacement._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.replacement.status).toBe("delivered");
+
+    expect(response.body.data.replacement.shipment.deliveredAt).toBeTruthy();
+
+    expect(response.body.data.replacement.shipment.deliveredBy).toBeUndefined();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Cancellation Customer Privacy
+  |--------------------------------------------------------------------------
+  */
+
+  it("shows customer-safe cancellation information without internal cancellation audit fields", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-CANCELLED",
+
+      status: "cancelled",
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements/${replacement._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    const cancellation = response.body.data.replacement.cancellation;
+
+    expect(cancellation.reason).toBe("Replacement cancelled for read testing.");
+
+    expect(cancellation.cancelledAt).toBeTruthy();
+
+    expect(cancellation.note).toBeUndefined();
+
+    expect(cancellation.cancelledBy).toBeUndefined();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Failure Customer Privacy
+  |--------------------------------------------------------------------------
+  */
+
+  it("shows customer-safe failure information without internal failure audit fields", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-CUSTOMER-FAILED",
+
+      status: "failed",
+    });
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements/${replacement._id}`,
+    );
+
+    expect(response.status).toBe(200);
+
+    const failure = response.body.data.replacement.failure;
+
+    expect(failure.reason).toBe("Replacement fulfillment failed.");
+
+    expect(failure.failedAt).toBeTruthy();
+
+    /*
+     * Part 158 failedBy is intentionally
+     * admin-only.
+     */
+
+    expect(failure.note).toBeUndefined();
+
+    expect(failure.failedBy).toBeUndefined();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Ownership Isolation
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when a customer requests another customer's replacement", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const { agent: firstCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const { user: secondCustomer } = await createAuthenticatedCustomerAgent();
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: secondCustomer._id,
+
+      adminId: admin._id,
+
+      replacementNumber: "RPL-OTHER-CUSTOMER-PRIVATE",
+    });
+
+    const response = await firstCustomerAgent.get(
+      `/api/v1/orders/replacements/${replacement._id}`,
+    );
+
+    /*
+     * Do not return 403.
+     *
+     * 404 avoids revealing that another
+     * customer's replacement exists.
+     */
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Details ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when customer replacement details ID is invalid", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get(
+      "/api/v1/orders/replacements/not-a-valid-object-id",
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when customer replacement details do not exist", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent.get(
+      `/api/v1/orders/replacements/${replacementId}`,
+    );
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reads Must Never Mutate Inventory
+  |--------------------------------------------------------------------------
+  */
+
+  it("does not modify Product inventory or Inventory Ledger when a customer reads replacement data", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    /*
+     * Use the real replacement creation flow here
+     * because we want genuine reservation state.
+     */
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Before Read
+    |--------------------------------------------------------------------------
+    */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const ledgerBefore = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    expect(ledgerBefore).toHaveLength(1);
+
+    expect(ledgerBefore[0].operation).toBe("reserve");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer List Read
+    |--------------------------------------------------------------------------
+    */
+
+    await customerAgent.get("/api/v1/orders/replacements").expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer Details Read
+    |--------------------------------------------------------------------------
+    */
+
+    await customerAgent
+      .get(`/api/v1/orders/replacements/${replacement.id}`)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | After Read
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    const ledgerAfter = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+});
