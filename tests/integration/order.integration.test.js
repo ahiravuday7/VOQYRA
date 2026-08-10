@@ -1281,6 +1281,100 @@ const createCompletedReplacementReturnFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Reserved Replacement Fixture
+|--------------------------------------------------------------------------
+|
+| Creates:
+|
+| completed replacement-resolution Return
+|              ↓
+| replacement creation API
+|              ↓
+| reserved replacement
+|--------------------------------------------------------------------------
+*/
+
+const createReservedReplacementFixture = async ({
+  adminAgent,
+  adminId,
+  customerId,
+
+  productOverrides = {},
+
+  quantity = 2,
+  resellableQuantity = 1,
+  damagedQuantity = 1,
+  rejectedQuantity = 0,
+}) => {
+  if (!adminAgent) {
+    throw new Error("Reserved Replacement fixture requires an admin agent");
+  }
+
+  if (!adminId) {
+    throw new Error("Reserved Replacement fixture requires an admin ID");
+  }
+
+  if (!customerId) {
+    throw new Error("Reserved Replacement fixture requires a customer ID");
+  }
+
+  const category = await createActiveCategoryFixture();
+
+  const product = await createActiveProductFixture({
+    category: category._id,
+
+    ...productOverrides,
+  });
+
+  const variant = product.variants[0];
+
+  const returnRequest = await createCompletedReplacementReturnFixture({
+    customerId,
+
+    adminId,
+
+    items: [
+      {
+        product,
+
+        variant,
+
+        quantity,
+
+        resellableQuantity,
+
+        damagedQuantity,
+
+        rejectedQuantity,
+      },
+    ],
+  });
+
+  const creationResponse = await adminAgent
+    .post(`/api/v1/admin/order-returns/${returnRequest._id}/replacement`)
+    .send({})
+    .expect(201);
+
+  const replacement = creationResponse.body.data.replacement;
+
+  const storedReplacement = await OrderReturnReplacement.findById(
+    replacement.id,
+  ).lean();
+
+  return {
+    category,
+    product,
+    variant,
+
+    returnRequest,
+
+    replacement,
+    storedReplacement,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product Variant
 |--------------------------------------------------------------------------
 */
@@ -17651,6 +17745,675 @@ describe("Admin Return replacement creation", () => {
     const replacement = await OrderReturnReplacement.findOne({
       returnRequest: returnRequest._id,
     }).lean();
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Replacement Processing
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return replacement processing", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when processing a replacement without authentication", async () => {
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/process`)
+      .send({});
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Authorization
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when a customer attempts to process a replacement", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/process`)
+      .send({});
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Replacement ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 400 when the replacement ID is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent
+      .post(
+        "/api/v1/admin/order-return-replacements/not-a-valid-object-id/process",
+      )
+      .send({});
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "params",
+
+          field: "replacementId",
+        }),
+      ]),
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Request Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects backend-controlled processing fields", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/process`)
+      .send({
+        note: "Start processing",
+
+        status: "processing",
+
+        processedBy: new mongoose.Types.ObjectId().toString(),
+
+        processedAt: new Date().toISOString(),
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Missing Replacement
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the replacement does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const replacementId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacementId}/process`)
+      .send({});
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_RETURN_REPLACEMENT_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Successful Processing
+  |--------------------------------------------------------------------------
+  */
+
+  it("moves a reserved replacement to processing without changing inventory", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { product, variant, replacement, returnRequest } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+
+        productOverrides: {
+          variants: [
+            {
+              sku: "RPL-PROCESS-M",
+
+              size: "M",
+
+              color: {
+                name: "Black",
+
+                code: "#000000",
+              },
+
+              pricing: {
+                buyingPrice: 300,
+
+                sellingPrice: 799,
+
+                discountPrice: 699,
+
+                currency: "INR",
+              },
+
+              inventory: {
+                stock: 10,
+
+                reservedStock: 0,
+
+                lowStockThreshold: 2,
+              },
+
+              shipping: {
+                weightInGrams: 250,
+              },
+
+              isActive: true,
+            },
+          ],
+        },
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | State Before Processing
+    |--------------------------------------------------------------------------
+    */
+
+    expect(replacement.status).toBe("reserved");
+
+    const productBeforeProcessing = await Product.findById(product._id).lean();
+
+    const variantBeforeProcessing = findProductVariant(
+      productBeforeProcessing,
+      variant._id,
+    );
+
+    expect(variantBeforeProcessing.inventory.stock).toBe(10);
+
+    expect(variantBeforeProcessing.inventory.reservedStock).toBe(2);
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments({
+      referenceId: replacement.replacementNumber,
+    });
+
+    expect(ledgerCountBefore).toBe(1);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Process Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const processingNote =
+      "Warehouse started preparing the replacement package.";
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/process`)
+      .send({
+        note: processingNote,
+      });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Return replacement processing started successfully",
+    );
+
+    const processedReplacement = response.body.data.replacement;
+
+    /*
+    |--------------------------------------------------------------------------
+    | API Response
+    |--------------------------------------------------------------------------
+    */
+
+    expect(processedReplacement.id).toBe(replacement.id);
+
+    expect(processedReplacement.status).toBe("processing");
+
+    expect(processedReplacement.processing).toMatchObject({
+      note: processingNote,
+
+      processedBy: String(admin._id),
+    });
+
+    expect(processedReplacement.processing.processedAt).toBeTruthy();
+
+    /*
+     * Reservation evidence must remain.
+     */
+
+    expect(processedReplacement.reservation.reservedBy).toBe(String(admin._id));
+
+    expect(processedReplacement.reservation.reservedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stored Replacement
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("processing");
+
+    expect(storedReplacement.processing.note).toBe(processingNote);
+
+    expect(String(storedReplacement.processing.processedBy)).toBe(
+      String(admin._id),
+    );
+
+    expect(storedReplacement.processing.processedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Inventory Must Not Change
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterProcessing = await Product.findById(product._id).lean();
+
+    const variantAfterProcessing = findProductVariant(
+      productAfterProcessing,
+      variant._id,
+    );
+
+    expect(variantAfterProcessing.inventory.stock).toBe(
+      variantBeforeProcessing.inventory.stock,
+    );
+
+    expect(variantAfterProcessing.inventory.reservedStock).toBe(
+      variantBeforeProcessing.inventory.reservedStock,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | No New Inventory Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+      }),
+    ).toBe(ledgerCountBefore);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Return Request Must Remain Completed
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReturnRequest = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    expect(unchangedReturnRequest.status).toBe("completed");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Duplicate Processing
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects processing the same replacement twice", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/process`;
+
+    const firstResponse = await adminAgent.post(url).send({
+      note: "First processing request.",
+    });
+
+    expect(firstResponse.status).toBe(200);
+
+    const firstProcessedAt =
+      firstResponse.body.data.replacement.processing.processedAt;
+
+    const secondResponse = await adminAgent.post(url).send({
+      note: "Second processing request.",
+    });
+
+    expect(secondResponse.status).toBe(409);
+
+    expect(secondResponse.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_PROCESSING",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Processing Audit Must Remain
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("processing");
+
+    expect(storedReplacement.processing.note).toBe("First processing request.");
+
+    expect(storedReplacement.processing.processedAt.toISOString()).toBe(
+      firstProcessedAt,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Still Reserved Only Once
+    |--------------------------------------------------------------------------
+    */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(10);
+
+    expect(storedVariant.inventory.reservedStock).toBe(2);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+
+        operation: "reserve",
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Invalid Status
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects processing a replacement that is not reserved", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement } = await createReservedReplacementFixture({
+      adminAgent,
+
+      adminId: admin._id,
+
+      customerId: customer._id,
+    });
+
+    /*
+     * Simulate a valid enum status that is not
+     * eligible for processing.
+     */
+
+    await OrderReturnReplacement.updateOne(
+      {
+        _id: replacement.id,
+      },
+      {
+        $set: {
+          status: "pending",
+        },
+      },
+    );
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/process`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_PROCESSING_STATUS_INVALID",
+    );
+
+    expect(response.body.details.currentStatus).toBe("pending");
+
+    expect(response.body.details.requiredStatus).toBe("reserved");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Corrupted Reservation State
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects processing when reserved replacement evidence is missing", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Corrupt Persisted Reservation Evidence
+    |--------------------------------------------------------------------------
+    |
+    | Native collection access deliberately bypasses
+    | Mongoose validation for this state-integrity test.
+    |--------------------------------------------------------------------------
+    */
+
+    await OrderReturnReplacement.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(replacement.id),
+      },
+      {
+        $set: {
+          "reservation.reservedBy": null,
+
+          "reservation.reservedAt": null,
+        },
+      },
+    );
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments({
+      referenceId: replacement.replacementNumber,
+    });
+
+    const response = await adminAgent
+      .post(`/api/v1/admin/order-return-replacements/${replacement.id}/process`)
+      .send({});
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_PROCESSING_STATE_INVALID",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Status Must Remain Reserved
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(unchangedReplacement.status).toBe("reserved");
+
+    expect(unchangedReplacement.processing?.processedAt ?? null).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Remain Untouched
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.stock).toBe(10);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(2);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: replacement.replacementNumber,
+      }),
+    ).toBe(ledgerCountBefore);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Processing
+  |--------------------------------------------------------------------------
+  */
+
+  it("allows only one concurrent processing transition", async () => {
+    const {
+      agent: firstAdminAgent,
+
+      user: firstAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const {
+      agent: secondAdminAgent,
+
+      user: secondAdmin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent: firstAdminAgent,
+
+        adminId: firstAdmin._id,
+
+        customerId: customer._id,
+      });
+
+    const url = `/api/v1/admin/order-return-replacements/${replacement.id}/process`;
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstAdminAgent.post(url).send({
+        note: "Processing request from first admin.",
+      }),
+
+      secondAdminAgent.post(url).send({
+        note: "Processing request from second admin.",
+      }),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 200,
+    );
+
+    const conflictResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(conflictResponses).toHaveLength(1);
+
+    expect(conflictResponses[0].body.errorCode).toBe(
+      "ORDER_RETURN_REPLACEMENT_ALREADY_PROCESSING",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Processing Audit
+    |--------------------------------------------------------------------------
+    */
+
+    const storedReplacement = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    expect(storedReplacement.status).toBe("processing");
+
+    expect(storedReplacement.processing.processedAt).toBeTruthy();
+
+    const processingAdminIds = [
+      String(firstAdmin._id),
+
+      String(secondAdmin._id),
+    ];
+
+    expect(processingAdminIds).toContain(
+      String(storedReplacement.processing.processedBy),
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Still Be Reserved Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const storedProduct = await Product.findById(product._id).lean();
+
+    const storedVariant = findProductVariant(storedProduct, variant._id);
+
+    expect(storedVariant.inventory.stock).toBe(10);
+
+    expect(storedVariant.inventory.reservedStock).toBe(2);
 
     expect(
       await ProductInventoryLedger.countDocuments({

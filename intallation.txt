@@ -3592,6 +3592,40 @@ Inventory Ledger       → unchanged
 Processing simply means: warehouse has started preparing the reserved replacement items.
 POST /api/v1/admin/order-return-replacements/:replacementId/process
 |--------------------------------------------------------------------------
+Part 151 — Replacement Processing Integration Tests
+
+Your current beforeEach() is already correct:
+
+beforeEach(async () => {
+  await Promise.all([
+    Order.deleteMany({}),
+    OrderReturnRequest.deleteMany({}),
+    OrderReturnReplacement.deleteMany({}),
+    ProductInventoryLedger.deleteMany({}),
+    Product.deleteMany({}),
+  ]);
+});
+
+✅ No beforeEach() change is required for Part 151.
+
+Update only:
+
+tests/integration/order.integration.test.js
+
+The important lifecycle after Part 151 is:
+
+Replacement creation
+        ↓
+reserved
+        │
+        │ inventory reserved
+        │
+        ▼
+processing
+        │
+        │ NO inventory change
+        ▼
+future shipment
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
