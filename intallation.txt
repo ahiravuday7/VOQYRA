@@ -3947,6 +3947,18 @@ GET /api/v1/admin/order-return-replacements/:replacementId
 
 This mirrors your existing Admin Return design: the list endpoint uses a summary mapper + pagination, while the details endpoint returns the full mapped document. Your existing Return service also uses the pagination shape page / limit / total / totalPages / hasPreviousPage / hasNextPage.
 |--------------------------------------------------------------------------
+Part 161 — Replacement Admin Read Integration Tests
+
+We’ll now test the two Part 160 APIs:
+
+GET /api/v1/admin/order-return-replacements
+
+GET /api/v1/admin/order-return-replacements/:replacementId
+
+For these read-only tests, we’ll follow the same pattern your existing Admin Return tests use: create lightweight database fixtures directly instead of replaying the entire business lifecycle for every test. Your current integration test file already uses this approach with createAdminOrderReturnReadFixture().
+Update only:
+
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
