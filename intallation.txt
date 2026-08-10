@@ -4029,6 +4029,124 @@ createAdminOrderReturnReplacementReadFixture
 createReservedReplacementFixture
 findProductVariant
 |--------------------------------------------------------------------------
+Part 164 — Replacement State-Machine Race Hardening
+
+I checked the current orders.zip. The important issue is the order inside your three inventory-changing workflows.
+
+Right now they effectively do:
+
+Read replacement
+→ change Product inventory
+→ create Ledger
+→ save final replacement status
+
+For stronger cross-operation concurrency safety, change them to:
+
+Atomically claim final replacement state
+→ change Product inventory
+→ create Ledger
+→ commit transaction
+
+If inventory fails, MongoDB rolls the state claim back too.
+
+This protects:
+
+ship   vs cancel
+ship   vs fail
+cancel vs fail
+
+Only update:
+
+src/modules/orders/order-return-replacement.repository.js
+src/modules/orders/order-return-replacement.service.js
+
+No controller, validation, mapper, model, or route changes.
+
+Why this is safer
+
+Consider ship vs cancel at exactly the same time.
+
+Previously both could initially read:
+
+status = processing
+
+and both would begin touching Product inventory.
+
+Now:
+
+Ship transaction
+    ↓
+atomic:
+processing → shipped
+
+Cancel transaction
+    ↓
+atomic:
+processing → cancelled
+
+Only one can successfully claim that same Replacement document.
+
+If ship wins:
+
+Replacement = shipped
+
+stock         10 → 8
+reservedStock  2 → 0
+
+Ledger:
+reserve
+commit
+
+Cancellation retries against the latest state and gets:
+
+409
+ORDER_RETURN_REPLACEMENT_CANCELLATION_STATUS_INVALID
+
+No release.
+
+If cancel wins:
+
+Replacement = cancelled
+
+stock         10 → 10
+reservedStock  2 → 0
+
+Ledger:
+reserve
+release
+
+Shipment gets:
+
+409
+ORDER_RETURN_REPLACEMENT_SHIPMENT_STATUS_INVALID
+
+No commit.
+
+The same protection now applies to:
+
+ship   vs fail
+cancel vs fail
+Rollback still works
+
+State claim occurs first, but it is inside the same MongoDB transaction.
+
+Example:
+
+processing
+   ↓
+transaction sets shipped
+   ↓
+inventory commit fails
+
+MongoDB rolls everything back:
+
+Replacement status → processing
+shipment            → removed
+stock               → original value
+reservedStock       → original value
+commit Ledger        → removed
+
+So the state claim is not prematurely permanent.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

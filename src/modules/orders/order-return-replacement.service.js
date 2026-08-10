@@ -31,6 +31,9 @@ import {
   markOrderReturnReplacementDeliveredAtomically,
   markOrderReturnReplacementProcessingAtomically,
   saveOrderReturnReplacementDocument,
+  transitionOrderReturnReplacementToCancelledAtomically,
+  transitionOrderReturnReplacementToFailedAtomically,
+  transitionOrderReturnReplacementToShippedAtomically,
 } from "./order-return-replacement.repository.js";
 
 /*
@@ -450,6 +453,15 @@ const createReturnReplacementCommitInventoryConflictError = ({
     },
   );
 };
+const createReturnReplacementShipmentConflictError = () => {
+  return new AppError(
+    "The Return replacement changed while shipment was being started",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_SHIPMENT_CONFLICT",
+    },
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -636,6 +648,15 @@ const createReturnReplacementReleaseInventoryConflictError = ({
   );
 };
 
+const createReturnReplacementCancellationConflictError = () => {
+  return new AppError(
+    "The Return replacement changed while cancellation was being processed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_CANCELLATION_CONFLICT",
+    },
+  );
+};
 /*
 |--------------------------------------------------------------------------
 | Replacement Failure Errors
@@ -696,6 +717,15 @@ const createReturnReplacementFailureStateInvalidError = (replacement) => {
   );
 };
 
+const createReturnReplacementFailureConflictError = () => {
+  return new AppError(
+    "The Return replacement changed while failure processing was being completed",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_FAILURE_CONFLICT",
+    },
+  );
+};
 /*
 |--------------------------------------------------------------------------
 | Admin Replacement Read Error
@@ -924,20 +954,35 @@ const assertOrderReturnReplacementCanFail = (replacement) => {
 
 /*
 |--------------------------------------------------------------------------
+| Diagnose Failed Failure State Claim
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementFailureTransition = async ({
+  replacementId,
+  session,
+}) => {
+  const replacement = await findOrderReturnReplacementById(replacementId, {
+    session,
+  });
+
+  if (!replacement) {
+    throw createReturnReplacementFailureNotFoundError();
+  }
+
+  assertOrderReturnReplacementCanFail(replacement);
+
+  throw createReturnReplacementFailureConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
 | Execute Atomic Replacement Failure
 |--------------------------------------------------------------------------
 |
-| load replacement
-|       ↓
-| validate failure state
-|       ↓
-| release all reserved inventory
-|       ↓
-| create release Ledger(s)
-|       ↓
-| replacement -> failed
-|       ↓
-| store failure audit
+| reserved / processing -> failed
+|
+| Claim failure state first, then release reserved inventory.
 |--------------------------------------------------------------------------
 */
 
@@ -955,36 +1000,40 @@ const executeAtomicOrderReturnReplacementFailure = async ({
       async () => {
         requireActiveReplacementTransaction(session);
 
-        /*
-          |--------------------------------------------------------------------------
-          | Load Replacement
-          |--------------------------------------------------------------------------
-          */
+        const failedAt = new Date();
 
-        const replacement = await findOrderReturnReplacementById(
-          replacementId,
-          {
+        /*
+        |--------------------------------------------------------------------------
+        | Claim Failure State First
+        |--------------------------------------------------------------------------
+        */
+
+        const replacement =
+          await transitionOrderReturnReplacementToFailedAtomically({
+            replacementId,
+
+            adminId,
+
+            failureData,
+
+            failedAt,
+
             session,
-          },
-        );
+          });
 
         if (!replacement) {
-          throw createReturnReplacementFailureNotFoundError();
+          await diagnoseFailedReturnReplacementFailureTransition({
+            replacementId,
+
+            session,
+          });
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Validate Failure Eligibility
-          |--------------------------------------------------------------------------
-          */
-
-        assertOrderReturnReplacementCanFail(replacement);
-
-        /*
-          |--------------------------------------------------------------------------
-          | Release Reserved Inventory
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Release Reserved Inventory
+        |--------------------------------------------------------------------------
+        */
 
         await releaseReturnReplacementItemsInTransaction(replacement, {
           actorUserId: adminId,
@@ -992,38 +1041,7 @@ const executeAtomicOrderReturnReplacementFailure = async ({
           session,
         });
 
-        /*
-          |--------------------------------------------------------------------------
-          | Failure Audit
-          |--------------------------------------------------------------------------
-          */
-
-        const failedAt = new Date();
-
-        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.FAILED;
-
-        replacement.failure = {
-          reason: failureData.reason,
-
-          note: failureData.note ?? null,
-
-          failedBy: adminId,
-
-          failedAt,
-        };
-
-        /*
-          |--------------------------------------------------------------------------
-          | Persist Replacement
-          |--------------------------------------------------------------------------
-          */
-
-        failedReplacement = await saveOrderReturnReplacementDocument(
-          replacement,
-          {
-            session,
-          },
-        );
+        failedReplacement = replacement;
       },
 
       {
@@ -1132,6 +1150,29 @@ const assertOrderReturnReplacementCanBeCancelled = (replacement) => {
   if (!hasReservation || hasShipmentEvidence || hasFailure) {
     throw createReturnReplacementCancellationStateInvalidError(replacement);
   }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Cancellation State Claim
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementCancellationTransition = async ({
+  replacementId,
+  session,
+}) => {
+  const replacement = await findOrderReturnReplacementById(replacementId, {
+    session,
+  });
+
+  if (!replacement) {
+    throw createReturnReplacementCancellationNotFoundError();
+  }
+
+  assertOrderReturnReplacementCanBeCancelled(replacement);
+
+  throw createReturnReplacementCancellationConflictError();
 };
 
 /*
@@ -1354,17 +1395,9 @@ const releaseReturnReplacementItemsInTransaction = async (
 | Execute Atomic Replacement Cancellation
 |--------------------------------------------------------------------------
 |
-| load Replacement
-|       ↓
-| validate cancellation state
-|       ↓
-| release reserved Product inventory
-|       ↓
-| create release Ledger entries
-|       ↓
-| Replacement -> cancelled
-|       ↓
-| save cancellation audit
+| reserved / processing -> cancelled
+|
+| Claim cancellation state first, then release inventory.
 |--------------------------------------------------------------------------
 */
 
@@ -1382,36 +1415,40 @@ const executeAtomicOrderReturnReplacementCancellation = async ({
       async () => {
         requireActiveReplacementTransaction(session);
 
-        /*
-          |--------------------------------------------------------------------------
-          | Load Replacement
-          |--------------------------------------------------------------------------
-          */
+        const cancelledAt = new Date();
 
-        const replacement = await findOrderReturnReplacementById(
-          replacementId,
-          {
+        /*
+        |--------------------------------------------------------------------------
+        | Claim Cancellation State First
+        |--------------------------------------------------------------------------
+        */
+
+        const replacement =
+          await transitionOrderReturnReplacementToCancelledAtomically({
+            replacementId,
+
+            adminId,
+
+            cancellationData,
+
+            cancelledAt,
+
             session,
-          },
-        );
+          });
 
         if (!replacement) {
-          throw createReturnReplacementCancellationNotFoundError();
+          await diagnoseFailedReturnReplacementCancellationTransition({
+            replacementId,
+
+            session,
+          });
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Validate
-          |--------------------------------------------------------------------------
-          */
-
-        assertOrderReturnReplacementCanBeCancelled(replacement);
-
-        /*
-          |--------------------------------------------------------------------------
-          | Release Inventory Reservations
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Release Reserved Inventory
+        |--------------------------------------------------------------------------
+        */
 
         await releaseReturnReplacementItemsInTransaction(replacement, {
           actorUserId: adminId,
@@ -1419,38 +1456,7 @@ const executeAtomicOrderReturnReplacementCancellation = async ({
           session,
         });
 
-        /*
-          |--------------------------------------------------------------------------
-          | Cancellation Audit
-          |--------------------------------------------------------------------------
-          */
-
-        const cancelledAt = new Date();
-
-        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.CANCELLED;
-
-        replacement.cancellation = {
-          reason: cancellationData.reason,
-
-          note: cancellationData.note ?? null,
-
-          cancelledBy: adminId,
-
-          cancelledAt,
-        };
-
-        /*
-          |--------------------------------------------------------------------------
-          | Save
-          |--------------------------------------------------------------------------
-          */
-
-        cancelledReplacement = await saveOrderReturnReplacementDocument(
-          replacement,
-          {
-            session,
-          },
-        );
+        cancelledReplacement = replacement;
       },
 
       {
@@ -1722,6 +1728,42 @@ const assertOrderReturnReplacementCanShip = (replacement) => {
 
 /*
 |--------------------------------------------------------------------------
+| Diagnose Failed Shipment State Claim
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementShipmentTransition = async ({
+  replacementId,
+  session,
+}) => {
+  const replacement = await findOrderReturnReplacementById(replacementId, {
+    session,
+  });
+
+  if (!replacement) {
+    throw createReturnReplacementShipmentNotFoundError();
+  }
+
+  /*
+   * Existing assertion gives us the specific reason:
+   *
+   * already shipped
+   * wrong status
+   * invalid shipment state
+   */
+
+  assertOrderReturnReplacementCanShip(replacement);
+
+  /*
+   * If assertion still considers the state valid,
+   * another concurrent write won the race.
+   */
+
+  throw createReturnReplacementShipmentConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
 | Diagnose Failed Replacement Inventory Commit
 |--------------------------------------------------------------------------
 */
@@ -1943,21 +1985,14 @@ const commitReturnReplacementItemsInTransaction = async (
 | Execute Atomic Replacement Shipment
 |--------------------------------------------------------------------------
 |
-| Transaction:
+| Atomic state claim:
 |
-| load replacement
-|      ↓
-| processing-state validation
-|      ↓
-| commit every reserved Product variant
-|      ↓
-| create commit ledger(s)
-|      ↓
-| replacement -> shipped
-|      ↓
-| save shipment audit
-|      ↓
-| commit everything
+| processing -> shipped
+|
+| happens BEFORE Product inventory commit.
+|
+| If inventory commit fails, the entire transaction rolls back and the
+| replacement returns to processing automatically.
 |--------------------------------------------------------------------------
 */
 
@@ -1975,36 +2010,47 @@ const executeAtomicOrderReturnReplacementShipment = async ({
       async () => {
         requireActiveReplacementTransaction(session);
 
-        /*
-          |--------------------------------------------------------------------------
-          | Load Replacement
-          |--------------------------------------------------------------------------
-          */
+        const shippedAt = new Date();
 
-        const replacement = await findOrderReturnReplacementById(
-          replacementId,
-          {
+        /*
+        |--------------------------------------------------------------------------
+        | Claim Shipment State First
+        |--------------------------------------------------------------------------
+        */
+
+        const replacement =
+          await transitionOrderReturnReplacementToShippedAtomically({
+            replacementId,
+
+            adminId,
+
+            shipmentData,
+
+            shippedAt,
+
             session,
-          },
-        );
+          });
 
         if (!replacement) {
-          throw createReturnReplacementShipmentNotFoundError();
+          await diagnoseFailedReturnReplacementShipmentTransition({
+            replacementId,
+
+            session,
+          });
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Validate Current State
-          |--------------------------------------------------------------------------
-          */
-
-        assertOrderReturnReplacementCanShip(replacement);
-
-        /*
-          |--------------------------------------------------------------------------
-          | Commit Reserved Replacement Inventory
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Commit Reserved Inventory
+        |--------------------------------------------------------------------------
+        |
+        | If this fails:
+        |
+        | shipped state    -> rolled back
+        | Product changes  -> rolled back
+        | Ledger changes   -> rolled back
+        |--------------------------------------------------------------------------
+        */
 
         await commitReturnReplacementItemsInTransaction(replacement, {
           actorUserId: adminId,
@@ -2012,46 +2058,7 @@ const executeAtomicOrderReturnReplacementShipment = async ({
           session,
         });
 
-        /*
-          |--------------------------------------------------------------------------
-          | Shipment Audit
-          |--------------------------------------------------------------------------
-          */
-
-        const shippedAt = new Date();
-
-        replacement.status = ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED;
-
-        replacement.shipment = {
-          carrier: shipmentData.carrier,
-
-          trackingNumber: shipmentData.trackingNumber,
-
-          trackingUrl: shipmentData.trackingUrl ?? null,
-
-          note: shipmentData.note ?? null,
-
-          shippedBy: adminId,
-
-          shippedAt,
-
-          deliveredBy: null,
-
-          deliveredAt: null,
-        };
-
-        /*
-          |--------------------------------------------------------------------------
-          | Persist Replacement
-          |--------------------------------------------------------------------------
-          */
-
-        shippedReplacement = await saveOrderReturnReplacementDocument(
-          replacement,
-          {
-            session,
-          },
-        );
+        shippedReplacement = replacement;
       },
 
       {

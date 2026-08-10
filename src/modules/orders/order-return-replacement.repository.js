@@ -209,6 +209,286 @@ export const findOrderReturnReplacementById = (
 
 /*
 |--------------------------------------------------------------------------
+| Transition Replacement To Shipped Atomically
+|--------------------------------------------------------------------------
+|
+| processing -> shipped
+|
+| This transition happens inside the shipment transaction BEFORE Product
+| inventory is committed.
+|--------------------------------------------------------------------------
+*/
+
+export const transitionOrderReturnReplacementToShippedAtomically = ({
+  replacementId,
+  adminId,
+  shipmentData,
+  shippedAt,
+  session,
+}) => {
+  return OrderReturnReplacement.findOneAndUpdate(
+    {
+      _id: replacementId,
+
+      status: ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+
+      "reservation.reservedBy": {
+        $ne: null,
+      },
+
+      "reservation.reservedAt": {
+        $ne: null,
+      },
+
+      "processing.processedBy": {
+        $ne: null,
+      },
+
+      "processing.processedAt": {
+        $ne: null,
+      },
+
+      /*
+      |--------------------------------------------------------------------------
+      | Shipment Must Not Already Exist
+      |--------------------------------------------------------------------------
+      */
+
+      "shipment.carrier": null,
+
+      "shipment.trackingNumber": null,
+
+      "shipment.shippedBy": null,
+
+      "shipment.shippedAt": null,
+
+      "shipment.deliveredAt": null,
+
+      /*
+      |--------------------------------------------------------------------------
+      | No Competing Terminal State
+      |--------------------------------------------------------------------------
+      */
+
+      "cancellation.cancelledAt": null,
+
+      "failure.failedAt": null,
+    },
+
+    {
+      $set: {
+        status: ORDER_RETURN_REPLACEMENT_STATUS.SHIPPED,
+
+        shipment: {
+          carrier: shipmentData.carrier,
+
+          trackingNumber: shipmentData.trackingNumber,
+
+          trackingUrl: shipmentData.trackingUrl ?? null,
+
+          note: shipmentData.note ?? null,
+
+          shippedBy: adminId,
+
+          shippedAt,
+
+          deliveredBy: null,
+
+          deliveredAt: null,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+
+      session,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Transition Replacement To Cancelled Atomically
+|--------------------------------------------------------------------------
+|
+| reserved / processing -> cancelled
+|--------------------------------------------------------------------------
+*/
+
+export const transitionOrderReturnReplacementToCancelledAtomically = ({
+  replacementId,
+  adminId,
+  cancellationData,
+  cancelledAt,
+  session,
+}) => {
+  return OrderReturnReplacement.findOneAndUpdate(
+    {
+      _id: replacementId,
+
+      status: {
+        $in: [
+          ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+          ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+        ],
+      },
+
+      "reservation.reservedBy": {
+        $ne: null,
+      },
+
+      "reservation.reservedAt": {
+        $ne: null,
+      },
+
+      /*
+      |--------------------------------------------------------------------------
+      | Shipment Must Never Have Started
+      |--------------------------------------------------------------------------
+      */
+
+      "shipment.carrier": null,
+
+      "shipment.trackingNumber": null,
+
+      "shipment.shippedBy": null,
+
+      "shipment.shippedAt": null,
+
+      "shipment.deliveredAt": null,
+
+      /*
+      |--------------------------------------------------------------------------
+      | No Existing Terminal State
+      |--------------------------------------------------------------------------
+      */
+
+      "cancellation.cancelledAt": null,
+
+      "failure.failedAt": null,
+    },
+
+    {
+      $set: {
+        status: ORDER_RETURN_REPLACEMENT_STATUS.CANCELLED,
+
+        cancellation: {
+          reason: cancellationData.reason,
+
+          note: cancellationData.note ?? null,
+
+          cancelledBy: adminId,
+
+          cancelledAt,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+
+      session,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Transition Replacement To Failed Atomically
+|--------------------------------------------------------------------------
+|
+| reserved / processing -> failed
+|--------------------------------------------------------------------------
+*/
+
+export const transitionOrderReturnReplacementToFailedAtomically = ({
+  replacementId,
+  adminId,
+  failureData,
+  failedAt,
+  session,
+}) => {
+  return OrderReturnReplacement.findOneAndUpdate(
+    {
+      _id: replacementId,
+
+      status: {
+        $in: [
+          ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+
+          ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING,
+        ],
+      },
+
+      "reservation.reservedBy": {
+        $ne: null,
+      },
+
+      "reservation.reservedAt": {
+        $ne: null,
+      },
+
+      /*
+      |--------------------------------------------------------------------------
+      | Shipment Must Never Have Started
+      |--------------------------------------------------------------------------
+      */
+
+      "shipment.carrier": null,
+
+      "shipment.trackingNumber": null,
+
+      "shipment.shippedBy": null,
+
+      "shipment.shippedAt": null,
+
+      "shipment.deliveredAt": null,
+
+      /*
+      |--------------------------------------------------------------------------
+      | No Existing Terminal State
+      |--------------------------------------------------------------------------
+      */
+
+      "cancellation.cancelledAt": null,
+
+      "failure.failedAt": null,
+    },
+
+    {
+      $set: {
+        status: ORDER_RETURN_REPLACEMENT_STATUS.FAILED,
+
+        failure: {
+          reason: failureData.reason,
+
+          note: failureData.note ?? null,
+
+          failedBy: adminId,
+
+          failedAt,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+
+      session,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Mark Replacement Processing Atomically
 |--------------------------------------------------------------------------
 |
