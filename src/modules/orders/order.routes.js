@@ -31,6 +31,16 @@ import {
   cancelCustomerOrderReturnRequestController,
 } from "./order-return.controller.js";
 
+import {
+  getCustomerReturnReplacementController,
+  getCustomerReturnReplacementsController,
+} from "./order-return-replacement.controller.js";
+
+import {
+  customerOrderReturnReplacementDetailsRequestSchema,
+  customerOrderReturnReplacementListRequestSchema,
+} from "./order-return-replacement.validation.js";
+
 const router = Router();
 
 /*
@@ -151,6 +161,42 @@ router.post(
   "/:orderId/cancel",
   validateRequest(cancelCustomerOrderRequestSchema),
   cancelCustomerOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Replacement List
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/orders/replacements
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/replacements",
+
+  validateRequest(customerOrderReturnReplacementListRequestSchema),
+
+  getCustomerReturnReplacementsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Return Replacement Details
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/orders/replacements/:replacementId
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/replacements/:replacementId",
+
+  validateRequest(customerOrderReturnReplacementDetailsRequestSchema),
+
+  getCustomerReturnReplacementController,
 );
 
 /*

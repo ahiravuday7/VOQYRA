@@ -1,6 +1,8 @@
 import {
   mapAdminOrderReturnReplacement,
   mapAdminOrderReturnReplacementSummary,
+  mapCustomerOrderReturnReplacement,
+  mapCustomerOrderReturnReplacementSummary,
 } from "./order-return-replacement.mapper.js";
 
 import {
@@ -12,6 +14,8 @@ import {
   failAdminOrderReturnReplacement,
   getAdminOrderReturnReplacementById,
   getAdminOrderReturnReplacements,
+  getCustomerOrderReturnReplacementById,
+  getCustomerOrderReturnReplacements,
 } from "./order-return-replacement.service.js";
 
 /*
@@ -282,6 +286,76 @@ export const getAdminReturnReplacementController = async (
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Return Replacements
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/orders/replacements
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerReturnReplacementsController = async (
+  request,
+  response,
+) => {
+  const customerId = request.user._id;
+
+  const filters = request.validated.query;
+
+  const { replacements, pagination } = await getCustomerOrderReturnReplacements(
+    customerId,
+    filters,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacements retrieved successfully",
+
+    data: {
+      replacements: replacements.map(mapCustomerOrderReturnReplacementSummary),
+
+      pagination,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Return Replacement
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/orders/replacements/:replacementId
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const customerId = request.user._id;
+
+  const replacement = await getCustomerOrderReturnReplacementById(
+    replacementId,
+    customerId,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacement retrieved successfully",
+
+    data: {
+      replacement: mapCustomerOrderReturnReplacement(replacement),
     },
   });
 };

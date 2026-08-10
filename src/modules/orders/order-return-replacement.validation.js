@@ -272,6 +272,36 @@ const adminOrderReturnReplacementListQuerySchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Customer Replacement List Query
+|--------------------------------------------------------------------------
+*/
+
+const customerOrderReturnReplacementListQuerySchema = z.strictObject({
+  page: z.coerce.number().int().min(1).default(1),
+
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+
+  search: z.string().trim().min(1).max(100).optional(),
+
+  status: z
+    .enum(ORDER_RETURN_REPLACEMENT_STATUS_VALUES, {
+      error: "Replacement status is invalid",
+    })
+    .optional(),
+
+  orderId: replacementListObjectIdSchema.optional(),
+
+  sortBy: z
+    .enum(ORDER_RETURN_REPLACEMENT_LIST_SORT_VALUES)
+    .default("createdAt"),
+
+  sortDirection: z
+    .enum(ORDER_RETURN_REPLACEMENT_SORT_DIRECTION_VALUES)
+    .default("desc"),
+});
+
+/*
+|--------------------------------------------------------------------------
 | Process Return Replacement Request
 |--------------------------------------------------------------------------
 |
@@ -412,3 +442,32 @@ export const adminOrderReturnReplacementDetailsRequestSchema = z.strictObject({
 
   query: emptyObjectSchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Replacement List Request
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnReplacementListRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: customerOrderReturnReplacementListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Replacement Details Request
+|--------------------------------------------------------------------------
+*/
+
+export const customerOrderReturnReplacementDetailsRequestSchema =
+  z.strictObject({
+    body: emptyObjectSchema,
+
+    params: returnReplacementIdParamsSchema,
+
+    query: emptyObjectSchema,
+  });

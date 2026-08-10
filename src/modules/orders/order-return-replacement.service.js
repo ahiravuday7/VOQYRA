@@ -23,12 +23,14 @@ import { ORDER_RETURN_REPLACEMENT_STATUS } from "./order-return-replacement.mode
 
 import {
   createOrderReturnReplacementDocument,
+  findAdminOrderReturnReplacementById,
+  findCustomerOrderReturnReplacementById,
   findOrderReturnReplacementById,
+  listAdminOrderReturnReplacements,
+  listCustomerOrderReturnReplacements,
+  markOrderReturnReplacementDeliveredAtomically,
   markOrderReturnReplacementProcessingAtomically,
   saveOrderReturnReplacementDocument,
-  markOrderReturnReplacementDeliveredAtomically,
-  findAdminOrderReturnReplacementById,
-  listAdminOrderReturnReplacements,
 } from "./order-return-replacement.repository.js";
 
 /*
@@ -704,6 +706,90 @@ const createAdminOrderReturnReplacementNotFoundError = () => {
   return new AppError("Return replacement was not found", 404, {
     errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Customer Replacement Read Error
+|--------------------------------------------------------------------------
+*/
+
+const createCustomerOrderReturnReplacementNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Return Replacements
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnReplacements = async (
+  customerId,
+  filters = {},
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to list Return replacements");
+  }
+
+  const {
+    page = 1,
+
+    limit = 20,
+  } = filters;
+
+  const { replacements, total } = await listCustomerOrderReturnReplacements(
+    customerId,
+    filters,
+  );
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  return {
+    replacements,
+
+    pagination: {
+      page,
+
+      limit,
+
+      total,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Customer Return Replacement by ID
+|--------------------------------------------------------------------------
+*/
+
+export const getCustomerOrderReturnReplacementById = async (
+  replacementId,
+  customerId,
+) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to retrieve a Return replacement");
+  }
+
+  const replacement = await findCustomerOrderReturnReplacementById(
+    replacementId,
+    customerId,
+  );
+
+  if (!replacement) {
+    throw createCustomerOrderReturnReplacementNotFoundError();
+  }
+
+  return replacement;
 };
 
 /*

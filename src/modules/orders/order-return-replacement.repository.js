@@ -14,6 +14,129 @@ const escapeReplacementSearchExpression = (value) => {
 
 /*
 |--------------------------------------------------------------------------
+| Customer Replacement List Projection
+|--------------------------------------------------------------------------
+|
+| Never expose warehouse/admin actor IDs or internal notes.
+|--------------------------------------------------------------------------
+*/
+
+const CUSTOMER_ORDER_RETURN_REPLACEMENT_LIST_PROJECTION = Object.freeze({
+  _id: 1,
+
+  replacementNumber: 1,
+
+  returnRequest: 1,
+
+  returnRequestNumber: 1,
+
+  order: 1,
+
+  orderNumber: 1,
+
+  status: 1,
+
+  "items.replacementQuantity": 1,
+
+  "reservation.reservedAt": 1,
+
+  "processing.processedAt": 1,
+
+  "shipment.shippedAt": 1,
+
+  "shipment.deliveredAt": 1,
+
+  "cancellation.cancelledAt": 1,
+
+  "failure.failedAt": 1,
+
+  createdAt: 1,
+
+  updatedAt: 1,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Replacement Details Projection
+|--------------------------------------------------------------------------
+*/
+
+const CUSTOMER_ORDER_RETURN_REPLACEMENT_DETAILS_PROJECTION = Object.freeze({
+  _id: 1,
+
+  replacementNumber: 1,
+
+  returnRequest: 1,
+
+  returnRequestNumber: 1,
+
+  order: 1,
+
+  orderNumber: 1,
+
+  status: 1,
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Safe Item Snapshots
+    |--------------------------------------------------------------------------
+    */
+
+  "items._id": 1,
+
+  "items.orderItemId": 1,
+
+  "items.product": 1,
+
+  "items.variantId": 1,
+
+  "items.productName": 1,
+
+  "items.sku": 1,
+
+  "items.size": 1,
+
+  "items.color": 1,
+
+  "items.returnedQuantity": 1,
+
+  "items.replacementQuantity": 1,
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Safe Lifecycle Information
+    |--------------------------------------------------------------------------
+    */
+
+  "reservation.reservedAt": 1,
+
+  "processing.processedAt": 1,
+
+  "shipment.carrier": 1,
+
+  "shipment.trackingNumber": 1,
+
+  "shipment.trackingUrl": 1,
+
+  "shipment.shippedAt": 1,
+
+  "shipment.deliveredAt": 1,
+
+  "cancellation.reason": 1,
+
+  "cancellation.cancelledAt": 1,
+
+  "failure.reason": 1,
+
+  "failure.failedAt": 1,
+
+  createdAt: 1,
+
+  updatedAt: 1,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Order Return Replacement
 |--------------------------------------------------------------------------
 */
@@ -391,4 +514,129 @@ export const listAdminOrderReturnReplacements = async ({
 
 export const findAdminOrderReturnReplacementById = (replacementId) => {
   return OrderReturnReplacement.findById(replacementId).lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Customer Return Replacements
+|--------------------------------------------------------------------------
+*/
+
+export const listCustomerOrderReturnReplacements = async (
+  customerId,
+  {
+    page = 1,
+    limit = 20,
+
+    search,
+    status,
+    orderId,
+
+    sortBy = "createdAt",
+    sortDirection = "desc",
+  } = {},
+) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Ownership Boundary
+    |--------------------------------------------------------------------------
+    */
+
+  const filter = {
+    customer: customerId,
+  };
+
+  /*
+    |--------------------------------------------------------------------------
+    | Search
+    |--------------------------------------------------------------------------
+    */
+
+  if (search) {
+    const safeSearch = escapeReplacementSearchExpression(search);
+
+    const searchExpression = new RegExp(safeSearch, "i");
+
+    filter.$or = [
+      {
+        replacementNumber: searchExpression,
+      },
+
+      {
+        returnRequestNumber: searchExpression,
+      },
+
+      {
+        orderNumber: searchExpression,
+      },
+    ];
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (status) {
+    filter.status = status;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Order
+    |--------------------------------------------------------------------------
+    */
+
+  if (orderId) {
+    filter.order = orderId;
+  }
+
+  const skip = (page - 1) * limit;
+
+  const sortValue = sortDirection === "asc" ? 1 : -1;
+
+  const [replacements, total] = await Promise.all([
+    OrderReturnReplacement.find(filter)
+      .select(CUSTOMER_ORDER_RETURN_REPLACEMENT_LIST_PROJECTION)
+      .sort({
+        [sortBy]: sortValue,
+
+        _id: sortValue,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    OrderReturnReplacement.countDocuments(filter),
+  ]);
+
+  return {
+    replacements,
+    total,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Return Replacement by ID
+|--------------------------------------------------------------------------
+|
+| Important:
+|
+| Ownership is checked in the MongoDB query itself.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderReturnReplacementById = (
+  replacementId,
+  customerId,
+) => {
+  return OrderReturnReplacement.findOne({
+    _id: replacementId,
+
+    customer: customerId,
+  })
+    .select(CUSTOMER_ORDER_RETURN_REPLACEMENT_DETAILS_PROJECTION)
+    .lean();
 };

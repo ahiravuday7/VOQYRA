@@ -3960,6 +3960,61 @@ Update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 162 — Customer Replacement Read APIs
+
+Now customers can track their own replacement without seeing warehouse/admin-only information.
+
+We’ll expose:
+
+GET /api/v1/orders/replacements
+
+GET /api/v1/orders/replacements/:replacementId
+
+This follows your existing customer Return pattern: the authenticated customer's _id is passed into the service for ownership scoping, and the customer mapper intentionally hides internal actor IDs.
+
+Customer can see
+replacementNumber
+Return reference
+Order reference
+status
+replacement items
+replacement quantities
+
+reservedAt
+processedAt
+
+carrier
+trackingNumber
+trackingUrl
+shippedAt
+deliveredAt
+
+cancellation reason/time
+failure reason/time
+
+Customer must not see:
+
+reservedBy
+processing.note
+processedBy
+
+shipment.note
+shippedBy
+deliveredBy
+
+cancellation.note
+cancelledBy
+
+failure.note
+failedBy
+
+We’ll enforce this in both the repository projection and mapper.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
