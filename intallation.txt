@@ -3505,6 +3505,18 @@ src/modules/orders/order-return-replacement.model.js
 
 No routes, controllers, services, or inventory changes yet.
 |--------------------------------------------------------------------------
+Part 146 — Replacement Request Validation + Trusted Replacement Plan
+
+Now we build the server-controlled replacement plan.
+
+The key rule is the same one we already use for refund calculations: the admin/client must not decide replacement quantity. The existing Return item already contains trusted product snapshots, and inspection stores resellableQuantity, damagedQuantity, and rejectedQuantity.
+
+For this part, we’ll create two focused files:
+
+src/modules/orders/order-return-replacement.validation.js
+src/modules/orders/order-return-replacement.service.js
+
+We are not creating the replacement document or reserving inventory yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
