@@ -21,6 +21,7 @@ import adminOrderRoutes from "./modules/orders/order.admin.routes.js";
 import productRoutes from "./modules/products/product.routes.js";
 import publicProductRoutes from "./modules/products/product.public.routes.js";
 import orderReturnAdminRoutes from "./modules/orders/order-return.admin.routes.js";
+import orderReturnReplacementAdminRoutes from "./modules/orders/order-return-replacement.admin.routes.js";
 
 // This creates the Express application instance.
 const app = express();
@@ -125,6 +126,10 @@ app.use("/api/v1/admin/categories", categoryRoutes);
 app.use("/api/v1/admin/products", productRoutes);
 app.use("/api/v1/admin/orders", adminOrderRoutes);
 app.use("/api/v1/admin/order-returns", orderReturnAdminRoutes);
+app.use(
+  "/api/v1/admin/order-return-replacements",
+  orderReturnReplacementAdminRoutes,
+);
 
 /*
 | 404 and Global Error Handling

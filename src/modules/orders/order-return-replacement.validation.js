@@ -36,6 +36,62 @@ const returnReplacementParamsSchema = z.strictObject({
 
 /*
 |--------------------------------------------------------------------------
+| Replacement ID Parameters
+|--------------------------------------------------------------------------
+*/
+
+const replacementIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-f\d]{24}$/i, {
+    error: "Replacement ID must be a valid MongoDB ObjectId",
+  });
+
+const returnReplacementIdParamsSchema = z.strictObject({
+  replacementId: replacementIdSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Process Return Replacement Body
+|--------------------------------------------------------------------------
+*/
+
+const processOrderReturnReplacementBodySchema = z.strictObject({
+  note: z
+    .string({
+      error: "Processing note must be text",
+    })
+    .trim()
+    .min(3, {
+      error: "Processing note must contain at least 3 characters",
+    })
+    .max(500, {
+      error: "Processing note cannot exceed 500 characters",
+    })
+    .optional(),
+});
+
+/*
+|--------------------------------------------------------------------------
+| Process Return Replacement Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/process
+|--------------------------------------------------------------------------
+*/
+
+export const processOrderReturnReplacementRequestSchema = z.strictObject({
+  body: processOrderReturnReplacementBodySchema,
+
+  params: returnReplacementIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Create Return Replacement Request
 |--------------------------------------------------------------------------
 |

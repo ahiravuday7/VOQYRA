@@ -3573,6 +3573,24 @@ tests/integration/order.integration.test.js
 
 I’m going to use a small direct completed-Return fixture for these tests instead of replaying the entire requested → approved → ... → completed lifecycle every time. That keeps Part 149 focused specifically on replacement creation. Your Return model supports the trusted item/inspection structure we need, including the rule that inspected quantities must exactly equal returned quantity.
 |--------------------------------------------------------------------------
+Part 150 — Replacement Processing Workflow
+
+I checked the actual src(4).zip before preparing this Part. Your current replacement model already contains PROCESSING and the processing audit fields, and your mapper already exposes them. So no model or mapper changes are needed.
+
+The transition is:
+
+reserved
+   ↓
+processing
+
+And importantly:
+
+Product.stock          → unchanged
+Product.reservedStock  → unchanged
+Inventory Ledger       → unchanged
+
+Processing simply means: warehouse has started preparing the reserved replacement items.
+POST /api/v1/admin/order-return-replacements/:replacementId/process
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

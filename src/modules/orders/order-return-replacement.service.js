@@ -21,6 +21,8 @@ import { ORDER_RETURN_REPLACEMENT_STATUS } from "./order-return-replacement.mode
 
 import {
   createOrderReturnReplacementDocument,
+  findOrderReturnReplacementById,
+  markOrderReturnReplacementProcessingAtomically,
   saveOrderReturnReplacementDocument,
 } from "./order-return-replacement.repository.js";
 
@@ -269,6 +271,207 @@ const createReturnReplacementCreationConflictError = () => {
       errorCode: "ORDER_RETURN_REPLACEMENT_CREATION_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replacement Processing Errors
+|--------------------------------------------------------------------------
+*/
+
+const createReturnReplacementProcessingNotFoundError = () => {
+  return new AppError("Return replacement was not found", 404, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_NOT_FOUND",
+  });
+};
+
+const createReturnReplacementAlreadyProcessingError = (replacement) => {
+  return new AppError("This Return replacement is already processing", 409, {
+    errorCode: "ORDER_RETURN_REPLACEMENT_ALREADY_PROCESSING",
+
+    details: {
+      status: replacement.status,
+
+      processedAt: replacement.processing?.processedAt ?? null,
+    },
+  });
+};
+
+const createReturnReplacementProcessingStatusInvalidError = (currentStatus) => {
+  return new AppError(
+    "This Return replacement cannot begin processing from its current status",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_PROCESSING_STATUS_INVALID",
+
+      details: {
+        currentStatus,
+
+        requiredStatus: ORDER_RETURN_REPLACEMENT_STATUS.RESERVED,
+      },
+    },
+  );
+};
+
+const createReturnReplacementProcessingStateInvalidError = (replacement) => {
+  return new AppError(
+    "This Return replacement does not contain a valid reserved fulfillment state",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_PROCESSING_STATE_INVALID",
+
+      details: {
+        replacementId: String(replacement._id),
+
+        status: replacement.status,
+      },
+    },
+  );
+};
+
+const createReturnReplacementProcessingConflictError = () => {
+  return new AppError(
+    "The Return replacement was modified by another operation. Please refresh and try again.",
+    409,
+    {
+      errorCode: "ORDER_RETURN_REPLACEMENT_PROCESSING_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Diagnose Failed Replacement Processing Transition
+|--------------------------------------------------------------------------
+*/
+
+const diagnoseFailedReturnReplacementProcessing = async (replacementId) => {
+  const replacement = await findOrderReturnReplacementById(replacementId);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Missing Replacement
+    |--------------------------------------------------------------------------
+    */
+
+  if (!replacement) {
+    throw createReturnReplacementProcessingNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Duplicate Processing
+    |--------------------------------------------------------------------------
+    */
+
+  if (replacement.status === ORDER_RETURN_REPLACEMENT_STATUS.PROCESSING) {
+    throw createReturnReplacementAlreadyProcessingError(replacement);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Wrong Status
+    |--------------------------------------------------------------------------
+    */
+
+  if (replacement.status !== ORDER_RETURN_REPLACEMENT_STATUS.RESERVED) {
+    throw createReturnReplacementProcessingStatusInvalidError(
+      replacement.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Reservation Evidence
+    |--------------------------------------------------------------------------
+    */
+
+  const hasValidReservation = Boolean(
+    replacement.reservation?.reservedBy && replacement.reservation?.reservedAt,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Impossible / Corrupted State Protection
+    |--------------------------------------------------------------------------
+    */
+
+  const hasConflictingFulfillmentEvidence = Boolean(
+    replacement.processing?.processedAt ||
+    replacement.shipment?.shippedAt ||
+    replacement.cancellation?.cancelledAt ||
+    replacement.failure?.failedAt,
+  );
+
+  if (!hasValidReservation || hasConflictingFulfillmentEvidence) {
+    throw createReturnReplacementProcessingStateInvalidError(replacement);
+  }
+
+  /*
+   * If the document still appears valid here,
+   * another concurrent operation most likely won
+   * the atomic transition.
+   */
+
+  throw createReturnReplacementProcessingConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Process Admin Order Return Replacement
+|--------------------------------------------------------------------------
+|
+| Atomic single-document transition:
+|
+| reserved -> processing
+|
+| No Product inventory changes happen here.
+|--------------------------------------------------------------------------
+*/
+
+export const processAdminOrderReturnReplacement = async (
+  replacementId,
+  adminId,
+  processingData = {},
+) => {
+  if (!replacementId) {
+    throw new Error("Replacement ID is required to begin processing");
+  }
+
+  if (!adminId) {
+    throw new Error("Admin ID is required to process a Return replacement");
+  }
+
+  const processedAt = new Date();
+
+  /*
+    |--------------------------------------------------------------------------
+    | Atomic State Transition
+    |--------------------------------------------------------------------------
+    */
+
+  const updatedReplacement =
+    await markOrderReturnReplacementProcessingAtomically({
+      replacementId,
+
+      adminId,
+
+      note: processingData.note ?? null,
+
+      processedAt,
+    });
+
+  if (updatedReplacement) {
+    return updatedReplacement;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Determine Why Atomic Transition Failed
+    |--------------------------------------------------------------------------
+    */
+
+  return diagnoseFailedReturnReplacementProcessing(replacementId);
 };
 
 /*

@@ -1,6 +1,9 @@
 import { mapAdminOrderReturnReplacement } from "./order-return-replacement.mapper.js";
 
-import { createAdminOrderReturnReplacement } from "./order-return-replacement.service.js";
+import {
+  createAdminOrderReturnReplacement,
+  processAdminOrderReturnReplacement,
+} from "./order-return-replacement.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -28,6 +31,43 @@ export const createAdminReturnReplacementController = async (
     success: true,
 
     message: "Return replacement created and inventory reserved successfully",
+
+    data: {
+      replacement: mapAdminOrderReturnReplacement(replacement),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Process Admin Return Replacement
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/order-return-replacements/:replacementId/process
+|--------------------------------------------------------------------------
+*/
+
+export const processAdminReturnReplacementController = async (
+  request,
+  response,
+) => {
+  const { replacementId } = request.validated.params;
+
+  const adminId = request.user._id;
+
+  const processingData = request.validated.body;
+
+  const replacement = await processAdminOrderReturnReplacement(
+    replacementId,
+    adminId,
+    processingData,
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Return replacement processing started successfully",
 
     data: {
       replacement: mapAdminOrderReturnReplacement(replacement),
