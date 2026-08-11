@@ -4620,6 +4620,26 @@ Admin authentication inherited             ✅
 No Product inventory mutation               ✅
 No Inventory Ledger mutation                ✅
 |--------------------------------------------------------------------------
+Part 172 — Admin Return/Replacement Metrics Integration Tests
+
+This Part is test-only.
+
+Update:
+
+tests/integration/order.integration.test.js
+
+Your current test suite already has direct Return read fixtures, including createAdminOrderReturnReadFixture, specifically to keep read-oriented tests fast instead of replaying the full Order/Return lifecycle.
+
+We’ll test:
+
+admin-only access
+empty metrics
+Return status/resolution counts
+refund metrics
+Replacement status counts
+actionRequired
+strict query validation
+zero mutations
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -1121,6 +1121,56 @@ const createCompletedReturnForExistingOrder = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Mark Return Refunded For Metrics
+|--------------------------------------------------------------------------
+|
+| Refund business behavior is already covered by the refund integration tests.
+|
+| Metrics tests only need persisted refund data to verify aggregation.
+|--------------------------------------------------------------------------
+*/
+
+const markReturnRefundedForMetrics = async ({
+  returnRequestId,
+  adminId,
+
+  refundedQuantity,
+  amount,
+
+  currency = "INR",
+}) => {
+  const refundedAt = new Date();
+
+  await OrderReturnRequest.collection.updateOne(
+    {
+      _id: new mongoose.Types.ObjectId(String(returnRequestId)),
+    },
+
+    {
+      $set: {
+        "refund.refundedQuantity": refundedQuantity,
+
+        "refund.amount": amount,
+
+        "refund.currency": currency,
+
+        "refund.referenceId": `RFND-METRICS-${new mongoose.Types.ObjectId()
+          .toString()
+          .slice(-12)
+          .toUpperCase()}`,
+
+        "refund.note": "Metrics fixture refund",
+
+        "refund.refundedBy": adminId,
+
+        "refund.refundedAt": refundedAt,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Completed Replacement Return Fixture
 |--------------------------------------------------------------------------
 |
@@ -25748,6 +25798,690 @@ describe("Return replacement linked Return details", () => {
         createdAt: 1,
       })
       .lean();
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Operational Metrics
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return operational metrics", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when Return metrics are requested without authentication", async () => {
+    const response = await request(app).get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer Cannot Access Admin Metrics
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer requests admin Return metrics", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Empty Database
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns a stable zero-filled metrics contract when there are no Returns or replacements", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Admin Return operational metrics retrieved successfully",
+    );
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.returns.total).toBe(0);
+
+    expect(metrics.returns.byStatus).toEqual({
+      requested: 0,
+
+      approved: 0,
+
+      rejected: 0,
+
+      "in-transit": 0,
+
+      received: 0,
+
+      inspected: 0,
+
+      completed: 0,
+
+      cancelled: 0,
+    });
+
+    expect(metrics.returns.byResolution).toEqual({
+      refund: 0,
+
+      replacement: 0,
+    });
+
+    expect(metrics.returns.refunds).toEqual({
+      processedCount: 0,
+
+      refundedQuantity: 0,
+
+      amount: 0,
+    });
+
+    expect(metrics.replacements.total).toBe(0);
+
+    expect(metrics.replacements.byStatus).toEqual({
+      pending: 0,
+
+      reserved: 0,
+
+      processing: 0,
+
+      shipped: 0,
+
+      delivered: 0,
+
+      failed: 0,
+
+      cancelled: 0,
+    });
+
+    expect(metrics.actionRequired).toEqual({
+      returnsAwaitingDecision: 0,
+
+      returnsAwaitingRefund: 0,
+
+      returnsAwaitingReplacementCreation: 0,
+
+      replacementsAwaitingProcessing: 0,
+
+      replacementsProcessing: 0,
+
+      replacementsAwaitingDelivery: 0,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Return + Refund Metrics
+    |--------------------------------------------------------------------------
+    */
+
+  it("aggregates Return status, resolution, refund, and Return action-required metrics", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const { agent: metricsAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Requested Refund
+      |--------------------------------------------------------------------------
+      */
+
+    await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+
+      requestedResolution: "refund",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Approved Replacement
+      |--------------------------------------------------------------------------
+      */
+
+    await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "approved",
+
+      requestedResolution: "replacement",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Completed Refund #1 - processed
+      |--------------------------------------------------------------------------
+      */
+
+    const firstRefundReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "refund",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    await markReturnRefundedForMetrics({
+      returnRequestId: firstRefundReturn._id,
+
+      adminId: admin._id,
+
+      refundedQuantity: 1,
+
+      amount: 700,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Completed Refund #2 - processed
+      |--------------------------------------------------------------------------
+      */
+
+    const secondRefundReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "refund",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    await markReturnRefundedForMetrics({
+      returnRequestId: secondRefundReturn._id,
+
+      adminId: admin._id,
+
+      refundedQuantity: 2,
+
+      amount: 1400,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Completed Refund #3 - waiting for refund
+      |--------------------------------------------------------------------------
+      */
+
+    await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "refund",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Metrics
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await metricsAdminAgent.get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Total
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.returns.total).toBe(5);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Statuses
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.returns.byStatus).toEqual({
+      requested: 1,
+
+      approved: 1,
+
+      rejected: 0,
+
+      "in-transit": 0,
+
+      received: 0,
+
+      inspected: 0,
+
+      completed: 3,
+
+      cancelled: 0,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Resolution
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.returns.byResolution).toEqual({
+      refund: 4,
+
+      replacement: 1,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Refund Metrics
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.returns.refunds).toEqual({
+      processedCount: 2,
+
+      refundedQuantity: 3,
+
+      amount: 2100,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Action Required
+      |--------------------------------------------------------------------------
+      |
+      | requested = 1
+      |
+      | completed refund Returns = 3
+      | actual refunded Returns   = 2
+      |
+      | waiting refund = 1
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.actionRequired.returnsAwaitingDecision).toBe(1);
+
+    expect(metrics.actionRequired.returnsAwaitingRefund).toBe(1);
+
+    /*
+     * The only replacement-resolution Return
+     * is approved, not completed.
+     */
+
+    expect(metrics.actionRequired.returnsAwaitingReplacementCreation).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Replacement Metrics
+    |--------------------------------------------------------------------------
+    */
+
+  it("aggregates replacement statuses and replacement action-required queues", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+      |--------------------------------------------------------------------------
+      | Four Completed Replacement Returns
+      |--------------------------------------------------------------------------
+      */
+
+    const returnRequests = [];
+
+    for (let index = 0; index < 4; index += 1) {
+      const returnRequest = await createCompletedReplacementReturnFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        requestedResolution: "replacement",
+
+        items: [
+          {
+            product,
+
+            variant,
+
+            quantity: 2,
+
+            resellableQuantity: 1,
+
+            damagedQuantity: 1,
+
+            rejectedQuantity: 0,
+          },
+        ],
+      });
+
+      returnRequests.push(returnRequest);
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Only Three Have Replacement Documents
+      |--------------------------------------------------------------------------
+      |
+      | #1 reserved
+      | #2 processing
+      | #3 shipped
+      | #4 has no replacement yet
+      |--------------------------------------------------------------------------
+      */
+
+    const replacementStatuses = ["reserved", "processing", "shipped"];
+
+    for (let index = 0; index < replacementStatuses.length; index += 1) {
+      const returnRequest = returnRequests[index];
+
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        returnRequestId: returnRequest._id,
+
+        returnRequestNumber: returnRequest.returnRequestNumber,
+
+        orderId: returnRequest.order,
+
+        orderNumber: returnRequest.orderNumber,
+
+        status: replacementStatuses[index],
+
+        replacementQuantities: [2],
+      });
+    }
+
+    /*
+      |--------------------------------------------------------------------------
+      | Metrics
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.returns.total).toBe(4);
+
+    expect(metrics.returns.byStatus.completed).toBe(4);
+
+    expect(metrics.returns.byResolution.replacement).toBe(4);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Replacement Counts
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.replacements.total).toBe(3);
+
+    expect(metrics.replacements.byStatus).toEqual({
+      pending: 0,
+
+      reserved: 1,
+
+      processing: 1,
+
+      shipped: 1,
+
+      delivered: 0,
+
+      failed: 0,
+
+      cancelled: 0,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Operational Queues
+      |--------------------------------------------------------------------------
+      */
+
+    expect(metrics.actionRequired.returnsAwaitingReplacementCreation).toBe(1);
+
+    expect(metrics.actionRequired.replacementsAwaitingProcessing).toBe(1);
+
+    expect(metrics.actionRequired.replacementsProcessing).toBe(1);
+
+    expect(metrics.actionRequired.replacementsAwaitingDelivery).toBe(1);
+
+    expect(metrics.actionRequired.returnsAwaitingDecision).toBe(0);
+
+    expect(metrics.actionRequired.returnsAwaitingRefund).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Strict Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects unsupported query parameters on the metrics endpoint", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?status=completed",
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Metrics Must Be Read Only
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not mutate Returns, replacements, Product inventory, or Inventory Ledger", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Use Real Reservation Flow
+      |--------------------------------------------------------------------------
+      */
+
+    const { replacement, returnRequest, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Before
+      |--------------------------------------------------------------------------
+      */
+
+    const returnBefore = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    const replacementBefore = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const ledgerBefore = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(replacementBefore.status).toBe("reserved");
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    expect(ledgerBefore.map((entry) => entry.operation)).toEqual(["reserve"]);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Metrics Read
+      |--------------------------------------------------------------------------
+      */
+
+    await adminAgent.get("/api/v1/admin/order-returns/metrics").expect(200);
+
+    /*
+      |--------------------------------------------------------------------------
+      | After
+      |--------------------------------------------------------------------------
+      */
+
+    const returnAfter = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    const replacementAfter = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    const ledgerAfter = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(returnAfter.status).toBe(returnBefore.status);
+
+    expect(new Date(returnAfter.updatedAt).getTime()).toBe(
+      new Date(returnBefore.updatedAt).getTime(),
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Replacement Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(replacementAfter.status).toBe(replacementBefore.status);
+
+    expect(new Date(replacementAfter.updatedAt).getTime()).toBe(
+      new Date(replacementBefore.updatedAt).getTime(),
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Product Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger Unchanged
+      |--------------------------------------------------------------------------
+      */
 
     expect(ledgerAfter).toHaveLength(ledgerBefore.length);
 
