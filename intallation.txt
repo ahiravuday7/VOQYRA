@@ -4673,6 +4673,15 @@ from > to                        ✅ rejected
 stable zero-filled counts        ✅ preserved
 read-only behavior               ✅ preserved
 |--------------------------------------------------------------------------
+Part 174 — Date-Range Metrics Integration Tests
+
+I checked your latest orders(1).zip: Part 173 is already applied correctly, including the period metadata and direct awaitingRefund / awaitingReplacementCreation counts.
+
+Your integration test structure already imports OrderReturnRequest and OrderReturnReplacement, and it already has direct Return fixtures suitable for read/aggregation-focused tests.
+
+Update only:
+
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

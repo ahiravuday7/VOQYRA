@@ -1171,6 +1171,34 @@ const markReturnRefundedForMetrics = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Set Metrics Fixture CreatedAt
+|--------------------------------------------------------------------------
+|
+| Mongoose timestamps normally control createdAt.
+|
+| Date-range tests need exact UTC timestamps, so we update only createdAt
+| directly through the native collection.
+|--------------------------------------------------------------------------
+*/
+
+const setMetricsFixtureCreatedAt = async ({ model, documentId, createdAt }) => {
+  const resolvedCreatedAt =
+    createdAt instanceof Date ? createdAt : new Date(createdAt);
+
+  await model.collection.updateOne(
+    {
+      _id: new mongoose.Types.ObjectId(String(documentId)),
+    },
+    {
+      $set: {
+        createdAt: resolvedCreatedAt,
+      },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Completed Replacement Return Fixture
 |--------------------------------------------------------------------------
 |
@@ -26486,5 +26514,711 @@ describe("Admin Return operational metrics", () => {
     expect(ledgerAfter).toHaveLength(ledgerBefore.length);
 
     expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Date-Range Operational Metrics
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return date-range operational metrics", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | All-Time Behavior
+    |--------------------------------------------------------------------------
+    */
+
+  it("preserves all-time metrics when from and to are omitted", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const firstReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+
+      requestedResolution: "refund",
+    });
+
+    const secondReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "replacement",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: firstReturn._id,
+
+      createdAt: "2026-07-01T10:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: secondReturn._id,
+
+      createdAt: "2026-08-15T10:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.period).toEqual({
+      from: null,
+
+      to: null,
+
+      timezone: "UTC",
+
+      field: "createdAt",
+    });
+
+    expect(metrics.returns.total).toBe(2);
+
+    expect(metrics.returns.byStatus.requested).toBe(1);
+
+    expect(metrics.returns.byStatus.completed).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | From Only
+    |--------------------------------------------------------------------------
+    */
+
+  it("includes only records created on or after the from date", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const oldReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+    });
+
+    const recentReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "approved",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: oldReturn._id,
+
+      createdAt: "2026-08-05T12:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: recentReturn._id,
+
+      createdAt: "2026-08-15T12:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.period).toEqual({
+      from: "2026-08-10",
+
+      to: null,
+
+      timezone: "UTC",
+
+      field: "createdAt",
+    });
+
+    expect(metrics.returns.total).toBe(1);
+
+    expect(metrics.returns.byStatus.requested).toBe(0);
+
+    expect(metrics.returns.byStatus.approved).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | To Only
+    |--------------------------------------------------------------------------
+    */
+
+  it("includes only records created on or before the to date", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const earlyReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+    });
+
+    const lateReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "rejected",
+
+      rejection: {
+        reason: "Metrics test rejection",
+
+        rejectedBy: admin._id,
+
+        rejectedAt: new Date(),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: earlyReturn._id,
+
+      createdAt: "2026-08-05T12:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: lateReturn._id,
+
+      createdAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.period.from).toBeNull();
+
+    expect(metrics.period.to).toBe("2026-08-10");
+
+    expect(metrics.returns.total).toBe(1);
+
+    expect(metrics.returns.byStatus.requested).toBe(1);
+
+    expect(metrics.returns.byStatus.rejected).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inclusive UTC Boundaries
+    |--------------------------------------------------------------------------
+    */
+
+  it("includes the full UTC from and to calendar-day boundaries", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const beforeRange = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+    });
+
+    const exactStart = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "approved",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    const exactEnd = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    const afterRange = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "cancelled",
+
+      cancellation: {
+        reason: "Boundary test",
+
+        cancelledBy: customer._id,
+
+        cancelledAt: new Date(),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: beforeRange._id,
+
+      createdAt: "2026-08-09T23:59:59.999Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: exactStart._id,
+
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: exactEnd._id,
+
+      createdAt: "2026-08-10T23:59:59.999Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: afterRange._id,
+
+      createdAt: "2026-08-11T00:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-08-10&to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    /*
+     * Exact beginning and exact end of
+     * August 10 must both be included.
+     */
+
+    expect(metrics.returns.total).toBe(2);
+
+    expect(metrics.returns.byStatus.approved).toBe(1);
+
+    expect(metrics.returns.byStatus.completed).toBe(1);
+
+    /*
+     * Adjacent days must be excluded.
+     */
+
+    expect(metrics.returns.byStatus.requested).toBe(0);
+
+    expect(metrics.returns.byStatus.cancelled).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Return + Replacement Date Cohorts
+    |--------------------------------------------------------------------------
+    */
+
+  it("filters Return and Replacement totals independently by their own createdAt values", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return inside range
+      |--------------------------------------------------------------------------
+      */
+
+    const insideReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "replacement",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return outside range
+      |--------------------------------------------------------------------------
+      */
+
+    const outsideReturn = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "replacement",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date(),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: insideReturn._id,
+
+      createdAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: outsideReturn._id,
+
+      createdAt: "2026-08-20T10:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Replacement inside range
+      |--------------------------------------------------------------------------
+      */
+
+    const insideReplacement =
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        returnRequestId: insideReturn._id,
+
+        returnRequestNumber: insideReturn.returnRequestNumber,
+
+        orderId: insideReturn.order,
+
+        orderNumber: insideReturn.orderNumber,
+
+        replacementNumber: "RPL-METRICS-IN-RANGE",
+
+        status: "reserved",
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Replacement outside range
+      |--------------------------------------------------------------------------
+      */
+
+    const outsideReplacement =
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        returnRequestId: outsideReturn._id,
+
+        returnRequestNumber: outsideReturn.returnRequestNumber,
+
+        orderId: outsideReturn.order,
+
+        orderNumber: outsideReturn.orderNumber,
+
+        replacementNumber: "RPL-METRICS-OUT-RANGE",
+
+        status: "processing",
+      });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: insideReplacement._id,
+
+      createdAt: "2026-08-10T12:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: outsideReplacement._id,
+
+      createdAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-08-10&to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    expect(metrics.returns.total).toBe(1);
+
+    expect(metrics.replacements.total).toBe(1);
+
+    expect(metrics.replacements.byStatus.reserved).toBe(1);
+
+    expect(metrics.replacements.byStatus.processing).toBe(0);
+
+    expect(metrics.actionRequired.replacementsAwaitingProcessing).toBe(1);
+
+    expect(metrics.actionRequired.replacementsProcessing).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Invalid Dates
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects malformed, impossible, and reversed metric date ranges", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Wrong Format
+      |--------------------------------------------------------------------------
+      */
+
+    const malformedResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=10-08-2026",
+    );
+
+    expect(malformedResponse.status).toBe(400);
+
+    expect(malformedResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Impossible Calendar Date
+      |--------------------------------------------------------------------------
+      */
+
+    const impossibleDateResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-02-31",
+    );
+
+    expect(impossibleDateResponse.status).toBe(400);
+
+    expect(impossibleDateResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | From After To
+      |--------------------------------------------------------------------------
+      */
+
+    const reversedResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-08-20&to=2026-08-10",
+    );
+
+    expect(reversedResponse.status).toBe(400);
+
+    expect(reversedResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cross-Day Replacement Relationship
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not mark an in-range Return as awaiting replacement when its linked Replacement was created outside the range", async () => {
+    const { user: admin } = await createAuthenticatedAdminAgent();
+
+    const { agent: metricsAdminAgent } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return Created August 10
+      |--------------------------------------------------------------------------
+      */
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "replacement",
+
+      completion: {
+        completedBy: admin._id,
+
+        completedAt: new Date("2026-08-10T14:00:00.000Z"),
+      },
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: returnRequest._id,
+
+      createdAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Linked Replacement Created August 11
+      |--------------------------------------------------------------------------
+      |
+      | It is outside the requested metric period.
+      |--------------------------------------------------------------------------
+      */
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      returnRequestId: returnRequest._id,
+
+      returnRequestNumber: returnRequest.returnRequestNumber,
+
+      orderId: returnRequest.order,
+
+      orderNumber: returnRequest.orderNumber,
+
+      replacementNumber: "RPL-CROSS-DAY-METRICS",
+
+      status: "reserved",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: replacement._id,
+
+      createdAt: "2026-08-11T09:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Metrics For August 10 Only
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await metricsAdminAgent.get(
+      "/api/v1/admin/order-returns/metrics?from=2026-08-10&to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const metrics = response.body.data.metrics;
+
+    /*
+     * Return belongs to the August 10 cohort.
+     */
+
+    expect(metrics.returns.total).toBe(1);
+
+    expect(metrics.returns.byResolution.replacement).toBe(1);
+
+    /*
+     * Replacement itself was created August 11,
+     * so it is not part of the August 10
+     * Replacement metric cohort.
+     */
+
+    expect(metrics.replacements.total).toBe(0);
+
+    /*
+     * BUT the August 10 Return already has a
+     * linked Replacement.
+     *
+     * Therefore it is NOT awaiting creation.
+     *
+     * This is exactly why Part 173 replaced
+     * subtraction with $lookup.
+     */
+
+    expect(metrics.actionRequired.returnsAwaitingReplacementCreation).toBe(0);
   });
 });
