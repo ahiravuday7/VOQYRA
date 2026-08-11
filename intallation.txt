@@ -5210,6 +5210,90 @@ Webhook                                  ❌ not yet
 Signature verification                   ❌ not yet
 Order.payment synchronization            ❌ not yet
 |--------------------------------------------------------------------------
+Part 180 — Payment Request Validation + Trusted Online Payment Plan
+
+Now we prepare the customer online-payment initiation flow, but still do not call Razorpay or Stripe.
+
+Your current Order creation already stores trusted backend totals, starts the Order as pending, keeps inventory reserved, and initializes payment as pending. Online Orders are also required to be paid before confirmation/shipment, so initiating payment belongs while the Order is still pending/reserved.
+
+We’ll create:
+
+src/modules/payments/payment.validation.js
+src/modules/payments/payment.repository.js
+src/modules/payments/payment.service.js
+
+No route/controller yet.
+
+12. Current payment lifecycle
+
+After Part 180:
+
+Customer creates online Order
+        ↓
+Order.status = pending
+        ↓
+Order.payment.status = pending
+        ↓
+Inventory = reserved
+        ↓
+Customer starts payment
+        ↓
+Validate Order ownership
+        ↓
+Validate online method
+        ↓
+Validate pending Order
+        ↓
+Validate reserved inventory
+        ↓
+Read trusted grandTotal
+        ↓
+Check successful PaymentTransaction
+        ↓
+Check active PaymentTransaction
+      ↙             ↘
+   reuse           create plan
+
+This matches your existing inventory concept: stock is reserved while payment is pending; successful payment will later commit that reservation, while failed/cancelled flows release or retry according to the business workflow.
+
+complete
+
+We now have:
+
+Strict Payment request validation             ✅
+Provider allow-list                           ✅
+
+Customer cannot send amount                   ✅
+Customer cannot send currency                 ✅
+Customer cannot send payment status           ✅
+
+Order ownership enforcement                   ✅
+Online-payment-only enforcement               ✅
+Pending Order requirement                     ✅
+Pending payment requirement                   ✅
+Reserved inventory requirement                ✅
+
+Trusted grandTotal                            ✅
+Trusted currency                              ✅
+
+Payment attempt numbering                     ✅
+Existing active attempt detection             ✅
+Same-provider idempotent reuse                 ✅
+Different-provider conflict protection        ✅
+Successful-transaction double-charge guard    ✅
+
+Provider SDK call                              ❌
+PaymentTransaction creation                   ❌
+Payment HTTP endpoint                         ❌
+Signature verification                        ❌
+Webhook                                       ❌
+Order.payment → paid synchronization          ❌
+Inventory commit after payment                ❌
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
