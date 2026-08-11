@@ -4880,6 +4880,250 @@ Trend GET changes Replacement state         ❌
 Trend GET changes Product inventory         ❌
 Trend GET creates Ledger entries            ❌
 |--------------------------------------------------------------------------
+Part 178 — Return/Replacement Metrics Final Regression & QA
+
+This Part is verification only. Do not change production code unless a regression test identifies an actual problem.
+
+We now have three metrics groups:
+
+Admin Return operational metrics             → 7 tests
+Admin Return date-range operational metrics  → 7 tests
+Admin Return daily operational metrics trend → 8 tests
+
+So the metrics work currently represents 22 focused integration tests.
+
+1. First verify the application loads
+
+Run:
+
+node --input-type=module -e "import('./src/app.js').then(() => console.log('Part 178 application import: PASS')).catch(console.error)"
+
+Expected:
+
+Part 178 application import: PASS
+
+If this fails, don't run the tests yet—the import error should be fixed first.
+
+2. Run summary metrics
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return operational metrics" --testTimeout=120000 --no-file-parallelism
+
+Expected:
+
+7 passed
+0 failed
+
+This validates:
+
+authentication
+authorization
+zero-filled metrics
+Return status counts
+resolution counts
+refund totals
+replacement counts
+actionRequired
+read-only behavior
+3. Run date-range metrics
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return date-range operational metrics" --testTimeout=120000 --no-file-parallelism
+
+Expected:
+
+7 passed
+0 failed
+
+This validates:
+
+all-time behavior
+from
+to
+inclusive UTC boundaries
+Return / Replacement createdAt filtering
+invalid dates
+cross-day replacement relationship
+4. Run daily trend metrics
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return daily operational metrics trend" --testTimeout=120000 --no-file-parallelism
+
+Correct expected count:
+
+8 passed
+0 failed
+
+This is the count we corrected in the previous step. ✅
+
+5. Run all metrics tests together
+
+After those three pass individually, run:
+
+npx vitest run tests/integration/order.integration.test.js -t "operational metrics" --testTimeout=120000 --no-file-parallelism
+
+This should pick up the metrics-related groups together.
+
+The important requirement is:
+
+0 failed
+
+Depending on your exact test names, Vitest may include a slightly different subset, so I would trust the three individual commands above for the exact 7 + 7 + 8 = 22 checkpoint.
+
+6. Regression-test the whole Replacement subsystem
+
+Now run:
+
+npx vitest run tests/integration/order.integration.test.js -t "replacement" --testTimeout=120000 --no-file-parallelism
+
+We aren't using an exact test count here because your replacement suite has grown through many Parts.
+
+Required:
+
+0 failed
+
+This rechecks the complete workflow:
+
+Replacement creation
+        ↓
+reserved
+        ↓
+processing
+        ↓
+shipped
+        ↓
+delivered
+
+plus:
+
+reserved / processing
+        ↓
+cancelled
+        ↓
+release inventory
+
+and:
+
+reserved / processing
+        ↓
+failed
+        ↓
+release inventory
+
+along with:
+
+admin reads
+customer reads
+privacy
+ownership
+Return ↔ Replacement linking
+concurrency
+cross-operation races
+final consistency
+metrics
+7. Most important regression — run the full Order integration file
+
+Once replacement-only passes:
+
+npx vitest run tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism
+
+This is the real Part 178 completion gate.
+
+We need:
+
+Test Files  1 passed
+Tests       ... passed
+0 failed
+
+Because our Return/Replacement work touches shared functionality such as:
+
+Order
+Product
+Product Variant
+Inventory
+Inventory Ledger
+Authentication
+Validation
+MongoDB transactions
+Admin routes
+Customer routes
+Refunds
+Returns
+Replacements
+
+A replacement-only green suite is good.
+
+A full Order integration suite with zero failures is what proves we didn't break older functionality.
+
+8. Final metrics API contract
+
+After Part 178 passes, these APIs are considered regression-verified.
+
+Summary
+GET /api/v1/admin/order-returns/metrics
+
+Optional:
+
+?from=2026-08-01&to=2026-08-31
+
+Provides:
+
+Return counts
+Return statuses
+resolution counts
+refund metrics
+Replacement counts
+Replacement statuses
+action-required queues
+Trend
+GET /api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-31
+
+Provides:
+
+daily Returns
+daily Replacements
+zero-filled dates
+period totals
+UTC grouping
+maximum 90 days
+9. Final invariants we're protecting
+Replacement reservation
+stock          = unchanged
+reservedStock += quantity
+
+Ledger:
+reserve
+Shipment
+stock         -= quantity
+reservedStock -= quantity
+
+Ledger:
+reserve
+commit
+Cancellation / failure
+stock          = unchanged
+reservedStock -= quantity
+
+Ledger:
+reserve
+release
+Metrics
+Return mutation       ❌
+Replacement mutation  ❌
+Product mutation      ❌
+Inventory mutation    ❌
+Ledger creation       ❌
+
+Metrics are strictly read-only.
+
+Run these now in this order
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return operational metrics" --testTimeout=120000 --no-file-parallelism
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return date-range operational metrics" --testTimeout=120000 --no-file-parallelism
+npx vitest run tests/integration/order.integration.test.js -t "Admin Return daily operational metrics trend" --testTimeout=120000 --no-file-parallelism
+
+Then:
+
+npx vitest run tests/integration/order.integration.test.js -t "replacement" --testTimeout=120000 --no-file-parallelism
+
+Finally:
+
+npx vitest run tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism
+
+If all return 0 failures, Part 178 is complete and we can close the Return/Replacement subsystem instead of continuing to add more metrics features unnecessarily. The next Part should move us forward into the next backend domain.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
