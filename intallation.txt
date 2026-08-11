@@ -4641,6 +4641,37 @@ actionRequired
 strict query validation
 zero mutations
 |--------------------------------------------------------------------------
+Part 173 — Date-Range Filtering for Return Operational Metrics
+
+Now we’ll support:
+
+GET /api/v1/admin/order-returns/metrics?from=2026-08-01&to=2026-08-31
+
+The range will filter Returns and Replacements by createdAt. For now, dates use UTC calendar boundaries so behavior is deterministic regardless of the server machine timezone.
+
+We’ll also improve the two action queues from Part 171:
+
+returnsAwaitingRefund
+returnsAwaitingReplacementCreation
+
+They will now be counted directly instead of using subtraction.
+
+The metrics endpoint now supports:
+
+No date range       → all-time
+from only           → from that day onward
+to only             → up to that day
+from + to           → inclusive date range
+
+and we improved the queue calculations so:
+
+awaiting refund                  ✅ direct count
+awaiting replacement creation    ✅ relationship-aware count
+cross-day replacement creation   ✅ handled correctly
+invalid calendar dates           ✅ rejected
+from > to                        ✅ rejected
+stable zero-filled counts        ✅ preserved
+read-only behavior               ✅ preserved
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

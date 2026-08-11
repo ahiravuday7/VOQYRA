@@ -4,6 +4,8 @@ import { ORDER_RETURN_QUANTITY_CONSUMING_STATUS_VALUES } from "../../shared/cons
 
 import OrderReturnRequest from "./order-return.model.js";
 
+import OrderReturnReplacement from "./order-return-replacement.model.js";
+
 /*
 |--------------------------------------------------------------------------
 | Normalize Return Repository Object ID
@@ -541,144 +543,188 @@ export const findAdminOrderReturnRequestForProcessing = (
 |--------------------------------------------------------------------------
 */
 
-export const aggregateAdminOrderReturnMetrics = async () => {
-  const [metrics] = await OrderReturnRequest.aggregate([
-    {
-      $facet: {
-        /*
-            |--------------------------------------------------------------------------
-            | Total Returns
-            |--------------------------------------------------------------------------
-            */
+export const aggregateAdminOrderReturnMetrics = async ({
+  createdAtRange = null,
+} = {}) => {
+  const pipeline = [];
 
-        total: [
-          {
-            $count: "count",
-          },
-        ],
+  /*
+    |--------------------------------------------------------------------------
+    | Optional Date Cohort
+    |--------------------------------------------------------------------------
+    */
 
-        /*
-            |--------------------------------------------------------------------------
-            | Return Status Counts
-            |--------------------------------------------------------------------------
-            */
-
-        byStatus: [
-          {
-            $group: {
-              _id: "$status",
-
-              count: {
-                $sum: 1,
-              },
-            },
-          },
-        ],
-
-        /*
-            |--------------------------------------------------------------------------
-            | Resolution Counts
-            |--------------------------------------------------------------------------
-            */
-
-        byResolution: [
-          {
-            $group: {
-              _id: "$requestedResolution",
-
-              count: {
-                $sum: 1,
-              },
-            },
-          },
-        ],
-
-        /*
-            |--------------------------------------------------------------------------
-            | Processed Refund Metrics
-            |--------------------------------------------------------------------------
-            */
-
-        refunds: [
-          {
-            $match: {
-              "refund.refundedAt": {
-                $ne: null,
-              },
-            },
-          },
-
-          {
-            $group: {
-              _id: null,
-
-              count: {
-                $sum: 1,
-              },
-
-              refundedQuantity: {
-                $sum: "$refund.refundedQuantity",
-              },
-
-              amount: {
-                $sum: "$refund.amount",
-              },
-            },
-          },
-        ],
-
-        /*
-            |--------------------------------------------------------------------------
-            | Completed Refund Returns
-            |--------------------------------------------------------------------------
-            |
-            | Used to calculate:
-            |
-            | completed refund Returns - actual refunds
-            |     =
-            | Returns awaiting refund
-            |--------------------------------------------------------------------------
-            */
-
-        completedRefundReturns: [
-          {
-            $match: {
-              status: "completed",
-
-              requestedResolution: "refund",
-            },
-          },
-
-          {
-            $count: "count",
-          },
-        ],
-
-        /*
-            |--------------------------------------------------------------------------
-            | Completed Replacement Returns
-            |--------------------------------------------------------------------------
-            |
-            | Replacement creation is only allowed after Return completion.
-            |--------------------------------------------------------------------------
-            */
-
-        completedReplacementReturns: [
-          {
-            $match: {
-              status: "completed",
-
-              requestedResolution: "replacement",
-            },
-          },
-
-          {
-            $count: "count",
-          },
-        ],
+  if (createdAtRange) {
+    pipeline.push({
+      $match: {
+        createdAt: createdAtRange,
       },
+    });
+  }
+
+  pipeline.push({
+    $facet: {
+      /*
+        |--------------------------------------------------------------------------
+        | Total
+        |--------------------------------------------------------------------------
+        */
+
+      total: [
+        {
+          $count: "count",
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Status Counts
+        |--------------------------------------------------------------------------
+        */
+
+      byStatus: [
+        {
+          $group: {
+            _id: "$status",
+
+            count: {
+              $sum: 1,
+            },
+          },
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Resolution Counts
+        |--------------------------------------------------------------------------
+        */
+
+      byResolution: [
+        {
+          $group: {
+            _id: "$requestedResolution",
+
+            count: {
+              $sum: 1,
+            },
+          },
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Processed Refunds
+        |--------------------------------------------------------------------------
+        */
+
+      refunds: [
+        {
+          $match: {
+            "refund.refundedAt": {
+              $ne: null,
+            },
+          },
+        },
+
+        {
+          $group: {
+            _id: null,
+
+            count: {
+              $sum: 1,
+            },
+
+            refundedQuantity: {
+              $sum: "$refund.refundedQuantity",
+            },
+
+            amount: {
+              $sum: "$refund.amount",
+            },
+          },
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Returns Awaiting Refund
+        |--------------------------------------------------------------------------
+        |
+        | Directly count:
+        |
+        | completed
+        | + refund resolution
+        | + refund not processed
+        |--------------------------------------------------------------------------
+        */
+
+      awaitingRefund: [
+        {
+          $match: {
+            status: "completed",
+
+            requestedResolution: "refund",
+
+            "refund.refundedAt": null,
+          },
+        },
+
+        {
+          $count: "count",
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Returns Awaiting Replacement Creation
+        |--------------------------------------------------------------------------
+        |
+        | This is deliberately NOT calculated as:
+        |
+        | completed replacement Returns - replacements created in date range
+        |
+        | because the Return and Replacement can be created on different days.
+        |--------------------------------------------------------------------------
+        */
+
+      awaitingReplacementCreation: [
+        {
+          $match: {
+            status: "completed",
+
+            requestedResolution: "replacement",
+          },
+        },
+
+        {
+          $lookup: {
+            from: OrderReturnReplacement.collection.name,
+
+            localField: "_id",
+
+            foreignField: "returnRequest",
+
+            as: "replacementLinks",
+          },
+        },
+
+        {
+          $match: {
+            "replacementLinks.0": {
+              $exists: false,
+            },
+          },
+        },
+
+        {
+          $count: "count",
+        },
+      ],
     },
-  ]);
+  });
+
+  const [metrics] = await OrderReturnRequest.aggregate(pipeline);
 
   return (
     metrics ?? {
@@ -690,9 +736,9 @@ export const aggregateAdminOrderReturnMetrics = async () => {
 
       refunds: [],
 
-      completedRefundReturns: [],
+      awaitingRefund: [],
 
-      completedReplacementReturns: [],
+      awaitingReplacementCreation: [],
     }
   );
 };

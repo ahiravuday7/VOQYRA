@@ -66,30 +66,65 @@ const readFacetCount = (facet) => {
 
 /*
 |--------------------------------------------------------------------------
+| Build Metrics CreatedAt Range
+|--------------------------------------------------------------------------
+|
+| API dates represent UTC calendar days.
+|--------------------------------------------------------------------------
+*/
+
+const buildMetricsCreatedAtRange = ({ from, to }) => {
+  if (!from && !to) {
+    return null;
+  }
+
+  const range = {};
+
+  if (from) {
+    range.$gte = new Date(`${from}T00:00:00.000Z`);
+  }
+
+  if (to) {
+    range.$lte = new Date(`${to}T23:59:59.999Z`);
+  }
+
+  return range;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Get Admin Return / Replacement Operational Metrics
 |--------------------------------------------------------------------------
 */
 
-export const getAdminOrderReturnOperationalMetrics = async () => {
+export const getAdminOrderReturnOperationalMetrics = async ({
+  from,
+  to,
+} = {}) => {
+  const createdAtRange = buildMetricsCreatedAtRange({
+    from,
+    to,
+  });
+
   /*
     |--------------------------------------------------------------------------
-    | Independent Collections
-    |--------------------------------------------------------------------------
-    |
-    | These aggregations do not depend on each other, so execute them in
-    | parallel.
+    | Execute Independent Aggregations Together
     |--------------------------------------------------------------------------
     */
 
   const [returnMetrics, replacementMetrics] = await Promise.all([
-    aggregateAdminOrderReturnMetrics(),
+    aggregateAdminOrderReturnMetrics({
+      createdAtRange,
+    }),
 
-    aggregateAdminOrderReturnReplacementMetrics(),
+    aggregateAdminOrderReturnReplacementMetrics({
+      createdAtRange,
+    }),
   ]);
 
   /*
     |--------------------------------------------------------------------------
-    | Return Metrics
+    | Returns
     |--------------------------------------------------------------------------
     */
 
@@ -115,17 +150,21 @@ export const getAdminOrderReturnOperationalMetrics = async () => {
 
   const refundedAmount = Number(refundRow?.amount ?? 0);
 
-  const completedRefundReturns = readFacetCount(
-    returnMetrics.completedRefundReturns,
-  );
+  /*
+    |--------------------------------------------------------------------------
+    | Direct Operational Queue Counts
+    |--------------------------------------------------------------------------
+    */
 
-  const completedReplacementReturns = readFacetCount(
-    returnMetrics.completedReplacementReturns,
+  const awaitingRefund = readFacetCount(returnMetrics.awaitingRefund);
+
+  const awaitingReplacementCreation = readFacetCount(
+    returnMetrics.awaitingReplacementCreation,
   );
 
   /*
     |--------------------------------------------------------------------------
-    | Replacement Metrics
+    | Replacements
     |--------------------------------------------------------------------------
     */
 
@@ -137,32 +176,23 @@ export const getAdminOrderReturnOperationalMetrics = async () => {
     replacementMetrics.byStatus,
   );
 
-  /*
-    |--------------------------------------------------------------------------
-    | Operational Queues
-    |--------------------------------------------------------------------------
-    */
-
-  const awaitingRefund = Math.max(
-    0,
-
-    completedRefundReturns - refundedCount,
-  );
-
-  /*
-   * One Return Request may have at most one Replacement.
-   *
-   * Replacement creation is only allowed for a completed
-   * replacement-resolution Return.
-   */
-
-  const awaitingReplacementCreation = Math.max(
-    0,
-
-    completedReplacementReturns - replacementTotal,
-  );
-
   return {
+    /*
+      |--------------------------------------------------------------------------
+      | Period Metadata
+      |--------------------------------------------------------------------------
+      */
+
+    period: {
+      from: from ?? null,
+
+      to: to ?? null,
+
+      timezone: "UTC",
+
+      field: "createdAt",
+    },
+
     returns: {
       total: returnTotal,
 
@@ -186,23 +216,11 @@ export const getAdminOrderReturnOperationalMetrics = async () => {
     },
 
     actionRequired: {
-      /*
-        |--------------------------------------------------------------------------
-        | Return Queues
-        |--------------------------------------------------------------------------
-        */
-
       returnsAwaitingDecision: returnStatusCounts.requested ?? 0,
 
       returnsAwaitingRefund: awaitingRefund,
 
       returnsAwaitingReplacementCreation: awaitingReplacementCreation,
-
-      /*
-        |--------------------------------------------------------------------------
-        | Replacement Queues
-        |--------------------------------------------------------------------------
-        */
 
       replacementsAwaitingProcessing: replacementStatusCounts.reserved ?? 0,
 

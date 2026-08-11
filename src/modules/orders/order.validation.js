@@ -26,6 +26,59 @@ const PHONE_NUMBER_PATTERN = /^\+?[1-9][0-9]{9,14}$/;
 
 /*
 |--------------------------------------------------------------------------
+| Metrics Calendar Date
+|--------------------------------------------------------------------------
+*/
+
+const metricsCalendarDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, {
+    error: "Date must use YYYY-MM-DD format",
+  })
+  .refine(
+    (value) => {
+      const [year, month, day] = value.split("-").map(Number);
+
+      const date = new Date(Date.UTC(year, month - 1, day));
+
+      return (
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+      );
+    },
+    {
+      message: "Date must be a valid calendar date",
+    },
+  );
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Metrics Query
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnMetricsQuerySchema = z
+  .strictObject({
+    from: metricsCalendarDateSchema.optional(),
+
+    to: metricsCalendarDateSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.from && value.to && value.from > value.to) {
+      context.addIssue({
+        code: "custom",
+
+        path: ["to"],
+
+        message: "Metrics 'to' date must be on or after 'from' date",
+      });
+    }
+  });
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order List Values
 |--------------------------------------------------------------------------
 */
@@ -1819,7 +1872,6 @@ export const adminOrderReturnRefundRequestSchema = z.strictObject({
 |--------------------------------------------------------------------------
 | Admin Return Metrics Request
 |--------------------------------------------------------------------------
-|
 | GET
 | /api/v1/admin/order-returns/metrics
 |--------------------------------------------------------------------------
@@ -1830,5 +1882,5 @@ export const adminOrderReturnMetricsRequestSchema = z.strictObject({
 
   params: emptyObjectSchema,
 
-  query: emptyObjectSchema,
+  query: adminOrderReturnMetricsQuerySchema,
 });

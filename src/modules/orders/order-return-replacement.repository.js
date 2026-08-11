@@ -951,42 +951,42 @@ export const findCustomerOrderReturnReplacementById = (
 |--------------------------------------------------------------------------
 */
 
-export const aggregateAdminOrderReturnReplacementMetrics = async () => {
-  const [metrics] = await OrderReturnReplacement.aggregate([
-    {
-      $facet: {
-        /*
-            |--------------------------------------------------------------------------
-            | Total
-            |--------------------------------------------------------------------------
-            */
+export const aggregateAdminOrderReturnReplacementMetrics = async ({
+  createdAtRange = null,
+} = {}) => {
+  const pipeline = [];
 
-        total: [
-          {
-            $count: "count",
-          },
-        ],
+  if (createdAtRange) {
+    pipeline.push({
+      $match: {
+        createdAt: createdAtRange,
+      },
+    });
+  }
 
-        /*
-            |--------------------------------------------------------------------------
-            | Status Counts
-            |--------------------------------------------------------------------------
-            */
+  pipeline.push({
+    $facet: {
+      total: [
+        {
+          $count: "count",
+        },
+      ],
 
-        byStatus: [
-          {
-            $group: {
-              _id: "$status",
+      byStatus: [
+        {
+          $group: {
+            _id: "$status",
 
-              count: {
-                $sum: 1,
-              },
+            count: {
+              $sum: 1,
             },
           },
-        ],
-      },
+        },
+      ],
     },
-  ]);
+  });
+
+  const [metrics] = await OrderReturnReplacement.aggregate(pipeline);
 
   return (
     metrics ?? {

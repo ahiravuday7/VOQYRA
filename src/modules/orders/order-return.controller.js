@@ -744,7 +744,9 @@ export const getAdminOrderReturnMetricsController = async (
   request,
   response,
 ) => {
-  const metrics = await getAdminOrderReturnOperationalMetrics();
+  const filters = request.validated.query;
+
+  const metrics = await getAdminOrderReturnOperationalMetrics(filters);
 
   return response.status(200).json({
     success: true,
