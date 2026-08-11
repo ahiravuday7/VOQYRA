@@ -5443,6 +5443,36 @@ Payment success handling                  ❌
 Order payment synchronization             ❌
 Inventory commit                          ❌
 |--------------------------------------------------------------------------
+Part 183 — Customer Payment Initiation Integration Tests
+
+Now we test:
+
+POST /api/v1/orders/:orderId/payments
+
+This Part is test-only.
+
+Update:
+
+tests/integration/order.integration.test.js
+
+We’ll cover 14 tests.
+
+Part 183 complete when all 14 pass
+
+At that point we have verified the complete local payment-attempt initiation layer:
+
+Online Order                          ✅
+Trusted amount                        ✅
+Local PaymentTransaction             ✅
+PAY reference                         ✅
+Attempt history                       ✅
+Idempotent reuse                      ✅
+Concurrency protection               ✅
+Ownership                             ✅
+Strict validation                     ✅
+Customer-safe response                ✅
+
+Real Razorpay/Stripe payment          ❌ not yet
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

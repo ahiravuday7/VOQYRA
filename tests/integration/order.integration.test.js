@@ -26,6 +26,8 @@ import OrderReturnReplacement from "../../src/modules/orders/order-return-replac
 
 import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
 
+import PaymentTransaction from "../../src/modules/payments/payment.model.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -239,6 +241,49 @@ const createCustomerOrderFixture = async ({
 
     quantity,
   });
+
+  requestBody.customerNote = customerNote;
+
+  const response = await customerAgent
+    .post("/api/v1/orders")
+    .send(requestBody)
+    .expect(201);
+
+  return response.body.data.order;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Customer Online Payment Order
+|--------------------------------------------------------------------------
+|
+| Creates a real Order through the customer Order API.
+|
+| The Order starts as:
+|
+| status          = pending
+| payment.method  = online
+| payment.status  = pending
+| inventoryStatus = reserved
+|--------------------------------------------------------------------------
+*/
+
+const createOnlinePaymentOrderFixture = async ({
+  customerAgent,
+  product,
+  variant = product.variants[0],
+  quantity = 2,
+  customerNote = "Online Payment integration test",
+}) => {
+  const requestBody = createOrderRequestBody({
+    productId: product._id,
+
+    variantId: variant._id,
+
+    quantity,
+  });
+
+  requestBody.paymentMethod = "online";
 
   requestBody.customerNote = customerNote;
 
@@ -1918,6 +1963,8 @@ beforeEach(async () => {
     OrderReturnRequest.deleteMany({}),
 
     OrderReturnReplacement.deleteMany({}),
+
+    PaymentTransaction.deleteMany({}),
 
     ProductInventoryLedger.deleteMany({}),
 
@@ -27943,5 +27990,939 @@ describe("Admin Return daily operational metrics trend", () => {
     expect(ledgerAfter).toHaveLength(ledgerBefore.length);
 
     expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Online Payment Initiation
+|--------------------------------------------------------------------------
+*/
+
+describe("Customer online Payment initiation", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when Payment initiation is requested without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. Admin Cannot Use Customer Payment Endpoint
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when an admin attempts to initiate a customer Payment", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Strict Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("validates Order ID, provider, and rejects customer-controlled Payment fields", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Invalid Order ID
+      |--------------------------------------------------------------------------
+      */
+
+    const invalidOrderResponse = await customerAgent
+      .post("/api/v1/orders/not-an-object-id/payments")
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(invalidOrderResponse.status).toBe(400);
+
+    expect(invalidOrderResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Invalid Provider
+      |--------------------------------------------------------------------------
+      */
+
+    const orderId = new mongoose.Types.ObjectId();
+
+    const invalidProviderResponse = await customerAgent
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .send({
+        provider: "fake-provider",
+      });
+
+    expect(invalidProviderResponse.status).toBe(400);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer-Controlled Amount
+      |--------------------------------------------------------------------------
+      */
+
+    const amountResponse = await customerAgent
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .send({
+        provider: "razorpay",
+
+        amount: 1,
+      });
+
+    expect(amountResponse.status).toBe(400);
+
+    expect(amountResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer-Controlled Status
+      |--------------------------------------------------------------------------
+      */
+
+    const statusResponse = await customerAgent
+      .post(`/api/v1/orders/${orderId}/payments`)
+      .send({
+        provider: "razorpay",
+
+        status: "paid",
+      });
+
+    expect(statusResponse.status).toBe(400);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 4. Ownership
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 404 when a customer attempts Payment on another customer's Order", async () => {
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent: ownerAgent,
+
+      product,
+    });
+
+    const response = await otherCustomerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("ORDER_NOT_FOUND");
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 5. COD Order Cannot Start Online Payment
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects online Payment initiation for a cash-on-delivery Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    /*
+     * Existing fixture creates COD Order.
+     */
+
+    const order = await createCustomerOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_ONLINE_PAYMENT_METHOD_INVALID");
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 6. First Payment Attempt
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates the first Payment attempt from trusted Order data without mutating inventory", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Trusted Order Before Payment
+      |--------------------------------------------------------------------------
+      */
+
+    const storedOrderBefore = await Order.findById(order.id).lean();
+
+    expect(storedOrderBefore.status).toBe("pending");
+
+    expect(storedOrderBefore.payment.method).toBe("online");
+
+    expect(storedOrderBefore.payment.status).toBe("pending");
+
+    expect(storedOrderBefore.inventoryStatus).toBe("reserved");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    const ledgerBefore = await ProductInventoryLedger.find({
+      referenceId: order.orderNumber,
+    }).lean();
+
+    expect(ledgerBefore).toHaveLength(1);
+
+    expect(ledgerBefore[0].operation).toBe("reserve");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Initiate Payment
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(201);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe(
+      "Online Payment attempt created successfully",
+    );
+
+    expect(response.body.data.action).toBe("create");
+
+    const responsePayment = response.body.data.payment;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Trusted Payment Data
+      |--------------------------------------------------------------------------
+      */
+
+    expect(responsePayment.paymentNumber).toMatch(/^PAY-\d{8}-[A-F0-9]{12}$/);
+
+    expect(responsePayment.orderId).toBe(String(order.id));
+
+    expect(responsePayment.orderNumber).toBe(order.orderNumber);
+
+    expect(responsePayment.provider).toBe("razorpay");
+
+    /*
+     * The amount comes from Order.totals.grandTotal.
+     */
+
+    expect(responsePayment.amount).toBe(storedOrderBefore.totals.grandTotal);
+
+    expect(responsePayment.currency).toBe(storedOrderBefore.totals.currency);
+
+    expect(responsePayment.status).toBe("created");
+
+    expect(responsePayment.attemptNumber).toBe(1);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Customer-Safe Response
+      |--------------------------------------------------------------------------
+      */
+
+    expect(responsePayment.createdBy).toBeUndefined();
+
+    expect(responsePayment.failure).toBeUndefined();
+
+    expect(responsePayment.providerReference.signature).toBeUndefined();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Stored Payment
+      |--------------------------------------------------------------------------
+      */
+
+    const storedPayments = await PaymentTransaction.find({
+      order: order.id,
+    }).lean();
+
+    expect(storedPayments).toHaveLength(1);
+
+    expect(String(storedPayments[0].customer)).toBe(String(customer._id));
+
+    expect(storedPayments[0].amount).toBe(storedOrderBefore.totals.grandTotal);
+
+    expect(storedPayments[0].attemptNumber).toBe(1);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Order Must NOT Be Marked Paid Yet
+      |--------------------------------------------------------------------------
+      */
+
+    const storedOrderAfter = await Order.findById(order.id).lean();
+
+    expect(storedOrderAfter.payment.status).toBe("pending");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory Must Remain Reserved
+      |--------------------------------------------------------------------------
+      */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    const ledgerAfter = await ProductInventoryLedger.find({
+      referenceId: order.orderNumber,
+    }).lean();
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 7. Same Provider Reuse
+    |--------------------------------------------------------------------------
+    */
+
+  it("reuses the existing active Payment attempt for the same provider", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const url = `/api/v1/orders/${order.id}/payments`;
+
+    /*
+      |--------------------------------------------------------------------------
+      | First Request
+      |--------------------------------------------------------------------------
+      */
+
+    const firstResponse = await customerAgent.post(url).send({
+      provider: "razorpay",
+    });
+
+    expect(firstResponse.status).toBe(201);
+
+    expect(firstResponse.body.data.action).toBe("create");
+
+    /*
+      |--------------------------------------------------------------------------
+      | Second Request
+      |--------------------------------------------------------------------------
+      */
+
+    const secondResponse = await customerAgent.post(url).send({
+      provider: "razorpay",
+    });
+
+    expect(secondResponse.status).toBe(200);
+
+    expect(secondResponse.body.data.action).toBe("reuse");
+
+    expect(secondResponse.body.data.payment.id).toBe(
+      firstResponse.body.data.payment.id,
+    );
+
+    expect(secondResponse.body.data.payment.paymentNumber).toBe(
+      firstResponse.body.data.payment.paymentNumber,
+    );
+
+    expect(secondResponse.body.data.payment.attemptNumber).toBe(1);
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 8. Different Provider Conflict
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects a different provider while another Payment attempt is active", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const url = `/api/v1/orders/${order.id}/payments`;
+
+    await customerAgent
+      .post(url)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const response = await customerAgent.post(url).send({
+      provider: "stripe",
+    });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_PAYMENT_ATTEMPT_ALREADY_ACTIVE",
+    );
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 9. Order Status Invalid
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects Payment initiation when the Order is no longer pending", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+     * Deliberately alter persisted state directly.
+     *
+     * We are testing the Payment service guard,
+     * not Order transition behavior.
+     */
+
+    await Order.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(String(order.id)),
+      },
+
+      {
+        $set: {
+          status: "confirmed",
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_ONLINE_PAYMENT_STATUS_INVALID");
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 10. Payment State Invalid
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects Payment initiation when the Order payment state is already paid", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await Order.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(String(order.id)),
+      },
+
+      {
+        $set: {
+          "payment.status": "paid",
+
+          "payment.paidAt": new Date(),
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_ONLINE_PAYMENT_STATE_INVALID");
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 11. Inventory Reservation Invalid
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects Payment initiation when Order inventory is no longer reserved", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await Order.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(String(order.id)),
+      },
+
+      {
+        $set: {
+          inventoryStatus: "released",
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "ORDER_ONLINE_PAYMENT_INVENTORY_STATE_INVALID",
+    );
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 12. Successful Transaction / Order State Conflict
+    |--------------------------------------------------------------------------
+    */
+
+  it("blocks another Payment when a successful PaymentTransaction exists but Order payment still says pending", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Create Attempt
+      |--------------------------------------------------------------------------
+      */
+
+    const firstResponse = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(firstResponse.status).toBe(201);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Simulate Provider-Success Transaction
+      |--------------------------------------------------------------------------
+      |
+      | Order.payment deliberately remains pending.
+      |
+      | This represents a reconciliation mismatch that must
+      | NEVER trigger another charge.
+      |--------------------------------------------------------------------------
+      */
+
+    await PaymentTransaction.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(firstResponse.body.data.payment.id),
+      },
+
+      {
+        $set: {
+          status: "paid",
+
+          paidAt: new Date(),
+        },
+      },
+    );
+
+    const response = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_PAYMENT_STATE_CONFLICT");
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 13. Failed Attempt → Retry
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates the next attempt number after a failed Payment attempt", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const url = `/api/v1/orders/${order.id}/payments`;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Attempt #1
+      |--------------------------------------------------------------------------
+      */
+
+    const firstResponse = await customerAgent.post(url).send({
+      provider: "razorpay",
+    });
+
+    expect(firstResponse.status).toBe(201);
+
+    expect(firstResponse.body.data.payment.attemptNumber).toBe(1);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Mark Attempt #1 Failed
+      |--------------------------------------------------------------------------
+      */
+
+    await PaymentTransaction.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(firstResponse.body.data.payment.id),
+      },
+
+      {
+        $set: {
+          status: "failed",
+
+          "failure.code": "TEST_PAYMENT_FAILED",
+
+          "failure.message": "Payment failed during integration test.",
+
+          "failure.reason": "test-failure",
+
+          "failure.failedAt": new Date(),
+        },
+      },
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Retry
+      |--------------------------------------------------------------------------
+      */
+
+    const secondResponse = await customerAgent.post(url).send({
+      provider: "razorpay",
+    });
+
+    expect(secondResponse.status).toBe(201);
+
+    expect(secondResponse.body.data.action).toBe("create");
+
+    expect(secondResponse.body.data.payment.attemptNumber).toBe(2);
+
+    expect(secondResponse.body.data.payment.paymentNumber).not.toBe(
+      firstResponse.body.data.payment.paymentNumber,
+    );
+
+    const payments = await PaymentTransaction.find({
+      order: order.id,
+    })
+      .sort({
+        attemptNumber: 1,
+      })
+      .lean();
+
+    expect(payments).toHaveLength(2);
+
+    expect(payments.map((payment) => payment.attemptNumber)).toEqual([1, 2]);
+
+    expect(payments.map((payment) => payment.status)).toEqual([
+      "failed",
+      "created",
+    ]);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 14. Concurrent Double Click
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates only one PaymentTransaction when the same customer initiates Payment concurrently", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const url = `/api/v1/orders/${order.id}/payments`;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Fire Both Requests Together
+      |--------------------------------------------------------------------------
+      */
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      customerAgent.post(url).send({
+        provider: "razorpay",
+      }),
+
+      customerAgent.post(url).send({
+        provider: "razorpay",
+      }),
+    ]);
+
+    /*
+      |--------------------------------------------------------------------------
+      | One Creates, One Reuses
+      |--------------------------------------------------------------------------
+      */
+
+    const statuses = [firstResponse.status, secondResponse.status].sort(
+      (first, second) => first - second,
+    );
+
+    expect(statuses).toEqual([200, 201]);
+
+    const actions = [
+      firstResponse.body.data.action,
+
+      secondResponse.body.data.action,
+    ].sort();
+
+    expect(actions).toEqual(["create", "reuse"]);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Both Responses Refer To Same Payment
+      |--------------------------------------------------------------------------
+      */
+
+    expect(firstResponse.body.data.payment.id).toBe(
+      secondResponse.body.data.payment.id,
+    );
+
+    expect(firstResponse.body.data.payment.paymentNumber).toBe(
+      secondResponse.body.data.payment.paymentNumber,
+    );
+
+    expect(firstResponse.body.data.payment.attemptNumber).toBe(1);
+
+    expect(secondResponse.body.data.payment.attemptNumber).toBe(1);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Database Has Exactly One Attempt
+      |--------------------------------------------------------------------------
+      */
+
+    const payments = await PaymentTransaction.find({
+      order: order.id,
+    }).lean();
+
+    expect(payments).toHaveLength(1);
+
+    expect(payments[0].attemptNumber).toBe(1);
+
+    expect(payments[0].status).toBe("created");
   });
 });
