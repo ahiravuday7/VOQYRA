@@ -532,6 +532,24 @@ orderReturnReplacementSchema.index({
 
 /*
 |--------------------------------------------------------------------------
+| Replacement Metrics Date Range
+|--------------------------------------------------------------------------
+|
+| Supports createdAt-only filtering for operational metrics.
+|--------------------------------------------------------------------------
+*/
+
+orderReturnReplacementSchema.index(
+  {
+    createdAt: -1,
+  },
+  {
+    name: "return_replacements_by_created_at",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
 | Replacement Number Generation
 |--------------------------------------------------------------------------
 */

@@ -4683,6 +4683,108 @@ Update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 175 — Operational Metrics Performance & Index Support
+
+I checked the actual metrics pipelines and current indexes in your latest orders(1).zip.
+
+We need only 2 new indexes:
+
+OrderReturnRequest      → { createdAt: -1 }
+OrderReturnReplacement  → { createdAt: -1 }
+
+Nothing else.
+
+Why? Part 173 starts date-filtered metrics with:
+
+{
+  $match: {
+    createdAt: createdAtRange,
+  },
+}
+
+Your existing indexes all have another field first:
+
+{ order: 1, createdAt: -1 }
+{ customer: 1, createdAt: -1 }
+{ status: 1, createdAt: -1 }
+
+Those are useful for their own APIs, but they are not the right index for a query that filters only by createdAt.
+
+Final Return index set:
+
+After Part 175:
+
+OrderReturnRequest
+
+returnRequestNumber
+    UNIQUE
+
+order + createdAt
+    Order Return history
+
+customer + createdAt
+    Customer Return history
+
+status + createdAt
+    Admin status queues
+
+items.product + createdAt
+    Product Return history
+
+createdAt
+    ⭐ Operational metrics date range
+
+This is balanced. ✅
+
+9. Final Replacement index set
+
+After Part 175:
+
+OrderReturnReplacement
+
+replacementNumber
+    UNIQUE
+
+returnRequest
+    UNIQUE
+
+returnRequestNumber
+    UNIQUE
+
+order + createdAt
+    Order replacement history
+
+customer + createdAt
+    Customer replacement history
+
+status + createdAt
+    Admin fulfillment queues
+
+createdAt
+    ⭐ Operational metrics date range
+
+Again, good coverage without over-indexing.
+
+So the metrics path is now:
+
+Date range request
+      ↓
+createdAt index
+      ↓
+small matching cohort
+      ↓
+$facet
+ ├─ statuses
+ ├─ resolutions
+ ├─ refunds
+ ├─ awaiting refund
+ └─ awaiting replacement
+              ↓
+      indexed $lookup on returnRequest
+
+That gives us useful performance support without bloating MongoDB writes.
+
+
 info:
 The easiest way to remember is:
 

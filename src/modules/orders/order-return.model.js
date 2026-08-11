@@ -822,6 +822,29 @@ orderReturnRequestSchema.index(
   },
 );
 
+/*
+|--------------------------------------------------------------------------
+| Return Metrics Date Range
+|--------------------------------------------------------------------------
+|
+| Supports:
+|
+| GET /api/v1/admin/order-returns/metrics?from=...&to=...
+|
+| Metrics begin with a createdAt-only $match, so createdAt must be the
+| leading index field.
+|--------------------------------------------------------------------------
+*/
+
+orderReturnRequestSchema.index(
+  {
+    createdAt: -1,
+  },
+  {
+    name: "return_requests_by_created_at",
+  },
+);
+
 const OrderReturnRequest =
   mongoose.models.OrderReturnRequest ??
   mongoose.model("OrderReturnRequest", orderReturnRequestSchema);
