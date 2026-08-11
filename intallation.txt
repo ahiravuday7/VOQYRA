@@ -4556,6 +4556,17 @@ Cross-customer Replacement hidden          ✅
 No Product inventory mutation              ✅
 No Inventory Ledger mutation               ✅
 |--------------------------------------------------------------------------
+Part 170 — Return/Replacement API Contract & Index Review
+
+I reviewed the actual Return/Replacement models, routes, validations, repositories, and indexes from your uploaded orders.zip.
+
+Good news: the module is already in a strong shape. We should not add a bunch of indexes just because we can. That would increase write cost and make the schema harder to maintain.
+
+There is only one cleanup I recommend now.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
