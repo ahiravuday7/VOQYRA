@@ -5125,6 +5125,90 @@ npx vitest run tests/integration/order.integration.test.js --testTimeout=120000 
 
 If all return 0 failures, Part 178 is complete and we can close the Return/Replacement subsystem instead of continuing to add more metrics features unnecessarily. The next Part should move us forward into the next backend domain.
 |--------------------------------------------------------------------------
+Part 179 — Online Payment Foundation: Payment Transaction Model
+
+We’ve finished the Return/Replacement subsystem. The next backend gap is online payments.
+
+Your current Order flow already distinguishes cash-on-delivery vs online payment and requires an online Order to be paid before confirmation/shipment. The original project roadmap also placed online payments in the later/advanced phase, which is where we are now.
+
+For this Part, do not integrate Razorpay/Stripe yet. First we need the database foundation.
+
+Why a separate Payment model?
+
+Your Order already stores a current payment summary:
+
+payment: {
+  method,
+  status,
+  provider,
+  transactionId,
+  paidAt,
+  failedAt,
+  refundedAt
+}
+
+Keep that. ✅
+
+But online payment can have multiple attempts:
+
+Order
+  ↓
+Payment attempt #1 → failed
+Payment attempt #2 → failed
+Payment attempt #3 → paid
+
+If we store only the latest state inside Order.payment, we lose the previous attempts.
+
+So:
+
+Order.payment
+    = current payment summary
+
+PaymentTransaction documents
+    = complete payment attempt history
+Update / create only
+
+Create:
+
+src/modules/payments/payment.model.js
+
+No routes yet.
+
+No controller yet.
+
+No provider SDK yet.
+
+Relationship after Part 179
+Customer
+   ↓
+Order
+   ├─ payment summary
+   │    method = online
+   │    status = pending / paid / ...
+   │
+   └─ PaymentTransaction[]
+          ↓
+       Attempt 1
+       Attempt 2
+       Attempt 3
+
+Part 179 complete
+Dedicated PaymentTransaction model       ✅
+Multiple attempts per Order              ✅
+Provider-neutral architecture            ✅
+Trusted amount storage                   ✅
+Payment lifecycle timestamps             ✅
+Failure audit                            ✅
+Refund summary                           ✅
+Provider references                      ✅
+Payment attempt uniqueness               ✅
+Mongoose state validation                ✅
+
+Provider SDK integration                 ❌ not yet
+Payment creation API                     ❌ not yet
+Webhook                                  ❌ not yet
+Signature verification                   ❌ not yet
+Order.payment synchronization            ❌ not yet
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
