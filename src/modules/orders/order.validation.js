@@ -1814,3 +1814,21 @@ export const adminOrderReturnRefundRequestSchema = z.strictObject({
 
   query: emptyObjectSchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Metrics Request
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-returns/metrics
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnMetricsRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});

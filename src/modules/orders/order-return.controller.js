@@ -31,6 +31,8 @@ import {
   mapCustomerOrderReturnReplacementSummary,
 } from "./order-return-replacement.mapper.js";
 
+import { getAdminOrderReturnOperationalMetrics } from "./order-return-metrics.service.js";
+
 /*
 |--------------------------------------------------------------------------
 | Create Customer Order Return Request
@@ -724,6 +726,33 @@ export const refundAdminOrderReturnRequestController = async (
 
     data: {
       returnRequest: mappedReturnRequest,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Operational Metrics
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-returns/metrics
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnMetricsController = async (
+  request,
+  response,
+) => {
+  const metrics = await getAdminOrderReturnOperationalMetrics();
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return operational metrics retrieved successfully",
+
+    data: {
+      metrics,
     },
   });
 };

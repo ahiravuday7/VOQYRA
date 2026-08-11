@@ -4564,6 +4564,61 @@ Good news: the module is already in a strong shape. We should not add a bunch of
 
 There is only one cleanup I recommend now.
 |--------------------------------------------------------------------------
+Part 171 — Return/Replacement Operational Metrics API
+
+Now we’ll add an admin dashboard summary endpoint without loading every Return or Replacement document into Node.js.
+
+New endpoint:
+
+GET /api/v1/admin/order-returns/metrics
+
+It will return:
+
+Returns
+├─ total
+├─ count by status
+├─ count by requested resolution
+├─ processed refund count/amount/quantity
+├─ awaiting refund
+└─ awaiting replacement creation
+
+Replacements
+├─ total
+├─ count by status
+├─ awaiting processing
+├─ processing
+└─ shipped awaiting delivery
+
+This Part changes 6 files and adds 1 new service file.
+
+We now have:
+
+GET /api/v1/admin/order-returns/metrics
+
+with:
+
+Return total/status metrics                ✅
+Return resolution metrics                  ✅
+Refund count                               ✅
+Refunded quantity                          ✅
+Refund amount                              ✅
+
+Replacement total/status metrics           ✅
+
+Returns waiting for decision               ✅
+Returns waiting for refund                 ✅
+Returns waiting for replacement creation   ✅
+
+Replacements waiting for processing        ✅
+Replacements processing                    ✅
+Replacements waiting for delivery          ✅
+
+MongoDB aggregation                        ✅
+Stable zero-filled API contract            ✅
+No document loading for counting            ✅
+Admin authentication inherited             ✅
+No Product inventory mutation               ✅
+No Inventory Ledger mutation                ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

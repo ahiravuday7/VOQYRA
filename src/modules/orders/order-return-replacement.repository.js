@@ -944,3 +944,55 @@ export const findCustomerOrderReturnReplacementById = (
     .select(CUSTOMER_ORDER_RETURN_REPLACEMENT_DETAILS_PROJECTION)
     .lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Aggregate Admin Return Replacement Metrics
+|--------------------------------------------------------------------------
+*/
+
+export const aggregateAdminOrderReturnReplacementMetrics = async () => {
+  const [metrics] = await OrderReturnReplacement.aggregate([
+    {
+      $facet: {
+        /*
+            |--------------------------------------------------------------------------
+            | Total
+            |--------------------------------------------------------------------------
+            */
+
+        total: [
+          {
+            $count: "count",
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Status Counts
+            |--------------------------------------------------------------------------
+            */
+
+        byStatus: [
+          {
+            $group: {
+              _id: "$status",
+
+              count: {
+                $sum: 1,
+              },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+
+  return (
+    metrics ?? {
+      total: [],
+
+      byStatus: [],
+    }
+  );
+};

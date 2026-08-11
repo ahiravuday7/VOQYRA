@@ -528,3 +528,171 @@ export const findAdminOrderReturnRequestForProcessing = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Aggregate Admin Order Return Metrics
+|--------------------------------------------------------------------------
+|
+| MongoDB performs the counting.
+|
+| We deliberately do not load Return documents into Node.js merely to
+| calculate dashboard totals.
+|--------------------------------------------------------------------------
+*/
+
+export const aggregateAdminOrderReturnMetrics = async () => {
+  const [metrics] = await OrderReturnRequest.aggregate([
+    {
+      $facet: {
+        /*
+            |--------------------------------------------------------------------------
+            | Total Returns
+            |--------------------------------------------------------------------------
+            */
+
+        total: [
+          {
+            $count: "count",
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Return Status Counts
+            |--------------------------------------------------------------------------
+            */
+
+        byStatus: [
+          {
+            $group: {
+              _id: "$status",
+
+              count: {
+                $sum: 1,
+              },
+            },
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Resolution Counts
+            |--------------------------------------------------------------------------
+            */
+
+        byResolution: [
+          {
+            $group: {
+              _id: "$requestedResolution",
+
+              count: {
+                $sum: 1,
+              },
+            },
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Processed Refund Metrics
+            |--------------------------------------------------------------------------
+            */
+
+        refunds: [
+          {
+            $match: {
+              "refund.refundedAt": {
+                $ne: null,
+              },
+            },
+          },
+
+          {
+            $group: {
+              _id: null,
+
+              count: {
+                $sum: 1,
+              },
+
+              refundedQuantity: {
+                $sum: "$refund.refundedQuantity",
+              },
+
+              amount: {
+                $sum: "$refund.amount",
+              },
+            },
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Completed Refund Returns
+            |--------------------------------------------------------------------------
+            |
+            | Used to calculate:
+            |
+            | completed refund Returns - actual refunds
+            |     =
+            | Returns awaiting refund
+            |--------------------------------------------------------------------------
+            */
+
+        completedRefundReturns: [
+          {
+            $match: {
+              status: "completed",
+
+              requestedResolution: "refund",
+            },
+          },
+
+          {
+            $count: "count",
+          },
+        ],
+
+        /*
+            |--------------------------------------------------------------------------
+            | Completed Replacement Returns
+            |--------------------------------------------------------------------------
+            |
+            | Replacement creation is only allowed after Return completion.
+            |--------------------------------------------------------------------------
+            */
+
+        completedReplacementReturns: [
+          {
+            $match: {
+              status: "completed",
+
+              requestedResolution: "replacement",
+            },
+          },
+
+          {
+            $count: "count",
+          },
+        ],
+      },
+    },
+  ]);
+
+  return (
+    metrics ?? {
+      total: [],
+
+      byStatus: [],
+
+      byResolution: [],
+
+      refunds: [],
+
+      completedRefundReturns: [],
+
+      completedReplacementReturns: [],
+    }
+  );
+};
