@@ -135,3 +135,86 @@ export const findSuccessfulPaymentTransactionForOrder = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Create Payment Transaction
+|--------------------------------------------------------------------------
+|
+| Single-document insertion is atomic.
+|
+| Database unique indexes provide the final concurrency protection for:
+|
+| paymentNumber
+| order + attemptNumber
+|--------------------------------------------------------------------------
+*/
+
+export const createPaymentTransactionDocument = async (
+  paymentData,
+  { session = null } = {},
+) => {
+  const paymentTransaction = new PaymentTransaction(paymentData);
+
+  if (session) {
+    await paymentTransaction.save({
+      session,
+    });
+  } else {
+    await paymentTransaction.save();
+  }
+
+  return paymentTransaction;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Payment Transaction By Order + Attempt
+|--------------------------------------------------------------------------
+|
+| Useful when concurrent requests collide on the unique:
+|
+| order + attemptNumber
+|
+| index.
+|--------------------------------------------------------------------------
+*/
+
+export const findPaymentTransactionByOrderAndAttemptNumber = (
+  orderId,
+  attemptNumber,
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    order: orderId,
+
+    attemptNumber,
+  }).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Payment Transaction By Payment Number
+|--------------------------------------------------------------------------
+*/
+
+export const findPaymentTransactionByPaymentNumber = (
+  paymentNumber,
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    paymentNumber,
+  }).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

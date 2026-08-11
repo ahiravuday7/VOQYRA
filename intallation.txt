@@ -5290,6 +5290,97 @@ Webhook                                       ❌
 Order.payment → paid synchronization          ❌
 Inventory commit after payment                ❌
 |--------------------------------------------------------------------------
+Part 181 — Atomic PaymentTransaction Creation + Payment Number Generation
+
+Now we take the trusted plan from Part 180 and actually create the local payment attempt.
+
+Still no Razorpay/Stripe call yet.
+
+Flow after this Part:
+
+Online Order
+   ↓
+prepare trusted payment plan
+   ↓
+check active payment
+   ↓
+calculate attempt number
+   ↓
+create PaymentTransaction
+   ↓
+status = created
+
+If two requests hit simultaneously:
+
+Request A → attempt 1
+Request B → attempt 1
+
+the database unique constraint:
+
+{ order: 1, attemptNumber: 1 }
+
+allows only one document to survive. The losing request will reuse the winner instead of creating another attempt.
+
+Update only:
+
+src/modules/payments/payment.repository.js
+src/modules/payments/payment.service.js
+
+No route/controller yet.
+
+12. Result — first request
+
+Suppose the Order has:
+
+Order Number:
+ORD-20260811-ABC123
+
+Payment method:
+online
+
+Order status:
+pending
+
+Payment status:
+pending
+
+Inventory:
+reserved
+
+Grand total:
+₹1398
+
+Part 181 complete
+
+We now have:
+
+PAY-YYYYMMDD-XXXXXXXXXXXX generation       ✅
+Unique Payment reference                   ✅
+
+Trusted Order snapshot                     ✅
+Trusted customer                           ✅
+Trusted amount                             ✅
+Trusted currency                           ✅
+Trusted attempt number                     ✅
+
+First payment attempt                      ✅
+Failed-attempt retry numbering             ✅
+
+Same-provider reuse                        ✅
+Double-click idempotency                   ✅
+Concurrent same-provider protection        ✅
+Concurrent different-provider protection   ✅
+
+Unique order + attempt enforcement         ✅
+Payment-number collision retry             ✅
+
+Order.payment marked paid                  ❌
+Provider payment created                   ❌
+External SDK call                          ❌
+Customer HTTP endpoint                     ❌
+Webhook                                    ❌
+Signature verification                     ❌
+Inventory commit                           ❌
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

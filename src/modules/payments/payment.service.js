@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   ORDER_INVENTORY_STATUSES,
   ORDER_PAYMENT_METHODS,
@@ -13,7 +14,71 @@ import {
   findActivePaymentTransactionForOrder,
   findLatestPaymentTransactionForOrder,
   findSuccessfulPaymentTransactionForOrder,
+  createPaymentTransactionDocument,
+  findPaymentTransactionByOrderAndAttemptNumber,
 } from "./payment.repository.js";
+
+import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
+
+/*
+|--------------------------------------------------------------------------
+| Payment Number Values
+|--------------------------------------------------------------------------
+*/
+
+const PAYMENT_NUMBER_RANDOM_BYTES = 6;
+
+const MAX_PAYMENT_NUMBER_CREATE_ATTEMPTS = 5;
+
+/*
+|--------------------------------------------------------------------------
+| Mongo Duplicate Key
+|--------------------------------------------------------------------------
+*/
+
+const isMongoDuplicateKeyError = (error) => {
+  return error?.code === 11000;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Duplicate Payment Number
+|--------------------------------------------------------------------------
+*/
+
+const isDuplicatePaymentNumberError = (error) => {
+  if (!isMongoDuplicateKeyError(error)) {
+    return false;
+  }
+
+  return (
+    Object.hasOwn(error.keyPattern ?? {}, "paymentNumber") ||
+    Object.hasOwn(error.keyValue ?? {}, "paymentNumber")
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Duplicate Order Attempt
+|--------------------------------------------------------------------------
+*/
+
+const isDuplicateOrderAttemptError = (error) => {
+  if (!isMongoDuplicateKeyError(error)) {
+    return false;
+  }
+
+  const keyPattern = error.keyPattern ?? {};
+
+  const keyValue = error.keyValue ?? {};
+
+  return (
+    (Object.hasOwn(keyPattern, "order") &&
+      Object.hasOwn(keyPattern, "attemptNumber")) ||
+    (Object.hasOwn(keyValue, "order") &&
+      Object.hasOwn(keyValue, "attemptNumber"))
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -122,6 +187,219 @@ const createPaymentAttemptNumberInvalidError = () => {
       errorCode: "ORDER_PAYMENT_ATTEMPT_NUMBER_INVALID",
     },
   );
+};
+
+const createPaymentAttemptConflictError = () => {
+  return new AppError(
+    "The Payment attempt changed while it was being created",
+    409,
+    {
+      errorCode: "ORDER_PAYMENT_ATTEMPT_CONFLICT",
+    },
+  );
+};
+
+const createPaymentNumberGenerationError = () => {
+  return new AppError("Unable to create a unique Payment reference", 500, {
+    errorCode: "PAYMENT_NUMBER_GENERATION_FAILED",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Payment Transaction Data
+|--------------------------------------------------------------------------
+|
+| Everything except provider came from trusted Order state in Part 180.
+|--------------------------------------------------------------------------
+*/
+
+const buildPaymentTransactionData = (
+  plan,
+  { paymentNumber, createdBy, initiatedAt },
+) => {
+  return {
+    paymentNumber,
+
+    order: plan.orderId,
+
+    orderNumber: plan.orderNumber,
+
+    customer: plan.customerId,
+
+    provider: plan.provider,
+
+    amount: plan.amount,
+
+    currency: plan.currency,
+
+    status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+
+    attemptNumber: plan.attemptNumber,
+
+    initiatedAt,
+
+    createdBy,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Resolve Concurrent Payment Attempt
+|--------------------------------------------------------------------------
+|
+| Another request may have inserted the same:
+|
+| order + attemptNumber
+|
+| between:
+|
+| prepare()
+|
+| and
+|
+| create()
+|--------------------------------------------------------------------------
+*/
+
+const resolveConcurrentPaymentAttempt = async ({
+  order,
+  provider,
+  attemptNumber,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Read The Exact Winning Attempt
+    |--------------------------------------------------------------------------
+    */
+
+  const existingPayment = await findPaymentTransactionByOrderAndAttemptNumber(
+    order._id,
+
+    attemptNumber,
+  );
+
+  if (!existingPayment) {
+    throw createPaymentAttemptConflictError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Same Provider
+    |--------------------------------------------------------------------------
+    |
+    | This is an idempotent concurrent duplicate.
+    |--------------------------------------------------------------------------
+    */
+
+  if (existingPayment.provider === provider) {
+    return {
+      action: "reuse",
+
+      paymentTransaction: existingPayment,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Different Provider
+    |--------------------------------------------------------------------------
+    |
+    | Example:
+    |
+    | request A = Razorpay
+    | request B = Stripe
+    |
+    | A wins attempt 1.
+    |
+    | B must not silently reuse Razorpay.
+    |--------------------------------------------------------------------------
+    */
+
+  throw createActivePaymentProviderConflictError(
+    existingPayment.provider,
+
+    provider,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Local Payment Transaction
+|--------------------------------------------------------------------------
+|
+| Handles extremely unlikely paymentNumber collisions.
+|--------------------------------------------------------------------------
+*/
+
+const createLocalPaymentTransaction = async ({ plan, customerId }) => {
+  for (
+    let attempt = 1;
+    attempt <= MAX_PAYMENT_NUMBER_CREATE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const paymentNumber = generatePaymentNumber();
+
+    const initiatedAt = new Date();
+
+    try {
+      const paymentTransaction = await createPaymentTransactionDocument(
+        buildPaymentTransactionData(plan, {
+          paymentNumber,
+
+          createdBy: customerId,
+
+          initiatedAt,
+        }),
+      );
+
+      return {
+        action: "create",
+
+        paymentTransaction: paymentTransaction.toObject(),
+      };
+    } catch (error) {
+      /*
+        |--------------------------------------------------------------------------
+        | Payment Number Collision
+        |--------------------------------------------------------------------------
+        |
+        | Very unlikely.
+        |
+        | Generate another number and retry.
+        |--------------------------------------------------------------------------
+        */
+
+      if (isDuplicatePaymentNumberError(error)) {
+        continue;
+      }
+
+      /*
+        |--------------------------------------------------------------------------
+        | Order + Attempt Collision
+        |--------------------------------------------------------------------------
+        |
+        | Another request created the attempt first.
+        |--------------------------------------------------------------------------
+        */
+
+      if (isDuplicateOrderAttemptError(error)) {
+        return resolveConcurrentPaymentAttempt({
+          order: {
+            _id: plan.orderId,
+          },
+
+          provider: plan.provider,
+
+          attemptNumber: plan.attemptNumber,
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  throw createPaymentNumberGenerationError();
 };
 
 /*
@@ -420,5 +698,101 @@ export const prepareCustomerOnlinePayment = async ({
     paymentTransaction: null,
 
     plan,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Generate Payment Number
+|--------------------------------------------------------------------------
+|
+| Format:
+|
+| PAY-YYYYMMDD-XXXXXXXXXXXX
+|
+| Example:
+|
+| PAY-20260811-A1B2C3D4E5F6
+|--------------------------------------------------------------------------
+*/
+
+export const generatePaymentNumber = (date = new Date()) => {
+  const year = date.getUTCFullYear().toString();
+
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+
+  const day = String(date.getUTCDate()).padStart(2, "0");
+
+  const randomPart = crypto
+    .randomBytes(PAYMENT_NUMBER_RANDOM_BYTES)
+    .toString("hex")
+    .toUpperCase();
+
+  return ["PAY", `${year}${month}${day}`, randomPart].join("-");
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Or Reuse Customer Online Payment
+|--------------------------------------------------------------------------
+|
+| This is the main orchestration service for local PaymentTransaction
+| creation.
+|--------------------------------------------------------------------------
+*/
+
+export const createOrReuseCustomerOnlinePayment = async ({
+  orderId,
+  customerId,
+  provider,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Build Trusted Plan / Check Existing Attempt
+    |--------------------------------------------------------------------------
+    */
+
+  const preparation = await prepareCustomerOnlinePayment({
+    orderId,
+
+    customerId,
+
+    provider,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Existing Active Attempt
+    |--------------------------------------------------------------------------
+    */
+
+  if (preparation.action === "reuse") {
+    return {
+      action: "reuse",
+
+      paymentTransaction: preparation.paymentTransaction,
+
+      plan: preparation.plan,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Create New Local Attempt
+    |--------------------------------------------------------------------------
+    */
+
+  const result = await createLocalPaymentTransaction({
+    plan: preparation.plan,
+
+    customerId,
+  });
+
+  return {
+    action: result.action,
+
+    paymentTransaction: result.paymentTransaction,
+
+    plan: preparation.plan,
   };
 };
