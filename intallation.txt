@@ -5382,6 +5382,66 @@ Webhook                                    ❌
 Signature verification                     ❌
 Inventory commit                           ❌
 |--------------------------------------------------------------------------
+Part 182 — Customer Payment Initiation API
+
+Now we expose the Part 180–181 payment logic through HTTP.
+
+New endpoint:
+
+POST /api/v1/orders/:orderId/payments
+
+Behavior:
+
+No active PaymentTransaction
+        ↓
+create local attempt
+        ↓
+201 Created
+
+Existing active attempt
+same provider
+        ↓
+reuse existing attempt
+        ↓
+200 OK
+
+Existing active attempt
+different provider
+        ↓
+409 Conflict
+
+Still no Razorpay/Stripe SDK call in this Part.
+
+Part 182 complete
+
+We now have:
+
+POST /api/v1/orders/:orderId/payments     ✅
+
+Customer authentication                  ✅
+Customer ownership                       ✅
+Strict provider-only request              ✅
+Trusted amount                            ✅
+Trusted currency                          ✅
+
+New attempt → 201                         ✅
+Existing active attempt → 200             ✅
+Same-provider idempotency                 ✅
+Different-provider conflict               ✅
+Attempt race protection                   ✅
+
+Customer-safe Payment mapper              ✅
+Provider signature hidden                 ✅
+Internal failure details hidden           ✅
+
+Razorpay SDK                              ❌
+Stripe SDK                                ❌
+Provider order creation                   ❌
+Provider signature verification           ❌
+Webhook                                   ❌
+Payment success handling                  ❌
+Order payment synchronization             ❌
+Inventory commit                          ❌
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

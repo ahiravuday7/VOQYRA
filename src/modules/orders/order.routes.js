@@ -41,6 +41,10 @@ import {
   customerOrderReturnReplacementListRequestSchema,
 } from "./order-return-replacement.validation.js";
 
+import { createCustomerOnlinePaymentController } from "../payments/payment.controller.js";
+
+import { createCustomerOnlinePaymentRequestSchema } from "../payments/payment.validation.js";
+
 const router = Router();
 
 /*
@@ -161,6 +165,24 @@ router.post(
   "/:orderId/cancel",
   validateRequest(cancelCustomerOrderRequestSchema),
   cancelCustomerOrderController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Online Payment Initiation
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/orders/:orderId/payments
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/payments",
+
+  validateRequest(createCustomerOnlinePaymentRequestSchema),
+
+  createCustomerOnlinePaymentController,
 );
 
 /*
