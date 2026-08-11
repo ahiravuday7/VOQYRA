@@ -996,3 +996,55 @@ export const aggregateAdminOrderReturnReplacementMetrics = async ({
     }
   );
 };
+
+/*
+|--------------------------------------------------------------------------
+| Aggregate Admin Return Replacement Daily Trend
+|--------------------------------------------------------------------------
+*/
+
+export const aggregateAdminOrderReturnReplacementDailyTrend = async ({
+  createdAtRange,
+}) => {
+  return OrderReturnReplacement.aggregate([
+    {
+      $match: {
+        createdAt: createdAtRange,
+      },
+    },
+
+    {
+      $group: {
+        _id: {
+          $dateToString: {
+            format: "%Y-%m-%d",
+
+            date: "$createdAt",
+
+            timezone: "UTC",
+          },
+        },
+
+        count: {
+          $sum: 1,
+        },
+      },
+    },
+
+    {
+      $sort: {
+        _id: 1,
+      },
+    },
+
+    {
+      $project: {
+        _id: 0,
+
+        date: "$_id",
+
+        count: 1,
+      },
+    },
+  ]);
+};

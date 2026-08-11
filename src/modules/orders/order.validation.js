@@ -79,6 +79,72 @@ const adminOrderReturnMetricsQuerySchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Return Metrics Trend Values
+|--------------------------------------------------------------------------
+*/
+
+const MAX_ORDER_RETURN_METRICS_TREND_DAYS = 90;
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Metrics Trend Query
+|--------------------------------------------------------------------------
+|
+| Trends require a bounded range because we generate one output point
+| for every UTC calendar day.
+|--------------------------------------------------------------------------
+*/
+
+const adminOrderReturnMetricsTrendQuerySchema = z
+  .strictObject({
+    from: metricsCalendarDateSchema,
+
+    to: metricsCalendarDateSchema,
+  })
+  .superRefine((value, context) => {
+    /*
+        |--------------------------------------------------------------------------
+        | Date Ordering
+        |--------------------------------------------------------------------------
+        */
+
+    if (value.from > value.to) {
+      context.addIssue({
+        code: "custom",
+
+        path: ["to"],
+
+        message: "Metrics trend 'to' date must be on or after 'from' date",
+      });
+
+      return;
+    }
+
+    /*
+        |--------------------------------------------------------------------------
+        | Maximum Range
+        |--------------------------------------------------------------------------
+        */
+
+    const fromTime = new Date(`${value.from}T00:00:00.000Z`).getTime();
+
+    const toTime = new Date(`${value.to}T00:00:00.000Z`).getTime();
+
+    const dayCount = Math.floor((toTime - fromTime) / 86_400_000) + 1;
+
+    if (dayCount > MAX_ORDER_RETURN_METRICS_TREND_DAYS) {
+      context.addIssue({
+        code: "custom",
+
+        path: ["to"],
+
+        message: `Metrics trend range cannot exceed ${MAX_ORDER_RETURN_METRICS_TREND_DAYS} days`,
+      });
+    }
+  });
+
+/*
+|--------------------------------------------------------------------------
 | Customer Order List Values
 |--------------------------------------------------------------------------
 */
@@ -1883,4 +1949,22 @@ export const adminOrderReturnMetricsRequestSchema = z.strictObject({
   params: emptyObjectSchema,
 
   query: adminOrderReturnMetricsQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Metrics Trend Request
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-returns/metrics/trends
+|--------------------------------------------------------------------------
+*/
+
+export const adminOrderReturnMetricsTrendRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: adminOrderReturnMetricsTrendQuerySchema,
 });

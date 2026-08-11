@@ -31,7 +31,10 @@ import {
   mapCustomerOrderReturnReplacementSummary,
 } from "./order-return-replacement.mapper.js";
 
-import { getAdminOrderReturnOperationalMetrics } from "./order-return-metrics.service.js";
+import {
+  getAdminOrderReturnOperationalMetrics,
+  getAdminOrderReturnOperationalTrend,
+} from "./order-return-metrics.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -755,6 +758,35 @@ export const getAdminOrderReturnMetricsController = async (
 
     data: {
       metrics,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Admin Return Operational Metrics Trend
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-returns/metrics/trends
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminOrderReturnMetricsTrendController = async (
+  request,
+  response,
+) => {
+  const filters = request.validated.query;
+
+  const trend = await getAdminOrderReturnOperationalTrend(filters);
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Admin Return operational metrics trend retrieved successfully",
+
+    data: {
+      trend,
     },
   });
 };

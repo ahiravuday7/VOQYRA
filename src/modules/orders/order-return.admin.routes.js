@@ -19,6 +19,7 @@ import {
   completeAdminOrderReturnRequestController,
   refundAdminOrderReturnRequestController,
   getAdminOrderReturnMetricsController,
+  getAdminOrderReturnMetricsTrendController,
 } from "./order-return.controller.js";
 
 import { createAdminReturnReplacementController } from "./order-return-replacement.controller.js";
@@ -35,6 +36,7 @@ import {
   adminOrderReturnCompletionRequestSchema,
   adminOrderReturnRefundRequestSchema,
   adminOrderReturnMetricsRequestSchema,
+  adminOrderReturnMetricsTrendRequestSchema,
 } from "./order.validation.js";
 
 const router = express.Router();
@@ -77,6 +79,24 @@ router.get(
   validateRequest(adminOrderReturnMetricsRequestSchema),
 
   getAdminOrderReturnMetricsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Operational Metrics Trend
+|--------------------------------------------------------------------------
+|
+| GET
+| /api/v1/admin/order-returns/metrics/trends
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/metrics/trends",
+
+  validateRequest(adminOrderReturnMetricsTrendRequestSchema),
+
+  getAdminOrderReturnMetricsTrendController,
 );
 
 /*

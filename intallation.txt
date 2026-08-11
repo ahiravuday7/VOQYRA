@@ -4783,8 +4783,74 @@ $facet
       indexed $lookup on returnRequest
 
 That gives us useful performance support without bloating MongoDB writes.
+|--------------------------------------------------------------------------
+Part 176 — Return/Replacement Daily Metrics Trend API
 
+Now we’ll add a chart-friendly endpoint:
 
+GET /api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-31
+
+It returns one point per UTC calendar day:
+
+[
+  {
+    "date": "2026-08-01",
+    "returns": 4,
+    "replacements": 2
+  },
+  {
+    "date": "2026-08-02",
+    "returns": 0,
+    "replacements": 1
+  }
+]
+
+A key requirement is zero-filled days. If nothing happened on August 2, the frontend should receive 0, not a missing date.
+
+For trends, both from and to will be required and the maximum range will be 90 days.
+
+We now have two complementary dashboard APIs:
+
+GET /api/v1/admin/order-returns/metrics
+
+for:
+
+Current summary
+Status counts
+Refund metrics
+Action queues
+
+and:
+
+GET /api/v1/admin/order-returns/metrics/trends
+
+for:
+
+Daily Return volume
+Daily Replacement volume
+Chart data
+Zero-filled days
+Period totals
+
+Final trend behavior:
+
+UTC daily grouping            ✅
+Inclusive from date           ✅
+Inclusive to date             ✅
+Zero-filled missing days      ✅
+Return counts                 ✅
+Replacement counts            ✅
+90-day safety limit           ✅
+from required                 ✅
+to required                   ✅
+createdAt indexes reused      ✅
+Read-only                     ✅
+No inventory mutation         ✅
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
