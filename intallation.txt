@@ -5474,6 +5474,67 @@ Customer-safe response                ✅
 
 Real Razorpay/Stripe payment          ❌ not yet
 |--------------------------------------------------------------------------
+Part 184 — Payment Provider Abstraction Layer
+
+Now we create the layer between your Payment business logic and external gateways.
+
+Architecture:
+
+Payment Service
+      ↓
+Payment Provider Service
+      ↓
+Provider Registry
+      ↓
+   Adapter
+   ↙    ↘
+Razorpay  Stripe
+
+For this Part, no Razorpay/Stripe SDK yet and no existing API behavior changes.
+
+Create only:
+
+src/modules/payments/providers/payment-provider.contract.js
+src/modules/payments/providers/payment-provider.registry.js
+src/modules/payments/providers/payment-provider.service.js
+
+Part 184 complete
+
+We now have:
+
+Provider-neutral contract                    ✅
+Provider registry                            ✅
+Provider adapter validation                  ✅
+Trusted provider input validation            ✅
+Provider response validation                 ✅
+Amount integrity validation                  ✅
+Currency integrity validation                ✅
+Unavailable-provider handling                ✅
+
+Payment business logic contains Razorpay     ❌
+Payment business logic contains Stripe       ❌
+
+Razorpay SDK                                 ❌
+Stripe SDK                                   ❌
+
+Existing Part 183 behavior changed           ❌
+Architecture is now:
+
+Customer Payment API
+        ↓
+Payment Service
+        ↓
+PaymentTransaction
+        ↓
+[future provider orchestration]
+        ↓
+Payment Provider Service
+        ↓
+Registry
+        ↓
+Provider Adapter
+      ↙       ↘
+ Razorpay    Stripe
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
