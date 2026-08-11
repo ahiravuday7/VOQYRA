@@ -27222,3 +27222,726 @@ describe("Admin Return date-range operational metrics", () => {
     expect(metrics.actionRequired.returnsAwaitingReplacementCreation).toBe(0);
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Return Daily Operational Metrics Trend
+|--------------------------------------------------------------------------
+*/
+
+describe("Admin Return daily operational metrics trend", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Authentication
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 401 when metrics trend is requested without authentication", async () => {
+    const response = await request(app).get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-07",
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer Cannot Access Admin Trend
+    |--------------------------------------------------------------------------
+    */
+
+  it("returns 403 when a customer requests admin metrics trend", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const response = await customerAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-07",
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Required / Invalid Date Validation
+    |--------------------------------------------------------------------------
+    */
+
+  it("requires valid from and to dates and rejects invalid trend ranges", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Missing Both
+      |--------------------------------------------------------------------------
+      */
+
+    const missingBothResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends",
+    );
+
+    expect(missingBothResponse.status).toBe(400);
+
+    expect(missingBothResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Missing To
+      |--------------------------------------------------------------------------
+      */
+
+    const missingToResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-01",
+    );
+
+    expect(missingToResponse.status).toBe(400);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Invalid Calendar Date
+      |--------------------------------------------------------------------------
+      */
+
+    const impossibleDateResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-02-31&to=2026-03-01",
+    );
+
+    expect(impossibleDateResponse.status).toBe(400);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Reversed Range
+      |--------------------------------------------------------------------------
+      */
+
+    const reversedResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-10&to=2026-08-01",
+    );
+
+    expect(reversedResponse.status).toBe(400);
+
+    /*
+      |--------------------------------------------------------------------------
+      | More Than 90 Days
+      |--------------------------------------------------------------------------
+      |
+      | Jan 1 -> Apr 1 = 91 inclusive calendar days.
+      |--------------------------------------------------------------------------
+      */
+
+    const tooLargeResponse = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-01-01&to=2026-04-01",
+    );
+
+    expect(tooLargeResponse.status).toBe(400);
+
+    expect(tooLargeResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Exactly 90 Days Is Allowed
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows a trend range of exactly 90 inclusive calendar days", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+     * 2026:
+     *
+     * January  = 31
+     * February = 28
+     * March    = 31
+     *
+     * Total = 90 days.
+     */
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-01-01&to=2026-03-31",
+    );
+
+    expect(response.status).toBe(200);
+
+    const trend = response.body.data.trend;
+
+    expect(trend.points).toHaveLength(90);
+
+    expect(trend.points[0].date).toBe("2026-01-01");
+
+    expect(trend.points[89].date).toBe("2026-03-31");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Daily Grouping + Zero Filling
+    |--------------------------------------------------------------------------
+    */
+
+  it("groups Returns and replacements by UTC day and zero-fills missing dates", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | August 1 Returns = 2
+      |--------------------------------------------------------------------------
+      */
+
+    const august1ReturnA = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "requested",
+    });
+
+    const august1ReturnB = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "approved",
+
+      approval: {
+        approvedBy: admin._id,
+
+        approvedAt: new Date(),
+      },
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | August 3 Return = 1
+      |--------------------------------------------------------------------------
+      */
+
+    const august3Return = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: august1ReturnA._id,
+
+      createdAt: "2026-08-01T05:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: august1ReturnB._id,
+
+      createdAt: "2026-08-01T18:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: august3Return._id,
+
+      createdAt: "2026-08-03T08:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | August 2 Replacement = 1
+      |--------------------------------------------------------------------------
+      */
+
+    const august2Replacement =
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        replacementNumber: "RPL-TREND-AUG-02",
+
+        status: "reserved",
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | August 3 Replacement = 1
+      |--------------------------------------------------------------------------
+      */
+
+    const august3Replacement =
+      await createAdminOrderReturnReplacementReadFixture({
+        customerId: customer._id,
+
+        adminId: admin._id,
+
+        replacementNumber: "RPL-TREND-AUG-03",
+
+        status: "processing",
+      });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: august2Replacement._id,
+
+      createdAt: "2026-08-02T11:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: august3Replacement._id,
+
+      createdAt: "2026-08-03T20:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Request Four Days
+      |--------------------------------------------------------------------------
+      |
+      | August 4 has no records in either collection.
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-04",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.message).toBe(
+      "Admin Return operational metrics trend retrieved successfully",
+    );
+
+    const trend = response.body.data.trend;
+
+    expect(trend.period).toEqual({
+      from: "2026-08-01",
+
+      to: "2026-08-04",
+
+      timezone: "UTC",
+
+      field: "createdAt",
+
+      granularity: "day",
+    });
+
+    expect(trend.points).toEqual([
+      {
+        date: "2026-08-01",
+
+        returns: 2,
+
+        replacements: 0,
+      },
+
+      {
+        date: "2026-08-02",
+
+        returns: 0,
+
+        replacements: 1,
+      },
+
+      {
+        date: "2026-08-03",
+
+        returns: 1,
+
+        replacements: 1,
+      },
+
+      {
+        date: "2026-08-04",
+
+        returns: 0,
+
+        replacements: 0,
+      },
+    ]);
+
+    expect(trend.totals).toEqual({
+      returns: 3,
+
+      replacements: 2,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | UTC Boundary Inclusion
+    |--------------------------------------------------------------------------
+    */
+
+  it("uses inclusive UTC calendar-day boundaries for trend grouping", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const before = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+    });
+
+    const exactStart = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+    });
+
+    const exactEnd = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+    });
+
+    const after = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: before._id,
+
+      createdAt: "2026-08-09T23:59:59.999Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: exactStart._id,
+
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: exactEnd._id,
+
+      createdAt: "2026-08-10T23:59:59.999Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: after._id,
+
+      createdAt: "2026-08-11T00:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-10&to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    const trend = response.body.data.trend;
+
+    expect(trend.points).toEqual([
+      {
+        date: "2026-08-10",
+
+        returns: 2,
+
+        replacements: 0,
+      },
+    ]);
+
+    expect(trend.totals).toEqual({
+      returns: 2,
+
+      replacements: 0,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Independent Collection Totals
+    |--------------------------------------------------------------------------
+    */
+
+  it("counts Return and Replacement creation independently even when they occur on different dates", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return Created August 5
+      |--------------------------------------------------------------------------
+      */
+
+    const returnRequest = await createAdminOrderReturnReadFixture({
+      customerId: customer._id,
+
+      updatedBy: admin._id,
+
+      status: "completed",
+
+      requestedResolution: "replacement",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: returnRequest._id,
+
+      createdAt: "2026-08-05T10:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Its Replacement Created August 7
+      |--------------------------------------------------------------------------
+      */
+
+    const replacement = await createAdminOrderReturnReplacementReadFixture({
+      customerId: customer._id,
+
+      adminId: admin._id,
+
+      returnRequestId: returnRequest._id,
+
+      returnRequestNumber: returnRequest.returnRequestNumber,
+
+      orderId: returnRequest.order,
+
+      orderNumber: returnRequest.orderNumber,
+
+      replacementNumber: "RPL-TREND-CROSS-DAY",
+
+      status: "reserved",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: replacement._id,
+
+      createdAt: "2026-08-07T10:00:00.000Z",
+    });
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-05&to=2026-08-07",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.trend.points).toEqual([
+      {
+        date: "2026-08-05",
+
+        returns: 1,
+
+        replacements: 0,
+      },
+
+      {
+        date: "2026-08-06",
+
+        returns: 0,
+
+        replacements: 0,
+      },
+
+      {
+        date: "2026-08-07",
+
+        returns: 0,
+
+        replacements: 1,
+      },
+    ]);
+
+    expect(response.body.data.trend.totals).toEqual({
+      returns: 1,
+
+      replacements: 1,
+    });
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Trend Endpoint Must Be Read Only
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not mutate Return, Replacement, Product inventory, or Inventory Ledger", async () => {
+    const {
+      agent: adminAgent,
+
+      user: admin,
+    } = await createAuthenticatedAdminAgent();
+
+    const { user: customer } = await createAuthenticatedCustomerAgent();
+
+    const { replacement, returnRequest, product, variant } =
+      await createReservedReplacementFixture({
+        adminAgent,
+
+        adminId: admin._id,
+
+        customerId: customer._id,
+      });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Put Fixture Inside Trend Range
+      |--------------------------------------------------------------------------
+      */
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnRequest,
+
+      documentId: returnRequest._id,
+
+      createdAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    await setMetricsFixtureCreatedAt({
+      model: OrderReturnReplacement,
+
+      documentId: replacement.id,
+
+      createdAt: "2026-08-10T11:00:00.000Z",
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | Before
+      |--------------------------------------------------------------------------
+      */
+
+    const returnBefore = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    const replacementBefore = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(productBefore, variant._id);
+
+    const ledgerBefore = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    expect(variantBefore.inventory.stock).toBe(10);
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    expect(ledgerBefore.map((entry) => entry.operation)).toEqual(["reserve"]);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Trend Read
+      |--------------------------------------------------------------------------
+      */
+
+    const response = await adminAgent.get(
+      "/api/v1/admin/order-returns/metrics/trends?from=2026-08-10&to=2026-08-10",
+    );
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.trend.totals).toEqual({
+      returns: 1,
+
+      replacements: 1,
+    });
+
+    /*
+      |--------------------------------------------------------------------------
+      | After
+      |--------------------------------------------------------------------------
+      */
+
+    const returnAfter = await OrderReturnRequest.findById(
+      returnRequest._id,
+    ).lean();
+
+    const replacementAfter = await OrderReturnReplacement.findById(
+      replacement.id,
+    ).lean();
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(productAfter, variant._id);
+
+    const ledgerAfter = await ProductInventoryLedger.find({
+      referenceId: replacement.replacementNumber,
+    })
+      .sort({
+        createdAt: 1,
+      })
+      .lean();
+
+    /*
+      |--------------------------------------------------------------------------
+      | Return Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(returnAfter.status).toBe(returnBefore.status);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Replacement Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(replacementAfter.status).toBe(replacementBefore.status);
+
+    /*
+      |--------------------------------------------------------------------------
+      | Inventory Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Ledger Unchanged
+      |--------------------------------------------------------------------------
+      */
+
+    expect(ledgerAfter).toHaveLength(ledgerBefore.length);
+
+    expect(ledgerAfter.map((entry) => entry.operation)).toEqual(["reserve"]);
+  });
+});

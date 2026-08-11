@@ -4847,6 +4847,38 @@ createdAt indexes reused      ✅
 Read-only                     ✅
 No inventory mutation         ✅
 |--------------------------------------------------------------------------
+Part 177 — Daily Metrics Trend Integration Tests
+
+Update only:
+
+tests/integration/order.integration.test.js
+We now cover:
+
+Trend authentication                       ✅
+Customer blocked                           ✅
+
+from required                              ✅
+to required                                ✅
+Invalid calendar dates rejected            ✅
+Reversed date ranges rejected              ✅
+> 90 days rejected                         ✅
+Exactly 90 days accepted                   ✅
+
+UTC calendar-day grouping                  ✅
+UTC start boundary inclusive               ✅
+UTC end boundary inclusive                 ✅
+
+Sparse MongoDB dates zero-filled           ✅
+Daily Return counts                        ✅
+Daily Replacement counts                   ✅
+
+Return / Replacement different dates       ✅
+Period totals                              ✅
+
+Trend GET changes Return state              ❌
+Trend GET changes Replacement state         ❌
+Trend GET changes Product inventory         ❌
+Trend GET creates Ledger entries            ❌
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
