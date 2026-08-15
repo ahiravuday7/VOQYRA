@@ -16,9 +16,13 @@ import {
   findSuccessfulPaymentTransactionForOrder,
   createPaymentTransactionDocument,
   findPaymentTransactionByOrderAndAttemptNumber,
+  markPaymentProviderSessionCreationFailed,
+  attachPaymentProviderOrderToTransaction,
 } from "./payment.repository.js";
 
 import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
+
+import { createPaymentProviderSession } from "./providers/payment-provider.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -203,6 +207,36 @@ const createPaymentNumberGenerationError = () => {
   return new AppError("Unable to create a unique Payment reference", 500, {
     errorCode: "PAYMENT_NUMBER_GENERATION_FAILED",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Provider Session Errors
+|--------------------------------------------------------------------------
+*/
+
+const createPaymentProviderSessionFailedError = (provider) => {
+  return new AppError("Payment provider session could not be created", 502, {
+    errorCode: "PAYMENT_PROVIDER_SESSION_CREATION_FAILED",
+
+    details: {
+      provider,
+    },
+  });
+};
+
+const createPaymentProviderPersistenceConflictError = (provider) => {
+  return new AppError(
+    "Payment provider session could not be linked safely",
+    500,
+    {
+      errorCode: "PAYMENT_PROVIDER_SESSION_PERSISTENCE_CONFLICT",
+
+      details: {
+        provider,
+      },
+    },
+  );
 };
 
 /*
@@ -794,5 +828,187 @@ export const createOrReuseCustomerOnlinePayment = async ({
     paymentTransaction: result.paymentTransaction,
 
     plan: preparation.plan,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create And Persist Payment Provider Session
+|--------------------------------------------------------------------------
+|
+| Input:
+|
+| An already-created trusted local PaymentTransaction.
+|
+| Flow:
+|
+| local PaymentTransaction
+|       ↓
+| provider abstraction
+|       ↓
+| Razorpay / Stripe
+|       ↓
+| external provider Order
+|       ↓
+| persist provider Order ID
+|       ↓
+| status = pending
+|--------------------------------------------------------------------------
+*/
+
+export const createAndPersistPaymentProviderSession = async ({
+  paymentTransaction,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Local Transaction
+    |--------------------------------------------------------------------------
+    */
+
+  if (!paymentTransaction?._id) {
+    throw new Error(
+      "Payment transaction is required to create provider session",
+    );
+  }
+
+  if (paymentTransaction.status !== PAYMENT_TRANSACTION_STATUSES.CREATED) {
+    throw new Error(
+      "Payment transaction must be in created state before provider initialization",
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Provider Must Not Already Be Attached
+    |--------------------------------------------------------------------------
+    */
+
+  if (paymentTransaction.providerReference?.orderId) {
+    throw new Error("Payment provider Order is already attached");
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Create External Provider Session
+    |--------------------------------------------------------------------------
+    |
+    | Important:
+    |
+    | These values come from the persisted PaymentTransaction,
+    | not from the frontend.
+    |--------------------------------------------------------------------------
+    */
+
+  let providerSession;
+
+  try {
+    providerSession = await createPaymentProviderSession({
+      provider: paymentTransaction.provider,
+
+      paymentNumber: paymentTransaction.paymentNumber,
+
+      orderNumber: paymentTransaction.orderNumber,
+
+      amount: paymentTransaction.amount,
+
+      currency: paymentTransaction.currency,
+
+      customerId: paymentTransaction.customer,
+    });
+  } catch (error) {
+    /*
+      |--------------------------------------------------------------------------
+      | External Provider Creation Failed
+      |--------------------------------------------------------------------------
+      |
+      | No usable provider Order exists.
+      |
+      | Mark this attempt failed so a future request may safely create
+      | attemptNumber + 1.
+      |--------------------------------------------------------------------------
+      */
+
+    await markPaymentProviderSessionCreationFailed(
+      paymentTransaction._id,
+
+      {
+        code: error?.errorCode ?? "PAYMENT_PROVIDER_SESSION_CREATION_FAILED",
+
+        message: "Payment provider session could not be created",
+
+        source: paymentTransaction.provider,
+
+        step: "create-payment-session",
+
+        reason: null,
+      },
+    );
+
+    /*
+      |--------------------------------------------------------------------------
+      | Preserve Known Operational Errors
+      |--------------------------------------------------------------------------
+      |
+      | Example:
+      |
+      | PAYMENT_PROVIDER_UNAVAILABLE
+      |--------------------------------------------------------------------------
+      */
+
+    if (error?.isOperational === true) {
+      throw error;
+    }
+
+    throw createPaymentProviderSessionFailedError(paymentTransaction.provider);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Persist Provider Order
+    |--------------------------------------------------------------------------
+    |
+    | Only after the external provider has successfully returned a
+    | providerOrderId do we move:
+    |
+    | created -> pending
+    |--------------------------------------------------------------------------
+    */
+
+  const updatedPaymentTransaction =
+    await attachPaymentProviderOrderToTransaction(
+      paymentTransaction._id,
+
+      {
+        provider: paymentTransaction.provider,
+
+        providerOrderId: providerSession.providerOrderId,
+      },
+    );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Persistence Safety
+    |--------------------------------------------------------------------------
+    |
+    | At this point the external provider may already have created its Order.
+    |
+    | Therefore DO NOT mark the local transaction failed if persistence
+    | loses its expected-state condition.
+    |
+    | Leaving it active is safer than accidentally permitting another
+    | provider charge attempt.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!updatedPaymentTransaction) {
+    throw createPaymentProviderPersistenceConflictError(
+      paymentTransaction.provider,
+    );
+  }
+
+  return {
+    paymentTransaction: updatedPaymentTransaction,
+
+    providerSession,
   };
 };

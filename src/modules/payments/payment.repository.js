@@ -218,3 +218,158 @@ export const findPaymentTransactionByPaymentNumber = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Attach Provider Order To Payment Transaction
+|--------------------------------------------------------------------------
+|
+| Provider session creation changes:
+|
+| created
+|
+| into:
+|
+| pending
+|
+| and permanently records the external provider Order ID.
+|--------------------------------------------------------------------------
+*/
+
+export const attachPaymentProviderOrderToTransaction = (
+  paymentTransactionId,
+
+  {
+    provider,
+
+    providerOrderId,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      provider,
+
+      status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+
+      $or: [
+        {
+          "providerReference.orderId": null,
+        },
+
+        {
+          "providerReference.orderId": {
+            $exists: false,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        "providerReference.orderId": providerOrderId,
+
+        status: PAYMENT_TRANSACTION_STATUSES.PENDING,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Mark Provider Session Creation Failed
+|--------------------------------------------------------------------------
+|
+| This is used only when the external provider did NOT create a usable
+| payment session.
+|
+| Once failed, the PaymentTransaction no longer blocks a future retry.
+|--------------------------------------------------------------------------
+*/
+
+export const markPaymentProviderSessionCreationFailed = (
+  paymentTransactionId,
+
+  {
+    code,
+
+    message,
+
+    source,
+
+    step,
+
+    reason,
+  },
+
+  { session = null } = {},
+) => {
+  const failedAt = new Date();
+
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+
+      $or: [
+        {
+          "providerReference.orderId": null,
+        },
+
+        {
+          "providerReference.orderId": {
+            $exists: false,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.FAILED,
+
+        failure: {
+          code: code ?? null,
+
+          message: message ?? null,
+
+          source: source ?? null,
+
+          step: step ?? null,
+
+          reason: reason ?? null,
+
+          failedAt,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

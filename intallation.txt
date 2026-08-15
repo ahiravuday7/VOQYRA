@@ -5554,6 +5554,73 @@ Then install Razorpay:
 
 npm i razorpay
 |--------------------------------------------------------------------------
+Part 186 — Provider Session Orchestration + Persistence
+
+Now we connect the local PaymentTransaction to the provider abstraction we built in Parts 184–185.
+
+For this part, do not change the controller or API response yet. That way your existing Part 183 integration tests keep testing exactly what they were designed to test.
+
+The flow we are building is:
+
+PaymentTransaction
+status = created
+        ↓
+Payment Provider Service
+        ↓
+Razorpay Adapter
+        ↓
+Razorpay Orders API
+        ↓
+razorpay order_id returned
+        ↓
+save providerReference.orderId
+        ↓
+PaymentTransaction
+status = pending
+
+Razorpay's server-side Orders API returns an Order ID, and that Order ID is later passed to Razorpay Checkout.
+Part 186 architecture
+
+After this step:
+
+                         CURRENT HTTP FLOW
+
+
+POST /orders/:orderId/payments
+             ↓
+Payment Service
+             ↓
+PaymentTransaction
+status = created
+
+
+
+
+                         READY BUT NOT WIRED
+
+
+PaymentTransaction
+status = created
+             ↓
+createAndPersistPaymentProviderSession()
+             ↓
+createPaymentProviderSession()
+             ↓
+Provider Registry
+             ↓
+Razorpay Adapter
+             ↓
+Razorpay SDK
+             ↓
+Razorpay Orders API
+             ↓
+razorpay order_id
+             ↓
+PaymentTransaction
+providerReference.orderId = order_xxx
+status = pending
+
+Razorpay's Order amount is fixed server-side, and the resulting Order ID is what Checkout uses to bind the frontend payment to that server-created order.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

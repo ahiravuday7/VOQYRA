@@ -540,6 +540,21 @@ paymentTransactionSchema.index(
 );
 
 /*
+ * Provider Order reconciliation.
+ */
+
+paymentTransactionSchema.index(
+  {
+    provider: 1,
+
+    "providerReference.orderId": 1,
+  },
+  {
+    name: "provider_order_reference",
+  },
+);
+
+/*
  * Provider reconciliation.
  */
 
