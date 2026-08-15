@@ -412,6 +412,26 @@ const paymentTransactionSchema = new mongoose.Schema(
       default: null,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Provider Confirmation Verification
+|--------------------------------------------------------------------------
+|
+| Means:
+|
+| The browser-returned provider confirmation passed our
+| server-side cryptographic verification.
+|
+| This does NOT by itself mean that the provider Payment is captured.
+|--------------------------------------------------------------------------
+*/
+
+    verifiedAt: {
+      type: Date,
+
+      default: null,
+    },
+
     paidAt: {
       type: Date,
 

@@ -20,6 +20,8 @@ import {
   attachPaymentProviderOrderToTransaction,
   claimPaymentTransactionForProviderSession,
   findPaymentTransactionById,
+  findCustomerPaymentTransactionForConfirmation,
+  recordVerifiedPaymentProviderConfirmation,
 } from "./payment.repository.js";
 
 import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
@@ -27,6 +29,7 @@ import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
 import {
   createPaymentProviderSession,
   buildPaymentProviderCheckoutData,
+  verifyPaymentProviderConfirmation,
 } from "./providers/payment-provider.service.js";
 
 /*
@@ -254,6 +257,70 @@ const createPaymentProviderSessionInitializingError = (provider) => {
       details: {
         provider,
       },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Confirmation Errors
+|--------------------------------------------------------------------------
+*/
+
+const createPaymentTransactionNotFoundError = () => {
+  return new AppError("Payment transaction was not found", 404, {
+    errorCode: "PAYMENT_TRANSACTION_NOT_FOUND",
+  });
+};
+
+const createPaymentConfirmationStateInvalidError = (status) => {
+  return new AppError("Payment cannot be confirmed in its current state", 409, {
+    errorCode: "PAYMENT_CONFIRMATION_STATE_INVALID",
+
+    details: {
+      status: status ?? null,
+    },
+  });
+};
+
+const createPaymentProviderOrderMissingError = () => {
+  return new AppError("Payment provider Order reference is missing", 409, {
+    errorCode: "PAYMENT_PROVIDER_ORDER_REFERENCE_MISSING",
+  });
+};
+
+const createPaymentProviderOrderMismatchError = () => {
+  return new AppError(
+    "Payment provider Order does not match the Payment transaction",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_ORDER_MISMATCH",
+    },
+  );
+};
+
+const createPaymentProviderPaymentConflictError = () => {
+  return new AppError(
+    "Another provider Payment is already attached to this Payment transaction",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_PAYMENT_CONFLICT",
+    },
+  );
+};
+
+const createPaymentSignatureInvalidError = () => {
+  return new AppError("Payment signature verification failed", 400, {
+    errorCode: "PAYMENT_SIGNATURE_INVALID",
+  });
+};
+
+const createPaymentConfirmationConflictError = () => {
+  return new AppError(
+    "Payment confirmation changed while it was being processed",
+    409,
+    {
+      errorCode: "PAYMENT_CONFIRMATION_CONFLICT",
     },
   );
 };
@@ -1193,4 +1260,206 @@ export const initiateCustomerOnlinePayment = async ({
 
     checkout: providerResult.providerSession.checkout,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Confirm Customer Razorpay Payment
+|--------------------------------------------------------------------------
+|
+| This step verifies Checkout authenticity only.
+|
+| It DOES NOT:
+|
+| - mark PaymentTransaction paid
+| - mark Order paid
+| - confirm Order
+| - commit inventory
+|--------------------------------------------------------------------------
+*/
+
+export const confirmCustomerRazorpayPayment = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+
+  razorpayOrderId,
+
+  razorpayPaymentId,
+
+  razorpaySignature,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Load Owned Payment
+    |--------------------------------------------------------------------------
+    */
+
+  const paymentTransaction =
+    await findCustomerPaymentTransactionForConfirmation(
+      paymentTransactionId,
+
+      orderId,
+
+      customerId,
+    );
+
+  if (!paymentTransaction) {
+    throw createPaymentTransactionNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Stored Provider Order Required
+    |--------------------------------------------------------------------------
+    */
+
+  const storedProviderOrderId = paymentTransaction.providerReference?.orderId;
+
+  if (!storedProviderOrderId) {
+    throw createPaymentProviderOrderMissingError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Never Trust Browser Order ID
+    |--------------------------------------------------------------------------
+    |
+    | The browser value may be used only as a consistency check.
+    |
+    | Signature generation below uses storedProviderOrderId from MongoDB.
+    |--------------------------------------------------------------------------
+    */
+
+  if (razorpayOrderId !== storedProviderOrderId) {
+    throw createPaymentProviderOrderMismatchError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Idempotent Retry
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    paymentTransaction.verifiedAt &&
+    paymentTransaction.providerReference?.paymentId
+  ) {
+    if (paymentTransaction.providerReference.paymentId !== razorpayPaymentId) {
+      throw createPaymentProviderPaymentConflictError();
+    }
+
+    return {
+      action: "reuse",
+
+      paymentTransaction,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Confirmation State
+    |--------------------------------------------------------------------------
+    */
+
+  if (paymentTransaction.status !== PAYMENT_TRANSACTION_STATUSES.PENDING) {
+    throw createPaymentConfirmationStateInvalidError(paymentTransaction.status);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Server-Side Signature Verification
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT:
+    |
+    | storedProviderOrderId
+    |
+    | NOT:
+    |
+    | razorpayOrderId supplied by the frontend.
+    |--------------------------------------------------------------------------
+    */
+
+  const verified = verifyPaymentProviderConfirmation({
+    provider: paymentTransaction.provider,
+
+    providerOrderId: storedProviderOrderId,
+
+    providerPaymentId: razorpayPaymentId,
+
+    signature: razorpaySignature,
+  });
+
+  if (!verified) {
+    throw createPaymentSignatureInvalidError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Persist Verified Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+  const verifiedAt = new Date();
+
+  const updatedPaymentTransaction =
+    await recordVerifiedPaymentProviderConfirmation(
+      paymentTransaction._id,
+
+      {
+        orderId,
+
+        customerId,
+
+        provider: paymentTransaction.provider,
+
+        providerOrderId: storedProviderOrderId,
+
+        providerPaymentId: razorpayPaymentId,
+
+        signature: razorpaySignature,
+
+        verifiedAt,
+      },
+    );
+
+  if (updatedPaymentTransaction) {
+    return {
+      action: "verify",
+
+      paymentTransaction: updatedPaymentTransaction,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Retry Resolution
+    |--------------------------------------------------------------------------
+    */
+
+  const currentPaymentTransaction =
+    await findCustomerPaymentTransactionForConfirmation(
+      paymentTransactionId,
+
+      orderId,
+
+      customerId,
+    );
+
+  if (
+    currentPaymentTransaction?.verifiedAt &&
+    currentPaymentTransaction?.providerReference?.paymentId ===
+      razorpayPaymentId
+  ) {
+    return {
+      action: "reuse",
+
+      paymentTransaction: currentPaymentTransaction,
+    };
+  }
+
+  throw createPaymentConfirmationConflictError();
 };

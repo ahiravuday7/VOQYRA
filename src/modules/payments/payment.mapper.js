@@ -97,6 +97,8 @@ export const mapCustomerPaymentTransaction = (paymentTransaction) => {
 
     initiatedAt: payment.initiatedAt ?? null,
 
+    verifiedAt: payment.verifiedAt ?? null,
+
     authorizedAt: payment.authorizedAt ?? null,
 
     paidAt: payment.paidAt ?? null,

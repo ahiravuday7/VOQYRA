@@ -5672,6 +5672,65 @@ Checkout configuration
           ↓
 Frontend ready ✅
 |--------------------------------------------------------------------------
+Part 188 — Razorpay Payment Confirmation + Signature Verification
+
+Now we handle what comes back from Razorpay Checkout.
+
+After Part 187:
+
+Customer
+   ↓
+POST /orders/:orderId/payments
+   ↓
+PaymentTransaction = pending
+   ↓
+Razorpay Checkout opens
+   ↓
+Customer completes payment
+   ↓
+Razorpay frontend returns:
+
+
+razorpay_order_id
+razorpay_payment_id
+razorpay_signature
+
+In Part 188, the frontend sends those three values back to our backend.
+
+Razorpay requires the signature to be verified server-side before you trust a successful Checkout response. The signature is generated using HMAC-SHA256 from the Order ID stored on your server plus razorpay_payment_id; Razorpay specifically warns not to trust the Checkout-returned Order ID as the source for signature generation.
+
+We will verify and persist the confirmation, but we will not mark the Order paid or commit inventory yet.
+
+POST /orders/:orderId/payments
+        ↓
+PaymentTransaction
+        ↓
+Razorpay Order
+        ↓
+status = pending
+        ↓
+Frontend Razorpay Checkout
+        ↓
+razorpay_payment_id
+razorpay_order_id
+razorpay_signature
+        ↓
+POST /payments/:paymentTransactionId/confirm
+        ↓
+stored Order ID comparison
+        ↓
+HMAC-SHA256 signature verification
+        ↓
+paymentId stored
+signature stored privately
+verifiedAt stored
+        ↓
+PaymentTransaction still pending ✅
+Order still pending ✅
+Inventory still reserved ✅
+
+
+is this order compulsory? createPaymentSession() buildCheckoutData() verifyPaymentConfirmation()
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

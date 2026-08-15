@@ -51,7 +51,64 @@ export const assertPaymentProviderAdapter = (adapter) => {
     );
   }
 
+  if (typeof adapter.verifyPaymentConfirmation !== "function") {
+    throw new TypeError(
+      "Payment provider adapter must implement verifyPaymentConfirmation",
+    );
+  }
+
   return adapter;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Provider Confirmation Input
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderConfirmationInput = (input) => {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Payment provider confirmation input is required");
+  }
+
+  if (
+    typeof input.providerOrderId !== "string" ||
+    input.providerOrderId.trim().length === 0
+  ) {
+    throw new TypeError("Payment provider Order ID is required");
+  }
+
+  if (
+    typeof input.providerPaymentId !== "string" ||
+    input.providerPaymentId.trim().length === 0
+  ) {
+    throw new TypeError("Payment provider Payment ID is required");
+  }
+
+  if (
+    typeof input.signature !== "string" ||
+    input.signature.trim().length === 0
+  ) {
+    throw new TypeError("Payment provider signature is required");
+  }
+
+  return input;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Provider Confirmation Result
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderConfirmationResult = (result) => {
+  if (typeof result !== "boolean") {
+    throw new TypeError(
+      "Payment provider confirmation verification must return a boolean",
+    );
+  }
+
+  return result;
 };
 
 /*

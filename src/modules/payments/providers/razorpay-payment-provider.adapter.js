@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import Razorpay from "razorpay";
 
 import env from "../../../config/environment.js";
@@ -97,6 +99,75 @@ const buildRazorpayCheckoutData = ({
 
 /*
 |--------------------------------------------------------------------------
+| Razorpay Signature
+|--------------------------------------------------------------------------
+*/
+
+const RAZORPAY_SIGNATURE_PATTERN = /^[a-fA-F0-9]{64}$/;
+
+/*
+|--------------------------------------------------------------------------
+| Verify Razorpay Payment Confirmation
+|--------------------------------------------------------------------------
+|
+| Razorpay:
+|
+| HMAC_SHA256(
+|   providerOrderId + "|" + providerPaymentId,
+|   RAZORPAY_KEY_SECRET
+| )
+|--------------------------------------------------------------------------
+*/
+
+const verifyRazorpayPaymentConfirmation = ({
+  providerOrderId,
+
+  providerPaymentId,
+
+  signature,
+}) => {
+  if (!RAZORPAY_SIGNATURE_PATTERN.test(signature)) {
+    return false;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Generate Expected Signature
+    |--------------------------------------------------------------------------
+    */
+
+  const generatedSignature = crypto
+    .createHmac(
+      "sha256",
+
+      env.RAZORPAY_KEY_SECRET,
+    )
+    .update(`${providerOrderId}|${providerPaymentId}`)
+    .digest("hex");
+
+  /*
+    |--------------------------------------------------------------------------
+    | Constant-Time Comparison
+    |--------------------------------------------------------------------------
+    */
+
+  const generatedBuffer = Buffer.from(generatedSignature, "hex");
+
+  const receivedBuffer = Buffer.from(signature, "hex");
+
+  if (generatedBuffer.length !== receivedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    generatedBuffer,
+
+    receivedBuffer,
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
 | Razorpay Payment Provider Adapter
 |--------------------------------------------------------------------------
 */
@@ -117,6 +188,22 @@ const razorpayPaymentProviderAdapter = Object.freeze({
       amount,
 
       currency,
+    });
+  },
+
+  verifyPaymentConfirmation({
+    providerOrderId,
+
+    providerPaymentId,
+
+    signature,
+  }) {
+    return verifyRazorpayPaymentConfirmation({
+      providerOrderId,
+
+      providerPaymentId,
+
+      signature,
     });
   },
 

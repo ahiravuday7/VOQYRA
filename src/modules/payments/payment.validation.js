@@ -27,6 +27,74 @@ const objectIdSchema = z
 
 /*
 |--------------------------------------------------------------------------
+| Payment Transaction ObjectId
+|--------------------------------------------------------------------------
+*/
+
+const paymentTransactionIdSchema = z
+  .string({
+    error: "Payment Transaction ID must be a string",
+  })
+  .trim()
+  .regex(OBJECT_ID_PATTERN, {
+    error: "Payment Transaction ID must be a valid ObjectId",
+  });
+
+/*
+|--------------------------------------------------------------------------
+| Razorpay Payment Confirmation Values
+|--------------------------------------------------------------------------
+*/
+
+const razorpayOrderIdSchema = z
+  .string({
+    error: "Razorpay Order ID is required",
+  })
+  .trim()
+  .min(1, {
+    error: "Razorpay Order ID is required",
+  })
+  .max(300, {
+    error: "Razorpay Order ID is too long",
+  });
+
+const razorpayPaymentIdSchema = z
+  .string({
+    error: "Razorpay Payment ID is required",
+  })
+  .trim()
+  .min(1, {
+    error: "Razorpay Payment ID is required",
+  })
+  .max(300, {
+    error: "Razorpay Payment ID is too long",
+  });
+
+const razorpaySignatureSchema = z
+  .string({
+    error: "Razorpay Payment signature is required",
+  })
+  .trim()
+  .regex(/^[a-fA-F0-9]{64}$/, {
+    error: "Razorpay Payment signature is invalid",
+  });
+
+/*
+|--------------------------------------------------------------------------
+| Customer Razorpay Payment Confirmation Body
+|--------------------------------------------------------------------------
+*/
+
+const confirmCustomerRazorpayPaymentBodySchema = z.strictObject({
+  razorpay_order_id: razorpayOrderIdSchema,
+
+  razorpay_payment_id: razorpayPaymentIdSchema,
+
+  razorpay_signature: razorpaySignatureSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
 | Empty Request Object
 |--------------------------------------------------------------------------
 */
@@ -77,6 +145,29 @@ export const createCustomerOnlinePaymentRequestSchema = z.strictObject({
 
   params: z.strictObject({
     orderId: objectIdSchema,
+  }),
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Razorpay Payment Confirmation Request
+|--------------------------------------------------------------------------
+|
+| POST
+|
+| /api/v1/orders/:orderId/payments/:paymentTransactionId/confirm
+|--------------------------------------------------------------------------
+*/
+
+export const confirmCustomerRazorpayPaymentRequestSchema = z.strictObject({
+  body: confirmCustomerRazorpayPaymentBodySchema,
+
+  params: z.strictObject({
+    orderId: objectIdSchema,
+
+    paymentTransactionId: paymentTransactionIdSchema,
   }),
 
   query: emptyObjectSchema,

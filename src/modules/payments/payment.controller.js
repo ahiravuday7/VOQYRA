@@ -1,6 +1,9 @@
 import { mapCustomerPaymentTransaction } from "./payment.mapper.js";
 
-import { initiateCustomerOnlinePayment } from "./payment.service.js";
+import {
+  initiateCustomerOnlinePayment,
+  confirmCustomerRazorpayPayment,
+} from "./payment.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -59,6 +62,72 @@ export const createCustomerOnlinePaymentController = async (
       payment: mapCustomerPaymentTransaction(result.paymentTransaction),
 
       checkout: result.checkout,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Confirm Customer Razorpay Payment
+|--------------------------------------------------------------------------
+|
+| POST
+|
+| /api/v1/orders/:orderId/payments/:paymentTransactionId/confirm
+|--------------------------------------------------------------------------
+*/
+
+export const confirmCustomerRazorpayPaymentController = async (
+  request,
+
+  response,
+) => {
+  const {
+    orderId,
+
+    paymentTransactionId,
+  } = request.validated.params;
+
+  const {
+    razorpay_order_id,
+
+    razorpay_payment_id,
+
+    razorpay_signature,
+  } = request.validated.body;
+
+  const customerId = request.user._id;
+
+  const result = await confirmCustomerRazorpayPayment({
+    orderId,
+
+    paymentTransactionId,
+
+    customerId,
+
+    razorpayOrderId: razorpay_order_id,
+
+    razorpayPaymentId: razorpay_payment_id,
+
+    razorpaySignature: razorpay_signature,
+  });
+
+  const message =
+    result.action === "verify"
+      ? "Payment confirmation verified successfully"
+      : "Payment confirmation already verified";
+
+  return response.status(200).json({
+    success: true,
+
+    message,
+
+    data: {
+      action: result.action,
+
+      verified: true,
+
+      payment: mapCustomerPaymentTransaction(result.paymentTransaction),
     },
   });
 };

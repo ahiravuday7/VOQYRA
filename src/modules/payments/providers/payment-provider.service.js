@@ -3,6 +3,8 @@ import {
   assertPaymentProviderSessionResult,
   assertPaymentProviderCheckoutInput,
   assertPaymentProviderCheckoutResult,
+  assertPaymentProviderConfirmationInput,
+  assertPaymentProviderConfirmationResult,
 } from "./payment-provider.contract.js";
 
 import { getPaymentProvider } from "./payment-provider.registry.js";
@@ -150,4 +152,38 @@ export const buildPaymentProviderCheckoutData = ({
   assertPaymentProviderCheckoutResult(checkout);
 
   return checkout;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Verify Payment Provider Confirmation
+|--------------------------------------------------------------------------
+*/
+
+export const verifyPaymentProviderConfirmation = ({
+  provider,
+
+  providerOrderId,
+
+  providerPaymentId,
+
+  signature,
+}) => {
+  const input = {
+    providerOrderId,
+
+    providerPaymentId,
+
+    signature,
+  };
+
+  assertPaymentProviderConfirmationInput(input);
+
+  const adapter = getPaymentProvider(provider);
+
+  const verified = adapter.verifyPaymentConfirmation(input);
+
+  assertPaymentProviderConfirmationResult(verified);
+
+  return verified;
 };

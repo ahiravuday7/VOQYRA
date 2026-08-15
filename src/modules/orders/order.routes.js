@@ -41,9 +41,15 @@ import {
   customerOrderReturnReplacementListRequestSchema,
 } from "./order-return-replacement.validation.js";
 
-import { createCustomerOnlinePaymentController } from "../payments/payment.controller.js";
+import {
+  createCustomerOnlinePaymentController,
+  confirmCustomerRazorpayPaymentController,
+} from "../payments/payment.controller.js";
 
-import { createCustomerOnlinePaymentRequestSchema } from "../payments/payment.validation.js";
+import {
+  createCustomerOnlinePaymentRequestSchema,
+  confirmCustomerRazorpayPaymentRequestSchema,
+} from "../payments/payment.validation.js";
 
 const router = Router();
 
@@ -183,6 +189,25 @@ router.post(
   validateRequest(createCustomerOnlinePaymentRequestSchema),
 
   createCustomerOnlinePaymentController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Customer Razorpay Payment Confirmation
+|--------------------------------------------------------------------------
+|
+| POST
+|
+| /api/v1/orders/:orderId/payments/:paymentTransactionId/confirm
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:orderId/payments/:paymentTransactionId/confirm",
+
+  validateRequest(confirmCustomerRazorpayPaymentRequestSchema),
+
+  confirmCustomerRazorpayPaymentController,
 );
 
 /*

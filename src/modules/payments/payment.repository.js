@@ -455,3 +455,126 @@ export const claimPaymentTransactionForProviderSession = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Customer Payment Transaction For Confirmation
+|--------------------------------------------------------------------------
+|
+| Ownership is enforced directly in the database query.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerPaymentTransactionForConfirmation = (
+  paymentTransactionId,
+
+  orderId,
+
+  customerId,
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    _id: paymentTransactionId,
+
+    order: orderId,
+
+    customer: customerId,
+  })
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Record Verified Provider Confirmation
+|--------------------------------------------------------------------------
+|
+| Important:
+|
+| status remains PENDING.
+|
+| We are only recording that Checkout confirmation passed server-side
+| signature verification.
+|--------------------------------------------------------------------------
+*/
+
+export const recordVerifiedPaymentProviderConfirmation = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    signature,
+
+    verifiedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      status: PAYMENT_TRANSACTION_STATUSES.PENDING,
+
+      "providerReference.orderId": providerOrderId,
+
+      verifiedAt: null,
+
+      $or: [
+        {
+          "providerReference.paymentId": null,
+        },
+
+        {
+          "providerReference.paymentId": {
+            $exists: false,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        "providerReference.paymentId": providerPaymentId,
+
+        "providerReference.signature": signature,
+
+        verifiedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
