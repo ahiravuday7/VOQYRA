@@ -23,6 +23,16 @@ import publicProductRoutes from "./modules/products/product.public.routes.js";
 import orderReturnAdminRoutes from "./modules/orders/order-return.admin.routes.js";
 import orderReturnReplacementAdminRoutes from "./modules/orders/order-return-replacement.admin.routes.js";
 
+import { initializePaymentProviders } from "./modules/payments/providers/payment-provider.bootstrap.js";
+
+/*
+|--------------------------------------------------------------------------
+| Payment Provider Initialization
+|--------------------------------------------------------------------------
+*/
+
+initializePaymentProviders();
+
 // This creates the Express application instance.
 const app = express();
 

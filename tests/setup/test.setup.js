@@ -37,6 +37,10 @@ process.env.JWT_ISSUER = "clothing-commerce-test-api";
 
 process.env.JWT_AUDIENCE = "clothing-commerce-test-client";
 
+process.env.RAZORPAY_KEY_ID = "rzp_test_clothing_commerce_test_key";
+
+process.env.RAZORPAY_KEY_SECRET = "clothing-commerce-test-razorpay-secret";
+
 process.env.AUTH_COOKIE_SAME_SITE = "lax";
 
 /*

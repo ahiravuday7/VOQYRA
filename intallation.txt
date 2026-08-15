@@ -5536,6 +5536,28 @@ Provider Adapter
       ↙       ↘
  Razorpay    Stripe
 |--------------------------------------------------------------------------
+Part 185 — Razorpay Provider Adapter + Configuration
+
+Before integrating the SDK, there is an important runtime change: Razorpay’s current Node.js SDK requires Node.js 22.2 or higher, and installation is npm i razorpay.
+
+Your backend already uses centralized Zod environment validation in src/config/environment.js, so we’ll extend that rather than introducing another configuration system.
+
+verify:
+
+node -v
+
+It should be:
+
+v22.2.0+
+
+Then install Razorpay:
+
+npm i razorpay
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

@@ -63,6 +63,13 @@ const environmentSchema = z.object({
 
   JWT_AUDIENCE: z.string().min(1, "JWT_AUDIENCE is required"),
 
+  RAZORPAY_KEY_ID: z.string().trim().min(1, "RAZORPAY_KEY_ID is required"),
+
+  RAZORPAY_KEY_SECRET: z
+    .string()
+    .trim()
+    .min(1, "RAZORPAY_KEY_SECRET is required"),
+
   AUTH_COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
 });
 
