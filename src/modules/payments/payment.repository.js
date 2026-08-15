@@ -16,6 +16,8 @@ import PaymentTransaction, {
 const ACTIVE_PAYMENT_TRANSACTION_STATUS_VALUES = Object.freeze([
   PAYMENT_TRANSACTION_STATUSES.CREATED,
 
+  PAYMENT_TRANSACTION_STATUSES.INITIALIZING,
+
   PAYMENT_TRANSACTION_STATUSES.PENDING,
 
   PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
@@ -253,7 +255,7 @@ export const attachPaymentProviderOrderToTransaction = (
 
       provider,
 
-      status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+      status: PAYMENT_TRANSACTION_STATUSES.INITIALIZING,
 
       $or: [
         {
@@ -325,7 +327,7 @@ export const markPaymentProviderSessionCreationFailed = (
     {
       _id: paymentTransactionId,
 
-      status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+      status: PAYMENT_TRANSACTION_STATUSES.INITIALIZING,
 
       $or: [
         {
@@ -357,6 +359,86 @@ export const markPaymentProviderSessionCreationFailed = (
 
           failedAt,
         },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Payment Transaction By ID
+|--------------------------------------------------------------------------
+*/
+
+export const findPaymentTransactionById = (
+  paymentTransactionId,
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findById(paymentTransactionId).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Claim Payment Transaction For Provider Initialization
+|--------------------------------------------------------------------------
+|
+| Atomic transition:
+|
+| created -> initializing
+|
+| Only one request can win this update.
+|--------------------------------------------------------------------------
+*/
+
+export const claimPaymentTransactionForProviderSession = (
+  paymentTransactionId,
+
+  { provider },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      provider,
+
+      status: PAYMENT_TRANSACTION_STATUSES.CREATED,
+
+      $or: [
+        {
+          "providerReference.orderId": null,
+        },
+
+        {
+          "providerReference.orderId": {
+            $exists: false,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.INITIALIZING,
       },
     },
 

@@ -1,6 +1,6 @@
 import { mapCustomerPaymentTransaction } from "./payment.mapper.js";
 
-import { createOrReuseCustomerOnlinePayment } from "./payment.service.js";
+import { initiateCustomerOnlinePayment } from "./payment.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -22,7 +22,7 @@ export const createCustomerOnlinePaymentController = async (
 
   const customerId = request.user._id;
 
-  const result = await createOrReuseCustomerOnlinePayment({
+  const result = await initiateCustomerOnlinePayment({
     orderId,
 
     customerId,
@@ -57,6 +57,8 @@ export const createCustomerOnlinePaymentController = async (
       action: result.action,
 
       payment: mapCustomerPaymentTransaction(result.paymentTransaction),
+
+      checkout: result.checkout,
     },
   });
 };

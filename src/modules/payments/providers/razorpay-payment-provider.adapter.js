@@ -71,12 +71,54 @@ const fromRazorpayAmount = (amount) => {
 
 /*
 |--------------------------------------------------------------------------
+| Build Razorpay Checkout Data
+|--------------------------------------------------------------------------
+*/
+
+const buildRazorpayCheckoutData = ({
+  providerOrderId,
+
+  amount,
+
+  currency,
+}) => {
+  const normalizedCurrency = currency.trim().toUpperCase();
+
+  return {
+    keyId: env.RAZORPAY_KEY_ID,
+
+    orderId: providerOrderId,
+
+    amount: toRazorpayAmount(amount),
+
+    currency: normalizedCurrency,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Razorpay Payment Provider Adapter
 |--------------------------------------------------------------------------
 */
 
 const razorpayPaymentProviderAdapter = Object.freeze({
   provider: PAYMENT_PROVIDERS.RAZORPAY,
+
+  buildCheckoutData({
+    providerOrderId,
+
+    amount,
+
+    currency,
+  }) {
+    return buildRazorpayCheckoutData({
+      providerOrderId,
+
+      amount,
+
+      currency,
+    });
+  },
 
   async createPaymentSession({
     paymentNumber,
@@ -150,15 +192,13 @@ const razorpayPaymentProviderAdapter = Object.freeze({
 
       status: razorpayOrder.status,
 
-      checkout: {
-        keyId: env.RAZORPAY_KEY_ID,
+      checkout: buildRazorpayCheckoutData({
+        providerOrderId: razorpayOrder.id,
 
-        orderId: razorpayOrder.id,
-
-        amount: razorpayOrder.amount,
+        amount,
 
         currency: razorpayOrder.currency,
-      },
+      }),
     };
   },
 });

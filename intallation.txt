@@ -5622,6 +5622,55 @@ status = pending
 
 Razorpay's Order amount is fixed server-side, and the resulting Order ID is what Checkout uses to bind the frontend payment to that server-created order.
 |--------------------------------------------------------------------------
+Part 187 — Wire Razorpay Session Into Payment Initiation API
+
+Now we make this endpoint actually prepare Razorpay Checkout:
+
+POST /api/v1/orders/:orderId/payments
+
+After Part 187:
+
+Customer clicks Pay
+      ↓
+Create/reuse local PaymentTransaction
+      ↓
+Atomically claim transaction for provider initialization
+      ↓
+Razorpay Order created
+      ↓
+providerReference.orderId saved
+      ↓
+PaymentTransaction = pending
+      ↓
+Return checkout configuration
+
+We will also make your integration tests use a fake Razorpay adapter, so npm test never calls Razorpay over the internet.
+
+One additional protection is important here: Razorpay requires the receipt used for an Order to be unique. Your paymentNumber is therefore a good provider receipt/idempotency reference. Razorpay can also retrieve Orders by receipt, which will be useful later for reconciliation.
+
+Customer Payment Endpoint
+          ↓
+Trusted Order validation
+          ↓
+PaymentTransaction
+          ↓
+created
+          ↓
+initializing
+          ↓
+Provider Registry
+          ↓
+Razorpay Adapter
+          ↓
+Razorpay Order
+          ↓
+providerReference.orderId
+          ↓
+pending
+          ↓
+Checkout configuration
+          ↓
+Frontend ready ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import {
   assertPaymentProviderSessionInput,
   assertPaymentProviderSessionResult,
+  assertPaymentProviderCheckoutInput,
+  assertPaymentProviderCheckoutResult,
 } from "./payment-provider.contract.js";
 
 import { getPaymentProvider } from "./payment-provider.registry.js";
@@ -108,4 +110,44 @@ export const createPaymentProviderSession = async ({
 
     checkout: result.checkout ?? {},
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Build Payment Provider Checkout Data
+|--------------------------------------------------------------------------
+|
+| No external Order is created here.
+|
+| This reconstructs safe frontend Checkout data from the persisted
+| providerReference.orderId.
+|--------------------------------------------------------------------------
+*/
+
+export const buildPaymentProviderCheckoutData = ({
+  provider,
+
+  providerOrderId,
+
+  amount,
+
+  currency,
+}) => {
+  const input = {
+    providerOrderId,
+
+    amount,
+
+    currency,
+  };
+
+  assertPaymentProviderCheckoutInput(input);
+
+  const adapter = getPaymentProvider(provider);
+
+  const checkout = adapter.buildCheckoutData(input);
+
+  assertPaymentProviderCheckoutResult(checkout);
+
+  return checkout;
 };

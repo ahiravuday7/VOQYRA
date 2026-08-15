@@ -28308,7 +28308,19 @@ describe("Customer online Payment initiation", () => {
 
     expect(responsePayment.currency).toBe(storedOrderBefore.totals.currency);
 
-    expect(responsePayment.status).toBe("created");
+    expect(responsePayment.status).toBe("pending");
+
+    expect(responsePayment.providerReference.orderId).toMatch(/^order_test_/);
+
+    expect(response.body.data.checkout).toEqual({
+      keyId: "rzp_test_integration_key",
+
+      orderId: responsePayment.providerReference.orderId,
+
+      amount: storedOrderBefore.totals.grandTotal * 100,
+
+      currency: storedOrderBefore.totals.currency,
+    });
 
     expect(responsePayment.attemptNumber).toBe(1);
 
@@ -28828,7 +28840,7 @@ describe("Customer online Payment initiation", () => {
 
     expect(payments.map((payment) => payment.status)).toEqual([
       "failed",
-      "created",
+      "pending",
     ]);
   });
 
@@ -28923,6 +28935,14 @@ describe("Customer online Payment initiation", () => {
 
     expect(payments[0].attemptNumber).toBe(1);
 
-    expect(payments[0].status).toBe("created");
+    expect(payments[0].status).toBe("pending");
+
+    expect(firstResponse.body.data.payment.providerReference.orderId).toBe(
+      secondResponse.body.data.payment.providerReference.orderId,
+    );
+
+    expect(firstResponse.body.data.checkout.orderId).toBe(
+      secondResponse.body.data.checkout.orderId,
+    );
   });
 });

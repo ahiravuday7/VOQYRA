@@ -14,6 +14,8 @@ import mongoose from "mongoose";
 export const PAYMENT_TRANSACTION_STATUSES = Object.freeze({
   CREATED: "created",
 
+  INITIALIZING: "initializing",
+
   PENDING: "pending",
 
   AUTHORIZED: "authorized",

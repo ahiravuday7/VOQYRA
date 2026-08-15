@@ -45,6 +45,12 @@ export const assertPaymentProviderAdapter = (adapter) => {
     );
   }
 
+  if (typeof adapter.buildCheckoutData !== "function") {
+    throw new TypeError(
+      "Payment provider adapter must implement buildCheckoutData",
+    );
+  }
+
   return adapter;
 };
 
@@ -119,4 +125,44 @@ export const assertPaymentProviderSessionResult = (result) => {
   }
 
   return result;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Checkout Input
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderCheckoutInput = (input) => {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Payment provider checkout input is required");
+  }
+
+  if (!isNonEmptyString(input.providerOrderId)) {
+    throw new TypeError("Payment provider Order ID is required");
+  }
+
+  if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+    throw new TypeError("Payment checkout amount is invalid");
+  }
+
+  if (!isNonEmptyString(input.currency)) {
+    throw new TypeError("Payment checkout currency is invalid");
+  }
+
+  return input;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Checkout Result
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderCheckoutResult = (checkout) => {
+  if (!checkout || typeof checkout !== "object" || Array.isArray(checkout)) {
+    throw new TypeError("Payment provider checkout data must be an object");
+  }
+
+  return checkout;
 };

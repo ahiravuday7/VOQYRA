@@ -2,6 +2,15 @@ import mongoose from "mongoose";
 
 import { afterAll, beforeAll, beforeEach, inject } from "vitest";
 
+import {
+  hasPaymentProvider,
+  registerPaymentProvider,
+} from "../../src/modules/payments/providers/payment-provider.registry.js";
+
+import { PAYMENT_PROVIDERS } from "../../src/modules/payments/payment.model.js";
+
+import { testRazorpayPaymentProviderAdapter } from "../helpers/payment-provider-test.helper.js";
+
 /*
 |--------------------------------------------------------------------------
 | Test Environment Variables
@@ -42,6 +51,19 @@ process.env.RAZORPAY_KEY_ID = "rzp_test_clothing_commerce_test_key";
 process.env.RAZORPAY_KEY_SECRET = "clothing-commerce-test-razorpay-secret";
 
 process.env.AUTH_COOKIE_SAME_SITE = "lax";
+
+/*
+|--------------------------------------------------------------------------
+| Test Payment Provider
+|--------------------------------------------------------------------------
+|
+| Register before src/app.js initializes the production providers.
+|--------------------------------------------------------------------------
+*/
+
+if (!hasPaymentProvider(PAYMENT_PROVIDERS.RAZORPAY)) {
+  registerPaymentProvider(testRazorpayPaymentProviderAdapter);
+}
 
 /*
 |--------------------------------------------------------------------------
