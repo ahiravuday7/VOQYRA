@@ -1,5 +1,3 @@
-import PaymentWebhookEvent from "./payment-webhook-event.model.js";
-
 import PaymentWebhookEvent, {
   PAYMENT_WEBHOOK_PROCESSING_STATUSES,
 } from "./payment-webhook-event.model.js";

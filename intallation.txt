@@ -6152,6 +6152,11 @@ inventory committed
 
 That second path is why webhook processing is essential. Razorpay specifically recommends building for duplicate and out-of-order delivery, and its docs note that a payment may advance from authorized to captured rapidly; fetching current provider truth protects your application from stale webhook snapshots.
 |--------------------------------------------------------------------------
+Part 195 — Automatic Razorpay Webhook Worker Runner ⚙️
+
+Now that Part 194 can process one webhook inbox event, Part 195 makes it run automatically with the backend.
+
+Your current server lifecycle already connects MongoDB before app.listen(), so we’ll start the worker only after MongoDB and HTTP startup succeed. We’ll also add graceful shutdown because there isn’t one in the current server lifecycle yet.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
