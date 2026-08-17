@@ -28,7 +28,15 @@ import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund
 
 import PaymentTransaction from "../../src/modules/payments/payment.model.js";
 
-import { createTestRazorpaySignature } from "../helpers/payment-provider-test.helper.js";
+import {
+  createTestRazorpaySignature,
+  setTestRazorpayPaymentDetails,
+} from "../helpers/payment-provider-test.helper.js";
+
+import {
+  synchronizeCustomerPaymentProviderState,
+  finalizeCapturedCustomerOnlineOrder,
+} from "../../src/modules/payments/payment.service.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
@@ -354,6 +362,106 @@ const createRazorpayPaymentConfirmationFixture = async ({
       razorpay_payment_id: providerPaymentId,
       razorpay_signature: signature,
     },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Captured Online Payment Fixture
+|--------------------------------------------------------------------------
+|
+| Runs:
+|
+| Order creation
+|   ↓
+| Razorpay session
+|   ↓
+| signature verification
+|   ↓
+| trusted provider captured response
+|   ↓
+| PaymentTransaction = paid
+|--------------------------------------------------------------------------
+*/
+
+const createCapturedOnlinePaymentFixture = async ({
+  customerAgent,
+
+  customerId,
+
+  product,
+
+  variant = product.variants[0],
+
+  quantity = 2,
+}) => {
+  const fixture = await createRazorpayPaymentConfirmationFixture({
+    customerAgent,
+
+    product,
+
+    variant,
+
+    quantity,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Part 188
+    |--------------------------------------------------------------------------
+    */
+
+  await customerAgent
+    .post(fixture.confirmationUrl)
+    .send(fixture.confirmationBody)
+    .expect(200);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Part 189 Provider Truth
+    |--------------------------------------------------------------------------
+    */
+
+  setTestRazorpayPaymentDetails({
+    providerPaymentId: fixture.providerPaymentId,
+
+    providerOrderId: fixture.providerOrderId,
+
+    amount: fixture.payment.amount,
+
+    currency: fixture.payment.currency,
+
+    status: "captured",
+
+    captured: true,
+
+    method: "upi",
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Part 190
+    |--------------------------------------------------------------------------
+    */
+
+  const synchronization = await synchronizeCustomerPaymentProviderState({
+    orderId: fixture.order.id,
+
+    paymentTransactionId: fixture.payment.id,
+
+    customerId,
+  });
+
+  expect(synchronization.paymentTransaction.status).toBe("paid");
+
+  return {
+    ...fixture,
+
+    synchronization,
+
+    quantity,
+
+    variant,
   };
 };
 
@@ -29876,5 +29984,514 @@ describe("Customer Razorpay Payment confirmation", () => {
         order: fixture.order.id,
       }),
     ).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 191 — Captured Online Order Finalization
+|--------------------------------------------------------------------------
+*/
+
+describe("Captured online Order finalization", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Successful Finalization
+    |--------------------------------------------------------------------------
+    */
+
+  it("atomically marks the Order paid, commits reserved inventory, and confirms the Order", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Before Finalization
+        |--------------------------------------------------------------------------
+        */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Part 191
+        |--------------------------------------------------------------------------
+        */
+
+    const result = await finalizeCapturedCustomerOnlineOrder({
+      orderId: fixture.order.id,
+
+      paymentTransactionId: fixture.payment.id,
+
+      customerId: customer._id,
+    });
+
+    expect(result.action).toBe("finalize");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order State
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.inventoryStatus).toBe("committed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Payment
+        |--------------------------------------------------------------------------
+        */
+
+    expect(storedOrder.payment.method).toBe("online");
+
+    expect(storedOrder.payment.status).toBe("paid");
+
+    expect(storedOrder.payment.provider).toBe("razorpay");
+
+    expect(storedOrder.payment.transactionId).toBe(fixture.providerPaymentId);
+
+    expect(storedOrder.payment.paidAt).toBeInstanceOf(Date);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Item Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    expect(storedOrder.items[0].inventory.status).toBe("committed");
+
+    expect(storedOrder.items[0].inventory.reservedQuantity).toBe(0);
+
+    expect(storedOrder.items[0].inventory.committedQuantity).toBe(2);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Physical Product Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(
+      variantBefore.inventory.stock - 2,
+    );
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - 2,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | PaymentTransaction Remains Paid
+        |--------------------------------------------------------------------------
+        */
+
+    const payment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(payment.status).toBe("paid");
+
+    expect(payment.paidAt).toBeInstanceOf(Date);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. Authorized Is Not Enough
+    |--------------------------------------------------------------------------
+    */
+
+  it("refuses to finalize an authorized but not captured Payment", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "authorized",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    await synchronizeCustomerPaymentProviderState({
+      orderId: fixture.order.id,
+
+      paymentTransactionId: fixture.payment.id,
+
+      customerId: customer._id,
+    });
+
+    await expect(
+      finalizeCapturedCustomerOnlineOrder({
+        orderId: fixture.order.id,
+
+        paymentTransactionId: fixture.payment.id,
+
+        customerId: customer._id,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+
+      errorCode: "PAYMENT_ORDER_FINALIZATION_REQUIRES_PAID",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Must Remain Reserved + Pending
+        |--------------------------------------------------------------------------
+        */
+
+    const order = await Order.findById(fixture.order.id).lean();
+
+    expect(order.status).toBe("pending");
+
+    expect(order.payment.status).toBe("pending");
+
+    expect(order.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Idempotent Retry
+    |--------------------------------------------------------------------------
+    */
+
+  it("reuses an already finalized online Order without committing inventory twice", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Finalization
+        |--------------------------------------------------------------------------
+        */
+
+    const first = await finalizeCapturedCustomerOnlineOrder({
+      orderId: fixture.order.id,
+
+      paymentTransactionId: fixture.payment.id,
+
+      customerId: customer._id,
+    });
+
+    expect(first.action).toBe("finalize");
+
+    const productAfterFirst = await Product.findById(product._id).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Retry
+        |--------------------------------------------------------------------------
+        */
+
+    const second = await finalizeCapturedCustomerOnlineOrder({
+      orderId: fixture.order.id,
+
+      paymentTransactionId: fixture.payment.id,
+
+      customerId: customer._id,
+    });
+
+    expect(second.action).toBe("reuse");
+
+    const productAfterSecond = await Product.findById(product._id).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Second Inventory Commit
+        |--------------------------------------------------------------------------
+        */
+
+    const firstVariant = findProductVariant(
+      productAfterFirst,
+
+      fixture.variant._id,
+    );
+
+    const secondVariant = findProductVariant(
+      productAfterSecond,
+
+      fixture.variant._id,
+    );
+
+    expect(secondVariant.inventory.stock).toBe(firstVariant.inventory.stock);
+
+    expect(secondVariant.inventory.reservedStock).toBe(
+      firstVariant.inventory.reservedStock,
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 4. Trusted Amount Protection
+    |--------------------------------------------------------------------------
+    */
+
+  it("rejects finalization when the local paid Payment amount no longer matches the trusted Order total", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Simulate Corrupted Local Payment Data
+        |--------------------------------------------------------------------------
+        |
+        | collection.updateOne intentionally bypasses Mongoose business logic.
+        |--------------------------------------------------------------------------
+        */
+
+    await PaymentTransaction.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(fixture.payment.id),
+      },
+
+      {
+        $set: {
+          amount: 1,
+        },
+      },
+    );
+
+    await expect(
+      finalizeCapturedCustomerOnlineOrder({
+        orderId: fixture.order.id,
+
+        paymentTransactionId: fixture.payment.id,
+
+        customerId: customer._id,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+
+      errorCode: "ORDER_ONLINE_PAYMENT_AMOUNT_MISMATCH",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Must Still Be Pending
+        |--------------------------------------------------------------------------
+        */
+
+    const order = await Order.findById(fixture.order.id).lean();
+
+    expect(order.status).toBe("pending");
+
+    expect(order.payment.status).toBe("pending");
+
+    expect(order.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 5. Inventory Failure Rolls Back Order Payment
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back Order payment and confirmation when reserved Product inventory cannot be committed", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Simulate Reservation Corruption
+        |--------------------------------------------------------------------------
+        */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": variant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Finalization Fails
+        |--------------------------------------------------------------------------
+        */
+
+    await expect(
+      finalizeCapturedCustomerOnlineOrder({
+        orderId: fixture.order.id,
+
+        paymentTransactionId: fixture.payment.id,
+
+        customerId: customer._id,
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+
+      errorCode: "ORDER_INVENTORY_COMMIT_STATE_INVALID",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Mongo Transaction Must Roll Order Back
+        |--------------------------------------------------------------------------
+        */
+
+    const orderAfter = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfter.status).toBe("pending");
+
+    expect(orderAfter.payment.status).toBe("pending");
+
+    expect(orderAfter.payment.paidAt).toBeNull();
+
+    expect(orderAfter.inventoryStatus).toBe("reserved");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Provider Payment Truth Remains Paid
+        |--------------------------------------------------------------------------
+        |
+        | This is intentional.
+        |
+        | The customer really paid.
+        | We must retry/recover Order fulfillment later rather than pretend
+        | that payment never happened.
+        |--------------------------------------------------------------------------
+        */
+
+    const paymentAfter = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfter.status).toBe("paid");
   });
 });

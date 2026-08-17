@@ -79,6 +79,8 @@ import {
   getOrderReturnRefundTotals,
 } from "./order-return-refund-audit.repository.js";
 
+import { PAYMENT_TRANSACTION_STATUSES } from "../payments/payment.model.js";
+
 /*
 |--------------------------------------------------------------------------
 | Order Number Configuration
@@ -1534,6 +1536,58 @@ const createOrderRefundTotalInvalidError = (grandTotal, currency) => {
         grandTotal,
         currency,
       },
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Online Payment Order Finalization Errors
+|--------------------------------------------------------------------------
+*/
+
+const createOnlinePaymentFinalizationStateInvalidError = ({
+  order,
+
+  paymentTransaction,
+}) => {
+  return new AppError(
+    "The online Order cannot be finalized from its current state",
+    409,
+    {
+      errorCode: "ORDER_ONLINE_PAYMENT_FINALIZATION_STATE_INVALID",
+
+      details: {
+        orderStatus: order?.status ?? null,
+
+        orderPaymentMethod: order?.payment?.method ?? null,
+
+        orderPaymentStatus: order?.payment?.status ?? null,
+
+        inventoryStatus: order?.inventoryStatus ?? null,
+
+        paymentTransactionStatus: paymentTransaction?.status ?? null,
+      },
+    },
+  );
+};
+
+const createOnlinePaymentFinalizationAmountMismatchError = () => {
+  return new AppError(
+    "Payment transaction amount does not match the trusted Order total",
+    409,
+    {
+      errorCode: "ORDER_ONLINE_PAYMENT_AMOUNT_MISMATCH",
+    },
+  );
+};
+
+const createOnlinePaymentFinalizationCurrencyMismatchError = () => {
+  return new AppError(
+    "Payment transaction currency does not match the trusted Order currency",
+    409,
+    {
+      errorCode: "ORDER_ONLINE_PAYMENT_CURRENCY_MISMATCH",
     },
   );
 };
@@ -6433,6 +6487,326 @@ export const commitOrderItemsInventoryInTransaction = async (
       session,
     });
   }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Finalize Paid Online Order In Transaction
+|--------------------------------------------------------------------------
+|
+| Part 191 finalization boundary:
+|
+| PaymentTransaction = paid
+|             ↓
+| Order.payment = paid
+|             ↓
+| Reserved Product inventory committed
+|             ↓
+| Order inventory committed
+|             ↓
+| Order pending → confirmed
+|
+| IMPORTANT:
+|
+| The caller owns the MongoDB transaction.
+|
+| If any Product inventory commit fails, the Order payment/status changes
+| are rolled back with the transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const finalizePaidOnlineOrderInTransaction = async (
+  order,
+
+  {
+    paymentTransaction,
+
+    actorUserId,
+
+    session,
+
+    finalizedAt = new Date(),
+  },
+) => {
+  requireActiveOrderTransaction(session);
+
+  if (!order?._id) {
+    throw new Error("Online payment finalization requires an Order");
+  }
+
+  if (!paymentTransaction?._id) {
+    throw new Error(
+      "Online payment finalization requires a Payment transaction",
+    );
+  }
+
+  if (!actorUserId) {
+    throw new Error("Online payment finalization requires an actor user ID");
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | PaymentTransaction Must Represent A Trusted Paid Payment
+    |--------------------------------------------------------------------------
+    */
+
+  const providerOrderId = paymentTransaction.providerReference?.orderId;
+
+  const providerPaymentId = paymentTransaction.providerReference?.paymentId;
+
+  const paymentTransactionIsValid =
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+    paymentTransaction.verifiedAt &&
+    paymentTransaction.paidAt &&
+    paymentTransaction.provider &&
+    providerOrderId &&
+    providerPaymentId;
+
+  if (!paymentTransactionIsValid) {
+    throw createOnlinePaymentFinalizationStateInvalidError({
+      order,
+
+      paymentTransaction,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Payment Must Belong To This Order And Customer
+    |--------------------------------------------------------------------------
+    */
+
+  const belongsToOrder = String(paymentTransaction.order) === String(order._id);
+
+  const belongsToCustomer =
+    String(paymentTransaction.customer) === String(order.customer);
+
+  if (!belongsToOrder || !belongsToCustomer) {
+    throw createOnlinePaymentFinalizationStateInvalidError({
+      order,
+
+      paymentTransaction,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Trusted Amount
+    |--------------------------------------------------------------------------
+    */
+
+  const trustedOrderAmount = Number(order.totals?.grandTotal);
+
+  if (
+    !Number.isSafeInteger(trustedOrderAmount) ||
+    paymentTransaction.amount !== trustedOrderAmount
+  ) {
+    throw createOnlinePaymentFinalizationAmountMismatchError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Trusted Currency
+    |--------------------------------------------------------------------------
+    */
+
+  const trustedOrderCurrency = order.totals?.currency?.trim().toUpperCase();
+
+  const paymentCurrency = paymentTransaction.currency?.trim().toUpperCase();
+
+  if (
+    !trustedOrderCurrency ||
+    !paymentCurrency ||
+    trustedOrderCurrency !== paymentCurrency
+  ) {
+    throw createOnlinePaymentFinalizationCurrencyMismatchError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Idempotent Retry
+    |--------------------------------------------------------------------------
+    |
+    | A previous request may already have completed the finalization.
+    |
+    | Never commit inventory twice.
+    |--------------------------------------------------------------------------
+    */
+
+  const alreadyFinalized =
+    order.status === ORDER_STATUSES.CONFIRMED &&
+    order.inventoryStatus === ORDER_INVENTORY_STATUSES.COMMITTED &&
+    order.payment?.method === ORDER_PAYMENT_METHODS.ONLINE &&
+    order.payment?.status === ORDER_PAYMENT_STATUSES.PAID &&
+    order.payment?.provider === paymentTransaction.provider &&
+    order.payment?.transactionId === providerPaymentId;
+
+  if (alreadyFinalized) {
+    /*
+     * Also verifies that every Order item
+     * is actually fully committed.
+     */
+    assertOrderCanBeginProcessing(order);
+
+    return {
+      action: "reuse",
+
+      order,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Fresh Finalization Must Start From Exact State
+    |--------------------------------------------------------------------------
+    */
+
+  const canFinalize =
+    order.status === ORDER_STATUSES.PENDING &&
+    order.payment?.method === ORDER_PAYMENT_METHODS.ONLINE &&
+    order.payment?.status === ORDER_PAYMENT_STATUSES.PENDING &&
+    order.inventoryStatus === ORDER_INVENTORY_STATUSES.RESERVED;
+
+  if (!canFinalize) {
+    throw createOnlinePaymentFinalizationStateInvalidError({
+      order,
+
+      paymentTransaction,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Verify Every Order Item Is Fully Reserved
+    |--------------------------------------------------------------------------
+    */
+
+  assertOrderItemsAreFullyReserved(order);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Mark Order Payment Paid — IN MEMORY ONLY
+    |--------------------------------------------------------------------------
+    |
+    | This must happen before commitOrderItemsInventoryInTransaction().
+    |
+    | That existing function deliberately refuses to confirm an online Order
+    | unless Order.payment.status is already PAID.
+    |
+    | Because the Order has not been saved yet, a transaction failure will
+    | not leave a partially-paid Order behind.
+    |--------------------------------------------------------------------------
+    */
+
+  const currentPayment = normalizeOrderSubdocument(order.payment) ?? {};
+
+  order.set({
+    payment: {
+      ...currentPayment,
+
+      method: ORDER_PAYMENT_METHODS.ONLINE,
+
+      status: ORDER_PAYMENT_STATUSES.PAID,
+
+      provider: paymentTransaction.provider,
+
+      /*
+       * transactionId represents the external
+       * payment transaction reference.
+       *
+       * Razorpay example:
+       *
+       * pay_QWER123...
+       */
+      transactionId: providerPaymentId,
+
+      paidAt: paymentTransaction.paidAt,
+
+      failedAt: null,
+    },
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Commit Product Inventory
+    |--------------------------------------------------------------------------
+    |
+    | For every Order item:
+    |
+    | stock         -= quantity
+    | reservedStock -= quantity
+    |
+    | Inventory ledger entries are also written.
+    |--------------------------------------------------------------------------
+    */
+
+  await commitOrderItemsInventoryInTransaction(
+    order,
+
+    {
+      actorUserId,
+
+      session,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Build Confirmed Order State
+    |--------------------------------------------------------------------------
+    */
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  order.set({
+    items: buildCommittedOrderItems(order.items),
+
+    status: ORDER_STATUSES.CONFIRMED,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.CONFIRMED,
+
+        note: "Order confirmed after captured online payment",
+
+        changedBy: actorUserId,
+
+        changedAt: finalizedAt,
+      },
+    ],
+
+    updatedBy: actorUserId,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Persist Order
+    |--------------------------------------------------------------------------
+    |
+    | Payment + Order status + Order item inventory state are saved in the
+    | same MongoDB transaction as Product inventory commits.
+    |--------------------------------------------------------------------------
+    */
+
+  const savedOrder = await saveOrderDocument(
+    order,
+
+    {
+      session,
+    },
+  );
+
+  return {
+    action: "finalize",
+
+    order: savedOrder,
+  };
 };
 
 /*

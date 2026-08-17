@@ -427,6 +427,36 @@ export const findCustomerOrderById = (
 
 /*
 |--------------------------------------------------------------------------
+| Find Customer Order For Online Payment Finalization
+|--------------------------------------------------------------------------
+|
+| Returns a Mongoose document because the Order will be modified and saved
+| inside the same MongoDB transaction that commits reserved inventory.
+|--------------------------------------------------------------------------
+*/
+
+export const findCustomerOrderForOnlinePaymentFinalization = (
+  orderId,
+
+  customerId,
+
+  { session = null } = {},
+) => {
+  const query = Order.findOne({
+    _id: orderId,
+
+    customer: customerId,
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Customer Order for Cancellation
 |--------------------------------------------------------------------------
 |

@@ -5797,7 +5797,7 @@ status
 captured
 payment method
         ↓
-NO Order paid yet
+NO Order paid yet 
 NO inventory commit yet
 
 This distinction matters because an authorized Razorpay payment is not the same as a captured payment. Razorpay exposes capture separately, and its API uses the captured state/flag to tell us when payment capture has actually happened.
@@ -5886,6 +5886,62 @@ Inventory = reserved
 
 That temporary separation is intentional. It gives us a safe recovery boundary: your existing findSuccessfulPaymentTransactionForOrder() already prevents creating another payment if the provider payment succeeded but the Order has not yet been finalized.
 |--------------------------------------------------------------------------
+Part 191 — Atomically Finalize Captured Online Order ✅
+
+Now we connect:
+
+PaymentTransaction = paid
+        ↓
+Order.payment = paid
+        ↓
+Reserved inventory → committed
+        ↓
+Order = confirmed
+
+Razorpay treats a successfully captured payment as paid; its corresponding Razorpay Order becomes paid after capture. That is the right boundary for fulfillment.
+
+Part 191 still does not change the controller/route. We first make finalization itself safe and testable.
+Part 192 will connect:
+
+confirm
+   ↓
+signature verification
+   ↓
+provider lookup
+   ↓
+state sync
+   ↓
+order finalization
+
+into one API workflow.
+
+After Part 191
+
+The safe architecture is now:
+
+Part 188
+Signature verified
+        ↓
+Part 189
+Fetch Razorpay payment directly
+        ↓
+Part 190
+captured → PaymentTransaction paid
+        ↓
+Part 191
+MongoDB transaction
+        ↓
+Order.payment = paid
+        +
+Product stock committed
+        +
+reservedStock released
+        +
+Inventory ledger
+        +
+Order = confirmed
+
+This matches Razorpay's lifecycle: an authorized payment is not enough for fulfillment; capture is the success boundary, and captured payments correspond to the Razorpay Order reaching
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

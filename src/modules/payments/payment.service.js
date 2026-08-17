@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import mongoose from "mongoose";
 import {
   ORDER_INVENTORY_STATUSES,
   ORDER_PAYMENT_METHODS,
@@ -8,7 +9,12 @@ import {
 
 import AppError from "../../shared/errors/app-error.js";
 
-import { findCustomerOrderById } from "../orders/order.repository.js";
+import {
+  findCustomerOrderById,
+  findCustomerOrderForOnlinePaymentFinalization,
+} from "../orders/order.repository.js";
+
+import { finalizePaidOnlineOrderInTransaction } from "../orders/order.service.js";
 
 import {
   findActivePaymentTransactionForOrder,
@@ -390,6 +396,26 @@ const createPaymentProviderSynchronizationConflictError = () => {
     409,
     {
       errorCode: "PAYMENT_PROVIDER_SYNCHRONIZATION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Captured Payment Order Finalization Error
+|--------------------------------------------------------------------------
+*/
+
+const createPaymentOrderFinalizationRequiresPaidError = (status) => {
+  return new AppError(
+    "Order finalization requires a fully paid Payment transaction",
+    409,
+    {
+      errorCode: "PAYMENT_ORDER_FINALIZATION_REQUIRES_PAID",
+
+      details: {
+        paymentStatus: status ?? null,
+      },
     },
   );
 };
@@ -1933,4 +1959,140 @@ export const synchronizeCustomerPaymentProviderState = async ({
   }
 
   throw createPaymentProviderSynchronizationConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Finalize Captured Customer Online Order
+|--------------------------------------------------------------------------
+|
+| Part 191 starts only after Part 190 has synchronized:
+|
+| PaymentTransaction.status = paid
+|
+| This function atomically applies that trusted payment to the Order.
+|--------------------------------------------------------------------------
+*/
+
+export const finalizeCapturedCustomerOnlineOrder = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+}) => {
+  if (!customerId) {
+    throw new Error("Customer ID is required to finalize an online Order");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let finalizationResult;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Reload PaymentTransaction Inside Transaction
+          |--------------------------------------------------------------------------
+          */
+
+        const paymentTransaction =
+          await findCustomerPaymentTransactionForConfirmation(
+            paymentTransactionId,
+
+            orderId,
+
+            customerId,
+
+            {
+              session,
+            },
+          );
+
+        if (!paymentTransaction) {
+          throw createPaymentTransactionNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Part 190 Must Have Reached Paid
+          |--------------------------------------------------------------------------
+          */
+
+        if (
+          paymentTransaction.status !== PAYMENT_TRANSACTION_STATUSES.PAID ||
+          !paymentTransaction.verifiedAt ||
+          !paymentTransaction.paidAt
+        ) {
+          throw createPaymentOrderFinalizationRequiresPaidError(
+            paymentTransaction.status,
+          );
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Load Customer Order As Mongoose Document
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findCustomerOrderForOnlinePaymentFinalization(
+          orderId,
+
+          customerId,
+
+          {
+            session,
+          },
+        );
+
+        if (!order) {
+          throw createOnlinePaymentOrderNotFoundError();
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Atomic Order + Inventory Finalization
+          |--------------------------------------------------------------------------
+          */
+
+        const orderFinalization = await finalizePaidOnlineOrderInTransaction(
+          order,
+
+          {
+            paymentTransaction,
+
+            actorUserId: customerId,
+
+            session,
+          },
+        );
+
+        finalizationResult = {
+          action: orderFinalization.action,
+
+          paymentTransaction,
+
+          order: orderFinalization.order,
+        };
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return finalizationResult;
+  } finally {
+    await session.endSession();
+  }
 };
