@@ -347,6 +347,40 @@ const createRazorpayPaymentConfirmationFixture = async ({
     providerPaymentId,
   });
 
+  /*
+|--------------------------------------------------------------------------
+| Default Provider State
+|--------------------------------------------------------------------------
+|
+| Existing Part 188 tests should continue to represent:
+|
+| signature verified
+| Payment still pending
+| Order still reserved
+|
+| Individual Part 192 tests can override this with:
+|
+| authorized
+| captured
+|--------------------------------------------------------------------------
+*/
+
+  setTestRazorpayPaymentDetails({
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount: payment.amount,
+
+    currency: payment.currency,
+
+    status: "created",
+
+    captured: false,
+
+    method: "upi",
+  });
+
   return {
     order,
     payment,
@@ -30493,5 +30527,476 @@ describe("Captured online Order finalization", () => {
     ).lean();
 
     expect(paymentAfter.status).toBe("paid");
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 192 — Customer Razorpay Payment Confirmation Workflow
+|--------------------------------------------------------------------------
+*/
+
+describe("Customer Razorpay Payment confirmation workflow", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Captured Payment
+    |--------------------------------------------------------------------------
+    */
+
+  it("completes the full Payment and Order workflow when Razorpay reports captured", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Override Default Provider State
+        |--------------------------------------------------------------------------
+        */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Before Confirmation
+        |--------------------------------------------------------------------------
+        */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Complete /confirm Workflow
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Part 188
+        |--------------------------------------------------------------------------
+        */
+
+    expect(response.body.data.action).toBe("verify");
+
+    expect(response.body.data.verified).toBe(true);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Parts 189 + 190
+        |--------------------------------------------------------------------------
+        */
+
+    expect(response.body.data.providerState.action).toBe("pay");
+
+    expect(response.body.data.providerState.status).toBe("captured");
+
+    expect(response.body.data.providerState.captured).toBe(true);
+
+    expect(response.body.data.payment.status).toBe("paid");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Part 191
+        |--------------------------------------------------------------------------
+        */
+
+    expect(response.body.data.orderFinalization.action).toBe("finalize");
+
+    expect(response.body.data.orderFinalization.finalized).toBe(true);
+
+    expect(response.body.data.order.status).toBe("confirmed");
+
+    expect(response.body.data.order.payment.status).toBe("paid");
+
+    expect(response.body.data.order.inventoryStatus).toBe("committed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Database Payment
+        |--------------------------------------------------------------------------
+        */
+
+    const storedPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(storedPayment.status).toBe("paid");
+
+    expect(storedPayment.paidAt).toBeInstanceOf(Date);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Database Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.payment.status).toBe("paid");
+
+    expect(storedOrder.inventoryStatus).toBe("committed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Physical Inventory
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(
+      variantBefore.inventory.stock - 2,
+    );
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - 2,
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. Authorized But Not Captured
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps the Order pending and inventory reserved when Razorpay reports authorized", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+    });
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "authorized",
+
+      captured: false,
+
+      method: "card",
+    });
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Confirm
+        |--------------------------------------------------------------------------
+        */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(response.body.data.providerState.action).toBe("authorize");
+
+    expect(response.body.data.providerState.status).toBe("authorized");
+
+    expect(response.body.data.providerState.captured).toBe(false);
+
+    expect(response.body.data.payment.status).toBe("authorized");
+
+    /*
+        |--------------------------------------------------------------------------
+        | No Order Finalization
+        |--------------------------------------------------------------------------
+        */
+
+    expect(response.body.data.orderFinalization.action).toBeNull();
+
+    expect(response.body.data.orderFinalization.finalized).toBe(false);
+
+    expect(response.body.data.order).toBeNull();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Remains Pending
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.payment.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Inventory Was Not Committed
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const beforeVariant = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    const afterVariant = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(afterVariant.inventory.stock).toBe(beforeVariant.inventory.stock);
+
+    expect(afterVariant.inventory.reservedStock).toBe(
+      beforeVariant.inventory.reservedStock,
+    );
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Provider Payment Still Created
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps Payment and Order pending when Razorpay has not authorized or captured the Payment", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+     * createRazorpayPaymentConfirmationFixture()
+     * already configures:
+     *
+     * status   = created
+     * captured = false
+     */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(response.body.data.providerState.action).toBe("pending");
+
+    expect(response.body.data.providerState.status).toBe("created");
+
+    expect(response.body.data.payment.status).toBe("pending");
+
+    expect(response.body.data.orderFinalization.action).toBeNull();
+
+    expect(response.body.data.order).toBeNull();
+
+    const storedOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.payment.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 4. Complete Workflow Is Idempotent
+    |--------------------------------------------------------------------------
+    */
+
+  it("reuses a fully processed captured Payment without committing inventory twice", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | First Request
+        |--------------------------------------------------------------------------
+        */
+
+    const firstResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(firstResponse.body.data.action).toBe("verify");
+
+    expect(firstResponse.body.data.providerState.action).toBe("pay");
+
+    expect(firstResponse.body.data.orderFinalization.action).toBe("finalize");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory After First Finalization
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterFirst = await Product.findById(product._id).lean();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Retry Same Browser Confirmation
+        |--------------------------------------------------------------------------
+        */
+
+    const secondResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(secondResponse.body.data.action).toBe("reuse");
+
+    expect(secondResponse.body.data.providerState.action).toBe("reuse");
+
+    expect(secondResponse.body.data.orderFinalization.action).toBe("reuse");
+
+    expect(secondResponse.body.data.payment.status).toBe("paid");
+
+    expect(secondResponse.body.data.order.status).toBe("confirmed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inventory Must Not Be Committed Again
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfterSecond = await Product.findById(product._id).lean();
+
+    const variantAfterFirst = findProductVariant(
+      productAfterFirst,
+
+      variant._id,
+    );
+
+    const variantAfterSecond = findProductVariant(
+      productAfterSecond,
+
+      variant._id,
+    );
+
+    expect(variantAfterSecond.inventory.stock).toBe(
+      variantAfterFirst.inventory.stock,
+    );
+
+    expect(variantAfterSecond.inventory.reservedStock).toBe(
+      variantAfterFirst.inventory.reservedStock,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Still One Payment Attempt
+        |--------------------------------------------------------------------------
+        */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
   });
 });

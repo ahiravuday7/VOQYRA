@@ -2096,3 +2096,119 @@ export const finalizeCapturedCustomerOnlineOrder = async ({
     await session.endSession();
   }
 };
+
+/*
+|--------------------------------------------------------------------------
+| Process Customer Razorpay Payment Confirmation
+|--------------------------------------------------------------------------
+|
+| Part 192 connects:
+|
+| Part 188
+| Signature verification
+|
+| Part 189
+| Trusted provider Payment lookup
+|
+| Part 190
+| Local PaymentTransaction synchronization
+|
+| Part 191
+| Captured Order finalization
+|--------------------------------------------------------------------------
+*/
+
+export const processCustomerRazorpayPaymentConfirmation = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+
+  razorpayOrderId,
+
+  razorpayPaymentId,
+
+  razorpaySignature,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Part 188 — Verify Checkout Signature
+    |--------------------------------------------------------------------------
+    */
+
+  const confirmation = await confirmCustomerRazorpayPayment({
+    orderId,
+
+    paymentTransactionId,
+
+    customerId,
+
+    razorpayOrderId,
+
+    razorpayPaymentId,
+
+    razorpaySignature,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Parts 189 + 190
+    |--------------------------------------------------------------------------
+    |
+    | Fetch the Payment directly from Razorpay,
+    | verify trusted IDs/amount/currency,
+    | then synchronize our PaymentTransaction.
+    |--------------------------------------------------------------------------
+    */
+
+  const synchronization = await synchronizeCustomerPaymentProviderState({
+    orderId,
+
+    paymentTransactionId,
+
+    customerId,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Part 191 — Finalize Only Paid Payments
+    |--------------------------------------------------------------------------
+    */
+
+  let finalization = null;
+
+  if (
+    synchronization.paymentTransaction.status ===
+    PAYMENT_TRANSACTION_STATUSES.PAID
+  ) {
+    finalization = await finalizeCapturedCustomerOnlineOrder({
+      orderId,
+
+      paymentTransactionId,
+
+      customerId,
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Unified Result
+    |--------------------------------------------------------------------------
+    */
+
+  return {
+    confirmationAction: confirmation.action,
+
+    synchronizationAction: synchronization.action,
+
+    finalizationAction: finalization?.action ?? null,
+
+    providerPayment: synchronization.providerPayment,
+
+    paymentTransaction:
+      finalization?.paymentTransaction ?? synchronization.paymentTransaction,
+
+    order: finalization?.order ?? null,
+  };
+};

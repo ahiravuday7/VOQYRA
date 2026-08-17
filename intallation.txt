@@ -5943,6 +5943,70 @@ Order = confirmed
 
 This matches Razorpay's lifecycle: an authorized payment is not enough for fulfillment; capture is the success boundary, and captured payments correspond to the Razorpay Order reaching
 |--------------------------------------------------------------------------
+Part 192 — Wire the Full /confirm Payment Workflow 🔗
+
+Now the existing endpoint will perform the complete flow:
+
+POST /orders/:orderId/payments/:paymentTransactionId/confirm
+                    ↓
+Part 188
+Verify Razorpay signature
+                    ↓
+Part 189
+Fetch trusted Payment from Razorpay
+                    ↓
+Part 190
+Synchronize PaymentTransaction state
+                    ↓
+captured?
+   ├── No → keep Order pending/reserved
+   │
+   └── Yes
+          ↓
+       Part 191
+       Order.payment = paid
+       Inventory = committed
+       Order = confirmed
+
+This matches Razorpay's recommendation that fulfillment should happen only after payment capture; authorized-but-uncaptured payments should not be treated as fulfilled.
+
+For Part 192, update only payment.service.js, payment.controller.js, and the payment-confirmation integration-test fixture/tests. Do not create a new route.
+
+After Part 192
+
+Your customer flow is finally end-to-end:
+
+Frontend Razorpay success callback
+             ↓
+POST /confirm
+             ↓
+signature verified
+             ↓
+Payment fetched from Razorpay
+             ↓
+amount/order/currency verified
+             ↓
+created
+   → Payment pending
+   → Order pending
+   → inventory reserved
+
+
+authorized
+   → Payment authorized
+   → Order pending
+   → inventory reserved
+
+
+captured
+   → Payment paid
+   → Order payment paid
+   → stock committed
+   → reservedStock reduced
+   → inventory ledger written
+   → Order confirmed
+
+That is the right split: customer-facing confirmation can use an immediate provider API verification, while Razorpay still recommends webhooks for reliable asynchronous event handling.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

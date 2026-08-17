@@ -1,8 +1,12 @@
+import { toCustomerOrder } from "../orders/order.mapper.js";
+
+import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
+
 import { mapCustomerPaymentTransaction } from "./payment.mapper.js";
 
 import {
   initiateCustomerOnlinePayment,
-  confirmCustomerRazorpayPayment,
+  processCustomerRazorpayPaymentConfirmation,
 } from "./payment.service.js";
 
 /*
@@ -74,6 +78,16 @@ export const createCustomerOnlinePaymentController = async (
 | POST
 |
 | /api/v1/orders/:orderId/payments/:paymentTransactionId/confirm
+|
+| Part 192 complete workflow:
+|
+| signature
+|    ↓
+| provider verification
+|    ↓
+| PaymentTransaction synchronization
+|    ↓
+| captured Order finalization
 |--------------------------------------------------------------------------
 */
 
@@ -98,7 +112,13 @@ export const confirmCustomerRazorpayPaymentController = async (
 
   const customerId = request.user._id;
 
-  const result = await confirmCustomerRazorpayPayment({
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Payment Workflow
+    |--------------------------------------------------------------------------
+    */
+
+  const result = await processCustomerRazorpayPaymentConfirmation({
     orderId,
 
     paymentTransactionId,
@@ -112,10 +132,87 @@ export const confirmCustomerRazorpayPaymentController = async (
     razorpaySignature: razorpay_signature,
   });
 
-  const message =
-    result.action === "verify"
-      ? "Payment confirmation verified successfully"
-      : "Payment confirmation already verified";
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Safe Payment
+    |--------------------------------------------------------------------------
+    */
+
+  const mappedPayment = mapCustomerPaymentTransaction(
+    result.paymentTransaction,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Customer-Safe Order
+    |--------------------------------------------------------------------------
+    |
+    | Null means the Payment is not captured yet.
+    |--------------------------------------------------------------------------
+    */
+
+  const mappedOrder = result.order ? toCustomerOrder(result.order) : null;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Response Message
+    |--------------------------------------------------------------------------
+    */
+
+  let message;
+
+  if (result.finalizationAction === "finalize") {
+    message = "Payment confirmed and Order finalized successfully";
+  } else if (result.finalizationAction === "reuse") {
+    message = "Payment confirmation and Order finalization already completed";
+  } else if (mappedPayment.status === PAYMENT_TRANSACTION_STATUSES.AUTHORIZED) {
+    message = "Payment confirmed and authorized; awaiting capture";
+  } else {
+    message =
+      result.confirmationAction === "verify"
+        ? "Payment confirmation verified; awaiting provider completion"
+        : "Payment confirmation already verified; awaiting provider completion";
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Logging
+    |--------------------------------------------------------------------------
+    */
+
+  request.log?.info(
+    {
+      orderId,
+
+      paymentTransactionId,
+
+      customerId: String(customerId),
+
+      confirmationAction: result.confirmationAction,
+
+      synchronizationAction: result.synchronizationAction,
+
+      finalizationAction: result.finalizationAction,
+
+      paymentStatus: mappedPayment.status,
+
+      providerStatus: result.providerPayment?.status,
+
+      captured: result.providerPayment?.captured,
+    },
+
+    "Customer Razorpay Payment confirmation processed",
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Response
+    |--------------------------------------------------------------------------
+    |
+    | `action`, `verified`, and `payment`
+    | are intentionally retained for Part 188 compatibility.
+    |--------------------------------------------------------------------------
+    */
 
   return response.status(200).json({
     success: true,
@@ -123,11 +220,46 @@ export const confirmCustomerRazorpayPaymentController = async (
     message,
 
     data: {
-      action: result.action,
+      /*
+       * Backward-compatible Part 188 field.
+       *
+       * verify | reuse
+       */
+      action: result.confirmationAction,
 
       verified: true,
 
-      payment: mapCustomerPaymentTransaction(result.paymentTransaction),
+      payment: mappedPayment,
+
+      /*
+          |--------------------------------------------------------------------------
+          | Provider State
+          |--------------------------------------------------------------------------
+          */
+
+      providerState: {
+        action: result.synchronizationAction,
+
+        status: result.providerPayment?.status ?? null,
+
+        captured: result.providerPayment?.captured ?? false,
+
+        method: result.providerPayment?.method ?? null,
+      },
+
+      /*
+          |--------------------------------------------------------------------------
+          | Order Finalization
+          |--------------------------------------------------------------------------
+          */
+
+      orderFinalization: {
+        action: result.finalizationAction,
+
+        finalized: mappedOrder !== null,
+      },
+
+      order: mappedOrder,
     },
   });
 };
