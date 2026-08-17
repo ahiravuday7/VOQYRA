@@ -11,6 +11,11 @@ import {
   stopPaymentWebhookWorker,
 } from "./modules/payments/payment-webhook-worker.service.js";
 
+import {
+  startOrderReservationExpiryWorker,
+  stopOrderReservationExpiryWorker,
+} from "./modules/orders/order-reservation-expiry-worker.service.js";
+
 /*
 |--------------------------------------------------------------------------
 | Server State
@@ -72,6 +77,7 @@ const startServer = async () => {
       */
 
     startPaymentWebhookWorker();
+    startOrderReservationExpiryWorker();
   } catch (error) {
     logger.fatal(
       {
@@ -118,71 +124,63 @@ const closeHttpServer = async () => {
 */
 
 const shutdown = async (signal) => {
-  /*
-   * SIGINT + SIGTERM may arrive very close
-   * together. Shutdown must happen once.
-   */
-  if (shuttingDown) {
-    return;
-  }
-
-  shuttingDown = true;
-
-  logger.info(
-    {
-      signal,
-    },
-
-    "Application shutdown started",
-  );
-
   try {
-    /*
-      |--------------------------------------------------------------------------
-      | Stop Background Worker First
-      |--------------------------------------------------------------------------
-      |
-      | No new webhook work should begin while
-      | HTTP/database shutdown is happening.
-      |--------------------------------------------------------------------------
-      */
-
-    await stopPaymentWebhookWorker();
-
-    /*
-      |--------------------------------------------------------------------------
-      | Stop Accepting HTTP Requests
-      |--------------------------------------------------------------------------
-      */
-
-    await closeHttpServer();
-
-    /*
-      |--------------------------------------------------------------------------
-      | Close MongoDB
-      |--------------------------------------------------------------------------
-      */
-
-    await mongoose.disconnect();
-
     logger.info(
       {
         signal,
       },
-
-      "Application shutdown completed",
+      "Graceful shutdown started",
     );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Stop Background Workers
+    |--------------------------------------------------------------------------
+    */
+
+    await Promise.all([
+      stopPaymentWebhookWorker(),
+
+      stopOrderReservationExpiryWorker(),
+    ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Close HTTP Server
+    |--------------------------------------------------------------------------
+    */
+
+    if (server) {
+      await new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Disconnect MongoDB
+    |--------------------------------------------------------------------------
+    */
+
+    await mongoose.disconnect();
+
+    logger.info("Graceful shutdown completed");
 
     process.exit(0);
   } catch (error) {
     logger.error(
       {
-        err: error,
-
-        signal,
+        error,
       },
-
-      "Application graceful shutdown failed",
+      "Graceful shutdown failed",
     );
 
     process.exit(1);

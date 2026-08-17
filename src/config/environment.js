@@ -91,6 +91,26 @@ const environmentSchema = z.object({
     )
     .default(30),
 
+  /*
+|--------------------------------------------------------------------------
+| Online Order Reservation Expiry Worker
+|--------------------------------------------------------------------------
+*/
+
+  ONLINE_ORDER_RESERVATION_WORKER_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(300_000)
+    .default(10_000),
+
+  ONLINE_ORDER_RESERVATION_WORKER_BATCH_SIZE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(25),
+
   AUTH_COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
 });
 

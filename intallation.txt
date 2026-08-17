@@ -6466,6 +6466,140 @@ open PaymentTransaction → cancelled
 Order → cancelled
 inventory → released
 |--------------------------------------------------------------------------
+Part 203 — Automatic Online Order Reservation Expiry Worker ⏱️📦
+
+Part 202 gave us the single-Order expiry operation.
+
+Part 203 now runs it automatically in the background.
+
+Flow:
+
+Server starts
+   ↓
+reservation-expiry worker starts
+   ↓
+every N seconds
+   ↓
+find bounded set of expired Orders
+   ↓
+process each Order once
+   ↓
+release reservation / skip safely
+   ↓
+schedule next cycle
+
+Important: we will not use setInterval(). Like the webhook worker, we use setTimeout() so a slow cycle cannot overlap the next scheduled cycle.
+
+Customer creates online Order
+        ↓
+stock reserved
+        ↓
+30 minutes pass without successful payment
+        ↓
+background worker finds Order
+        ↓
+Part 202 transaction runs
+        ↓
+reserved stock released
+        ↓
+system Ledger created
+        ↓
+open PaymentTransaction cancelled
+        ↓
+Order cancelled ✅
+
+This startup looks good ✅ Part 203 is running correctly.
+
+What your logs confirm:
+
+MongoDB connected successfully
+Payment webhook worker started every 5 seconds
+Order reservation-expiry worker started every 10 seconds
+API started on port 5000
+
+Expiry worker is healthy:
+
+candidates: 0
+expired: 0
+skipped: 0
+failed: 0
+idle: true
+
+So this part is working.
+
+The only thing left is the repeated Mongoose warning:
+
+[MONGOOSE] Warning:
+the `new` option for `findOneAndUpdate()` and `findOneAndReplace()` is deprecated.
+Use `returnDocument: 'after'` instead.
+Find every remaining new: true
+
+From PowerShell, run:
+
+Get-ChildItem -Path src -Recurse -Filter *.js |
+Select-String -Pattern "new\s*:\s*true"
+
+That will show the exact files and line numbers.
+
+Then change only usages inside:
+
+findOneAndUpdate(...)
+findOneAndReplace(...)
+
+from:
+
+{
+  new: true,
+  runValidators: true,
+}
+
+to:
+
+{
+  returnDocument: "after",
+  runValidators: true,
+}
+
+For example:
+
+const updatedWebhook =
+  await PaymentWebhookEvent.findOneAndUpdate(
+    filter,
+    update,
+    {
+      returnDocument: "after",
+    },
+  );
+Most likely places to check first
+
+Because the warning keeps appearing while the workers are idle, check these first:
+
+src/modules/payments/payment-webhook.repository.js
+src/modules/payments/payment.repository.js
+src/modules/products/product.repository.js
+src/modules/orders/order.repository.js
+
+Especially payment-webhook.repository.js, because that worker runs every 5 seconds, which matches the repeated warning pattern.
+
+If you want to identify the exact call stack, temporarily stop nodemon and run:
+
+node --trace-warnings src/server.js
+
+Then Mongoose will print the file and line that still contains the deprecated option.
+
+So overall:
+
+Part 203 runtime ✅
+Reservation worker ✅
+Webhook worker ✅
+MongoDB ✅
+API ✅
+
+
+Remaining cleanup:
+new: true → returnDocument: "after"
+
+Once those warnings are removed, Part 203 is clean and we can move to Part 204 — payment capture vs reservation-expiry race protection.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
