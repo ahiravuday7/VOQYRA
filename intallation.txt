@@ -6211,6 +6211,40 @@ success ─────────────→ processed
 
 That prevents permanently broken events from continuously consuming worker resources.
 |--------------------------------------------------------------------------
+Part 197 — Admin Webhook Observability + Manual Requeue 🛠️
+
+Now that Part 196 can dead-letter permanently failing webhook events, admins need a safe way to see what happened and requeue a dead-lettered event after fixing the underlying issue.
+
+We’ll add these endpoints:
+
+GET /api/v1/admin/payment-webhooks
+GET /api/v1/admin/payment-webhooks/:webhookEventId
+POST /api/v1/admin/payment-webhooks/:webhookEventId/requeue
+
+Only admins can access them.
+
+After Part 197 your operational flow becomes:
+
+Webhook repeatedly fails
+        ↓
+dead-lettered
+        ↓
+Admin:
+GET /admin/payment-webhooks
+        ↓
+inspect error + payment references
+        ↓
+fix underlying problem
+        ↓
+POST /:id/requeue
+        ↓
+pending
+attempts = 0
+requeue audit recorded
+        ↓
+existing Part 195 worker picks it up
+
+Do not add a separate “process immediately” admin endpoint yet. Requeueing into the durable queue is safer because it continues through the same concurrency, retry, and dead-letter protections as every other webhook.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

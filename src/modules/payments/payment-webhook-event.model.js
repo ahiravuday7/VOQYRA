@@ -326,6 +326,36 @@ const paymentWebhookEventSchema = new mongoose.Schema(
 
       default: null,
     },
+
+    /*
+|--------------------------------------------------------------------------
+| Manual Requeue Audit
+|--------------------------------------------------------------------------
+*/
+
+    requeueCount: {
+      type: Number,
+
+      required: true,
+
+      min: 0,
+
+      default: 0,
+    },
+
+    lastRequeuedAt: {
+      type: Date,
+
+      default: null,
+    },
+
+    lastRequeuedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      default: null,
+    },
   },
 
   {
@@ -390,6 +420,40 @@ paymentWebhookEventSchema.index(
 
   {
     name: "payment_webhook_dead_letter_queue",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Processing Status Listing
+|--------------------------------------------------------------------------
+*/
+
+paymentWebhookEventSchema.index(
+  {
+    processingStatus: 1,
+
+    receivedAt: -1,
+  },
+
+  {
+    name: "payment_webhook_admin_status_received",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Admin Provider Order Lookup
+|--------------------------------------------------------------------------
+*/
+
+paymentWebhookEventSchema.index(
+  {
+    "payment.providerOrderId": 1,
+  },
+
+  {
+    name: "payment_webhook_provider_order",
   },
 );
 

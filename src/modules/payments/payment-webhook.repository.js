@@ -332,3 +332,183 @@ export const deadLetterExhaustedPaymentWebhookEvents = ({
     },
   );
 };
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Webhook Filter
+|--------------------------------------------------------------------------
+*/
+
+const buildAdminPaymentWebhookFilter = (filters) => {
+  const filter = {};
+
+  if (filters.processingStatus) {
+    filter.processingStatus = filters.processingStatus;
+  }
+
+  if (filters.eventType) {
+    filter.eventType = filters.eventType;
+  }
+
+  if (filters.providerEventId) {
+    filter.providerEventId = filters.providerEventId;
+  }
+
+  if (filters.providerPaymentId) {
+    filter["payment.providerPaymentId"] = filters.providerPaymentId;
+  }
+
+  if (filters.providerOrderId) {
+    filter["payment.providerOrderId"] = filters.providerOrderId;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Received Date Range
+    |--------------------------------------------------------------------------
+    */
+
+  if (filters.from || filters.to) {
+    filter.receivedAt = {};
+
+    if (filters.from) {
+      filter.receivedAt.$gte = filters.from;
+    }
+
+    if (filters.to) {
+      filter.receivedAt.$lte = filters.to;
+    }
+  }
+
+  return filter;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Payment Webhook Events
+|--------------------------------------------------------------------------
+*/
+
+export const listAdminPaymentWebhookEvents = async (filters = {}) => {
+  const {
+    page = 1,
+
+    limit = 20,
+
+    sortDirection = "desc",
+  } = filters;
+
+  const skip = (page - 1) * limit;
+
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  const filter = buildAdminPaymentWebhookFilter(filters);
+
+  const [events, totalItems] = await Promise.all([
+    PaymentWebhookEvent.find(filter)
+      .sort({
+        receivedAt: direction,
+
+        _id: direction,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    PaymentWebhookEvent.countDocuments(filter),
+  ]);
+
+  const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+
+  return {
+    events,
+
+    pagination: {
+      page,
+
+      limit,
+
+      totalItems,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Webhook Event
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminPaymentWebhookEventById = (webhookEventId) => {
+  return PaymentWebhookEvent.findById(webhookEventId).lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Requeue Dead-Lettered Webhook
+|--------------------------------------------------------------------------
+|
+| Only:
+|
+| dead-lettered
+|      ↓
+| pending
+|
+| processingAttempts resets because this is a deliberate new recovery
+| cycle after an administrator fixed the underlying problem.
+|--------------------------------------------------------------------------
+*/
+
+export const requeueDeadLetteredPaymentWebhookEvent = (
+  webhookEventId,
+
+  {
+    adminUserId,
+
+    requeuedAt = new Date(),
+  },
+) => {
+  return PaymentWebhookEvent.findOneAndUpdate(
+    {
+      _id: webhookEventId,
+
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+    },
+
+    {
+      $set: {
+        processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PENDING,
+
+        processingAttempts: 0,
+
+        nextAttemptAt: requeuedAt,
+
+        claimedAt: null,
+
+        processedAt: null,
+
+        deadLetteredAt: null,
+
+        lastRequeuedAt: requeuedAt,
+
+        lastRequeuedBy: adminUserId,
+      },
+
+      $inc: {
+        requeueCount: 1,
+      },
+    },
+
+    {
+      returnDocument: "after",
+
+      runValidators: true,
+    },
+  ).lean();
+};

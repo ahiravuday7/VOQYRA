@@ -27,6 +27,8 @@ import { initializePaymentProviders } from "./modules/payments/providers/payment
 
 import paymentWebhookRoutes from "./modules/payments/payment-webhook.routes.js";
 
+import paymentWebhookAdminRoutes from "./modules/payments/payment-webhook.admin.routes.js";
+
 /*
 |--------------------------------------------------------------------------
 | Payment Provider Initialization
@@ -158,6 +160,11 @@ app.use("/api/v1/admin/order-returns", orderReturnAdminRoutes);
 app.use(
   "/api/v1/admin/order-return-replacements",
   orderReturnReplacementAdminRoutes,
+);
+app.use(
+  "/api/v1/admin/payment-webhooks",
+
+  paymentWebhookAdminRoutes,
 );
 
 /*
