@@ -997,3 +997,107 @@ export const markTrustedPaymentTransactionFailed = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Payment States That Block Order Expiry
+|--------------------------------------------------------------------------
+|
+| An authorized Payment may still become captured.
+|
+| Never release its Order reservation automatically.
+|--------------------------------------------------------------------------
+*/
+
+const ORDER_EXPIRY_BLOCKING_PAYMENT_STATUSES = Object.freeze([
+  PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+
+  PAYMENT_TRANSACTION_STATUSES.PAID,
+
+  PAYMENT_TRANSACTION_STATUSES.PARTIALLY_REFUNDED,
+
+  PAYMENT_TRANSACTION_STATUSES.REFUNDED,
+]);
+
+/*
+|--------------------------------------------------------------------------
+| Find Payment Blocking Reservation Expiry
+|--------------------------------------------------------------------------
+*/
+
+export const findPaymentTransactionBlockingOrderExpiry = (
+  orderId,
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    order: orderId,
+
+    status: {
+      $in: ORDER_EXPIRY_BLOCKING_PAYMENT_STATUSES,
+    },
+  })
+    .sort({
+      attemptNumber: -1,
+    })
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Cancel Open Payment Attempts For Expired Order
+|--------------------------------------------------------------------------
+|
+| created / initializing / pending
+|
+| become:
+|
+| cancelled
+|--------------------------------------------------------------------------
+*/
+
+export const cancelOpenPaymentTransactionsForExpiredOrder = (
+  orderId,
+
+  {
+    cancelledAt = new Date(),
+
+    session = null,
+  } = {},
+) => {
+  return PaymentTransaction.updateMany(
+    {
+      order: orderId,
+
+      status: {
+        $in: [
+          PAYMENT_TRANSACTION_STATUSES.CREATED,
+
+          PAYMENT_TRANSACTION_STATUSES.INITIALIZING,
+
+          PAYMENT_TRANSACTION_STATUSES.PENDING,
+        ],
+      },
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.CANCELLED,
+
+        cancelledAt,
+      },
+    },
+
+    {
+      session,
+
+      runValidators: true,
+    },
+  );
+};

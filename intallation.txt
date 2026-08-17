@@ -6421,6 +6421,50 @@ clear reservation expiry
 
 without falsely attributing the operation to the customer.
 |--------------------------------------------------------------------------
+Part 202 — Expire Unpaid Online Orders + Release Inventory ⏳➡️📦
+
+Now we actually use Parts 200 + 201.
+
+The operation will be atomic:
+
+Expired unpaid online Order
+        ↓
+revalidate inside transaction
+        ↓
+authorized/paid Payment exists?
+     YES → skip
+      NO
+        ↓
+release Product reservedStock
+        ↓
+write SYSTEM inventory ledger
+        ↓
+cancel open PaymentTransactions
+        ↓
+Order → cancelled
+inventory → released
+expiry → null
+        ↓
+commit transaction
+
+If inventory release fails, Order + payment-attempt changes roll back too.
+
+
+   ↓
+inventory reserved
+   ↓
+TTL expires
+   ↓
+no authorized/paid payment
+   ↓
+SYSTEM releases reserved stock
+   ↓
+system inventory ledger ✅
+   ↓
+open PaymentTransaction → cancelled
+   ↓
+Order → cancelled
+inventory → released
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -1748,27 +1748,48 @@ export const releaseVariantStockAtomically = async ({
 | Release Order Variant Reservation Atomically
 |--------------------------------------------------------------------------
 |
-| This query intentionally does not require:
+| User operation:
+|   actorUserId exists
+|   → update Product.updatedBy
 |
-| - Product status to be active
-| - Product to be publicly visible
-| - Variant to be active
-|
-| A Product or variant may become inactive after the Order was created,
-| but its existing reservation must still be releasable.
+| System operation:
+|   actorUserId = null
+|   → preserve the previous real human updatedBy value
 |--------------------------------------------------------------------------
 */
 
 export const releaseOrderVariantStockAtomically = async ({
   productId,
+
   variantId,
+
   quantity,
-  actorUserId,
+
+  actorUserId = null,
+
   session,
 }) => {
   const normalizedProductId = normalizeInventoryObjectId(productId);
 
   const normalizedVariantId = normalizeInventoryObjectId(variantId);
+
+  const update = {
+    $inc: {
+      "variants.$.inventory.reservedStock": -quantity,
+    },
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Human Audit Compatibility
+  |--------------------------------------------------------------------------
+  */
+
+  if (actorUserId) {
+    update.$set = {
+      updatedBy: actorUserId,
+    };
+  }
 
   return Product.findOneAndUpdate(
     {
@@ -1785,18 +1806,10 @@ export const releaseOrderVariantStockAtomically = async ({
       },
     },
 
-    {
-      $inc: {
-        "variants.$.inventory.reservedStock": -quantity,
-      },
-
-      $set: {
-        updatedBy: actorUserId,
-      },
-    },
+    update,
 
     {
-      new: true,
+      returnDocument: "after",
 
       runValidators: true,
 

@@ -58,6 +58,8 @@ import {
   findAdminOrderForStatusUpdate,
   bumpOrderReturnRequestVersion,
   findCustomerOrderForReturnRequest,
+  findExpiredOnlineOrderReservations,
+  findOrderForInventoryReservationExpiry,
 } from "./order.repository.js";
 
 import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
@@ -81,6 +83,16 @@ import {
 } from "./order-return-refund-audit.repository.js";
 
 import { PAYMENT_TRANSACTION_STATUSES } from "../payments/payment.model.js";
+
+import {
+  AUDIT_ACTOR_TYPES,
+  SYSTEM_AUDIT_ACTORS,
+} from "../../shared/constants/audit.constants.js";
+
+import {
+  cancelOpenPaymentTransactionsForExpiredOrder,
+  findPaymentTransactionBlockingOrderExpiry,
+} from "../payments/payment.repository.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -4483,29 +4495,50 @@ const diagnoseFailedOrderReservationRelease = async ({
 |--------------------------------------------------------------------------
 | Create Order Reservation Release Ledger
 |--------------------------------------------------------------------------
+|
+| Supports both:
+|
+| customer cancellation
+| system reservation expiry
+|--------------------------------------------------------------------------
 */
 
 const createOrderReservationReleaseLedgerEntry = async ({
   updatedProduct,
+
   variantId,
+
   quantity,
+
   orderNumber,
-  actorUserId,
+
+  actorUserId = null,
+
+  systemActor = null,
+
   session,
 }) => {
-  const updatedVariant = findUpdatedReleasedVariant(updatedProduct, variantId);
+  const updatedVariant = findUpdatedReleasedVariant(
+    updatedProduct,
+
+    variantId,
+  );
 
   const afterStock = updatedVariant.inventory?.stock ?? 0;
 
   const afterReservedStock = updatedVariant.inventory?.reservedStock ?? 0;
 
-  /*
-   * The atomic update has already decreased reservedStock.
-   *
-   * beforeReservedStock =
-   * afterReservedStock + released quantity
-   */
   const beforeReservedStock = afterReservedStock + quantity;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Resolve Audit Actor
+  |--------------------------------------------------------------------------
+  */
+
+  const actorType = actorUserId
+    ? AUDIT_ACTOR_TYPES.USER
+    : AUDIT_ACTOR_TYPES.SYSTEM;
 
   await createProductInventoryLedgerEntry(
     {
@@ -4523,13 +4556,30 @@ const createOrderReservationReleaseLedgerEntry = async ({
 
       reservedStockDelta: -quantity,
 
-      before: buildOrderInventoryState(afterStock, beforeReservedStock),
+      before: buildOrderInventoryState(
+        afterStock,
 
-      after: buildOrderInventoryState(afterStock, afterReservedStock),
+        beforeReservedStock,
+      ),
+
+      after: buildOrderInventoryState(
+        afterStock,
+
+        afterReservedStock,
+      ),
 
       referenceId: orderNumber,
 
-      actor: actorUserId,
+      actorType,
+
+      actor: actorUserId ?? null,
+
+      systemActor: systemActor ?? null,
+
+      note:
+        systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY
+          ? "Online Order inventory reservation expired"
+          : undefined,
     },
 
     session,
@@ -6256,29 +6306,366 @@ export const buildCustomerCancelledOrderState = (
 
 /*
 |--------------------------------------------------------------------------
+| Build Expired Online Order State
+|--------------------------------------------------------------------------
+|
+| Automatic expiry uses the existing CANCELLED terminal Order state.
+|
+| The audit trail distinguishes:
+|
+| customer cancellation
+|
+| from:
+|
+| automatic reservation expiry
+|--------------------------------------------------------------------------
+*/
+
+export const buildExpiredOnlineOrderState = (
+  order,
+
+  { expiredAt = new Date() } = {},
+) => {
+  assertCustomerOrderCanBeCancelled(order);
+
+  const existingStatusHistory = (order.statusHistory ?? []).map(
+    normalizeOrderSubdocument,
+  );
+
+  return {
+    items: buildReleasedOrderItems(order.items),
+
+    status: ORDER_STATUSES.CANCELLED,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.RELEASED,
+
+    /*
+     * Reservation no longer exists.
+     */
+    inventoryReservationExpiresAt: null,
+
+    cancellation: {
+      reason: "Online payment reservation expired",
+
+      /*
+       * No human cancelled this Order.
+       */
+      cancelledBy: null,
+
+      cancelledAt: expiredAt,
+    },
+
+    statusHistory: [
+      ...existingStatusHistory,
+
+      {
+        status: ORDER_STATUSES.CANCELLED,
+
+        note: "Online payment reservation expired automatically",
+
+        changedByType: AUDIT_ACTOR_TYPES.SYSTEM,
+
+        changedBy: null,
+
+        systemActor: SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+
+        changedAt: expiredAt,
+      },
+    ],
+
+    /*
+     * Do NOT overwrite updatedBy.
+     *
+     * It remains the most recent real human actor.
+     */
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Expire Online Order Inventory Reservation
+|--------------------------------------------------------------------------
+|
+| Atomic Part 202 operation.
+|--------------------------------------------------------------------------
+*/
+
+export const expireOnlineOrderInventoryReservation = async (
+  orderId,
+
+  { now = new Date() } = {},
+) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let result;
+
+    await session.withTransaction(
+      async () => {
+        /*
+          |--------------------------------------------------------------------------
+          | Revalidate Expiry
+          |--------------------------------------------------------------------------
+          */
+
+        const order = await findOrderForInventoryReservationExpiry(
+          orderId,
+
+          {
+            now,
+
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Idempotent Skip
+          |--------------------------------------------------------------------------
+          |
+          | Another request/worker may already have:
+          |
+          | - finalized payment
+          | - cancelled Order
+          | - released inventory
+          |--------------------------------------------------------------------------
+          */
+
+        if (!order) {
+          result = {
+            action: "skip",
+
+            reason: "order-not-expirable",
+
+            order: null,
+          };
+
+          return;
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Payment Safety Gate
+          |--------------------------------------------------------------------------
+          |
+          | Never release inventory for:
+          |
+          | authorized
+          | paid
+          | partially-refunded
+          | refunded
+          |--------------------------------------------------------------------------
+          */
+
+        const blockingPayment = await findPaymentTransactionBlockingOrderExpiry(
+          order._id,
+
+          {
+            session,
+          },
+        );
+
+        if (blockingPayment) {
+          result = {
+            action: "skip",
+
+            reason: "payment-state-blocks-expiry",
+
+            paymentStatus: blockingPayment.status,
+
+            order: order.toObject(),
+          };
+
+          return;
+        }
+
+        /*
+          |--------------------------------------------------------------------------
+          | Release Product Reservations
+          |--------------------------------------------------------------------------
+          */
+
+        await releaseOrderItemsInventoryInTransaction(
+          order,
+
+          {
+            systemActor: SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Cancel Still-Open Payment Attempts
+          |--------------------------------------------------------------------------
+          */
+
+        await cancelOpenPaymentTransactionsForExpiredOrder(
+          order._id,
+
+          {
+            cancelledAt: now,
+
+            session,
+          },
+        );
+
+        /*
+          |--------------------------------------------------------------------------
+          | Build System-Cancelled Order
+          |--------------------------------------------------------------------------
+          */
+
+        const expiredState = buildExpiredOnlineOrderState(
+          order,
+
+          {
+            expiredAt: now,
+          },
+        );
+
+        order.set(expiredState);
+
+        /*
+          |--------------------------------------------------------------------------
+          | Persist Order
+          |--------------------------------------------------------------------------
+          */
+
+        const savedOrder = await saveOrderDocument(
+          order,
+
+          {
+            session,
+          },
+        );
+
+        result = {
+          action: "expire",
+
+          reason: "reservation-expired",
+
+          order: savedOrder,
+        };
+      },
+
+      {
+        readConcern: {
+          level: "snapshot",
+        },
+
+        writeConcern: {
+          w: "majority",
+        },
+
+        readPreference: "primary",
+      },
+    );
+
+    return result;
+  } finally {
+    await session.endSession();
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Process Next Expired Online Reservation
+|--------------------------------------------------------------------------
+|
+| Processes at most one candidate.
+|--------------------------------------------------------------------------
+*/
+
+export const processNextExpiredOnlineOrderReservation = async ({
+  now = new Date(),
+} = {}) => {
+  const candidates = await findExpiredOnlineOrderReservations({
+    now,
+
+    limit: 1,
+  });
+
+  const candidate = candidates[0];
+
+  if (!candidate) {
+    return {
+      action: "idle",
+
+      orderId: null,
+
+      result: null,
+    };
+  }
+
+  const result = await expireOnlineOrderInventoryReservation(
+    candidate._id,
+
+    {
+      now,
+    },
+  );
+
+  return {
+    action: result.action,
+
+    orderId: candidate._id,
+
+    result,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Release Order Items Inventory in Transaction
 |--------------------------------------------------------------------------
 |
-| The caller owns the transaction.
+| Supports:
 |
-| Do not create or commit another transaction here.
+| Customer cancellation
+|   actorUserId
+|
+| Automatic reservation expiry
+|   systemActor
 |--------------------------------------------------------------------------
 */
 
 export const releaseOrderItemsInventoryInTransaction = async (
   order,
-  { actorUserId, session },
+
+  {
+    actorUserId = null,
+
+    systemActor = null,
+
+    session,
+  },
 ) => {
   requireActiveOrderTransaction(session);
 
-  if (!actorUserId) {
-    throw new Error("Order inventory release requires an actor user ID");
+  /*
+    |--------------------------------------------------------------------------
+    | Exactly One Audit Actor
+    |--------------------------------------------------------------------------
+    */
+
+  const hasUserActor = Boolean(actorUserId);
+
+  const hasSystemActor = Boolean(systemActor);
+
+  if (hasUserActor === hasSystemActor) {
+    throw new Error(
+      "Order inventory release requires exactly one user or system audit actor",
+    );
   }
 
   /*
-   * The validation confirms that every item has a complete
-   * active reservation before database mutations begin.
-   */
+    |--------------------------------------------------------------------------
+    | Existing Reservation Integrity Validation
+    |--------------------------------------------------------------------------
+    */
+
   assertCustomerOrderCanBeCancelled(order);
 
   for (const orderItem of order.items) {
@@ -6290,16 +6677,21 @@ export const releaseOrderItemsInventoryInTransaction = async (
 
     /*
       |--------------------------------------------------------------------------
-      | Atomic Reservation Release
+      | Atomic Product Reservation Release
       |--------------------------------------------------------------------------
       */
 
     const updatedProduct = await releaseOrderVariantStockAtomically({
       productId,
+
       variantId,
 
       quantity: releaseQuantity,
 
+      /*
+       * System operations intentionally
+       * leave Product.updatedBy unchanged.
+       */
       actorUserId,
 
       session,
@@ -6312,20 +6704,24 @@ export const releaseOrderItemsInventoryInTransaction = async (
         orderItemId: orderItem._id,
 
         productId,
+
         variantId,
+
         releaseQuantity,
+
         session,
       });
     }
 
     /*
       |--------------------------------------------------------------------------
-      | Matching Release Ledger Entry
+      | Immutable Audit Ledger
       |--------------------------------------------------------------------------
       */
 
     await createOrderReservationReleaseLedgerEntry({
       updatedProduct,
+
       variantId,
 
       quantity: releaseQuantity,
@@ -6333,6 +6729,8 @@ export const releaseOrderItemsInventoryInTransaction = async (
       orderNumber: order.orderNumber,
 
       actorUserId,
+
+      systemActor,
 
       session,
     });

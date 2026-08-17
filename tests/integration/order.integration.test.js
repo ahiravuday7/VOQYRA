@@ -47,6 +47,13 @@ import {
 
 import { findExpiredOnlineOrderReservations } from "../../src/modules/orders/order.repository.js";
 
+import {
+  AUDIT_ACTOR_TYPES,
+  SYSTEM_AUDIT_ACTORS,
+} from "../../src/shared/constants/audit.constants.js";
+
+import { expireOnlineOrderInventoryReservation } from "../../src/modules/orders/order.service.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -31772,5 +31779,395 @@ describe("Online Order inventory reservation expiry", () => {
     expect(candidateIds).not.toContain(activeOrder.id);
 
     expect(candidates).toHaveLength(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 202 — Expired Online Order Reservation Processing
+|--------------------------------------------------------------------------
+*/
+
+describe("Expired online Order reservation processing", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Successful Expiry
+    |--------------------------------------------------------------------------
+    */
+
+  it("atomically cancels an expired unpaid online Order and releases reserved inventory", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Create Open Razorpay Attempt
+        |--------------------------------------------------------------------------
+        */
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Force Reservation Expired
+        |--------------------------------------------------------------------------
+        */
+
+    const expiredAt = new Date();
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiredAt.getTime() - 60_000),
+        },
+      },
+    );
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Expire
+        |--------------------------------------------------------------------------
+        */
+
+    const result = await expireOnlineOrderInventoryReservation(
+      order.id,
+
+      {
+        now: expiredAt,
+      },
+    );
+
+    expect(result.action).toBe("expire");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("cancelled");
+
+    expect(storedOrder.inventoryStatus).toBe("released");
+
+    expect(storedOrder.inventoryReservationExpiresAt).toBeNull();
+
+    expect(storedOrder.cancellation.reason).toBe(
+      "Online payment reservation expired",
+    );
+
+    expect(storedOrder.cancellation.cancelledBy).toBeNull();
+
+    /*
+        |--------------------------------------------------------------------------
+        | System Status History
+        |--------------------------------------------------------------------------
+        */
+
+    const finalHistory =
+      storedOrder.statusHistory[storedOrder.statusHistory.length - 1];
+
+    expect(finalHistory.changedByType).toBe(AUDIT_ACTOR_TYPES.SYSTEM);
+
+    expect(finalHistory.changedBy).toBeNull();
+
+    expect(finalHistory.systemActor).toBe(
+      SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Product Reservation Released
+        |--------------------------------------------------------------------------
+        */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - 2,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | System Inventory Ledger
+        |--------------------------------------------------------------------------
+        */
+
+    const releaseLedger = await ProductInventoryLedger.findOne({
+      referenceId: storedOrder.orderNumber,
+
+      operation: "release",
+
+      actorType: AUDIT_ACTOR_TYPES.SYSTEM,
+    }).lean();
+
+    expect(releaseLedger).toBeTruthy();
+
+    expect(releaseLedger.actor).toBeNull();
+
+    expect(releaseLedger.systemActor).toBe(
+      SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Open Payment Attempt Cancelled
+        |--------------------------------------------------------------------------
+        */
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("cancelled");
+
+    expect(storedPayment.cancelledAt).toBeInstanceOf(Date);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. Not Expired Yet
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not release an online Order reservation before its expiry deadline", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const result = await expireOnlineOrderInventoryReservation(order.id);
+
+    expect(result.action).toBe("skip");
+
+    expect(result.reason).toBe("order-not-expirable");
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Authorized Payment Blocks Expiry
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not expire an Order when its Razorpay Payment is already authorized", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    await PaymentTransaction.updateOne(
+      {
+        _id: payment.id,
+      },
+
+      {
+        $set: {
+          status: "authorized",
+
+          authorizedAt: new Date(),
+        },
+      },
+    );
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() - 60_000),
+        },
+      },
+    );
+
+    const result = await expireOnlineOrderInventoryReservation(order.id);
+
+    expect(result.action).toBe("skip");
+
+    expect(result.reason).toBe("payment-state-blocks-expiry");
+
+    expect(result.paymentStatus).toBe("authorized");
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 4. Inventory Failure Rolls Everything Back
+    |--------------------------------------------------------------------------
+    */
+
+  it("rolls back Order expiry and Payment cancellation when inventory release fails", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() - 60_000),
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Corrupt Physical Reservation
+        |--------------------------------------------------------------------------
+        */
+
+    await Product.collection.updateOne(
+      {
+        _id: product._id,
+
+        "variants._id": variant._id,
+      },
+
+      {
+        $set: {
+          "variants.$.inventory.reservedStock": 0,
+        },
+      },
+    );
+
+    await expect(
+      expireOnlineOrderInventoryReservation(order.id),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+
+      errorCode: "ORDER_INVENTORY_RELEASE_STATE_INVALID",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order Rolled Back
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Payment Cancellation Rolled Back
+        |--------------------------------------------------------------------------
+        */
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("pending");
   });
 });

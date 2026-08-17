@@ -760,3 +760,46 @@ export const findExpiredOnlineOrderReservations = ({
     })
     .lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Exact Order For Reservation Expiry
+|--------------------------------------------------------------------------
+|
+| Revalidation happens inside the MongoDB transaction.
+|--------------------------------------------------------------------------
+*/
+
+export const findOrderForInventoryReservationExpiry = (
+  orderId,
+
+  {
+    now = new Date(),
+
+    session = null,
+  } = {},
+) => {
+  const query = Order.findOne({
+    _id: orderId,
+
+    status: ORDER_STATUSES.PENDING,
+
+    "payment.method": ORDER_PAYMENT_METHODS.ONLINE,
+
+    "payment.status": ORDER_PAYMENT_STATUSES.PENDING,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+    inventoryReservationExpiresAt: {
+      $ne: null,
+
+      $lte: now,
+    },
+  });
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
