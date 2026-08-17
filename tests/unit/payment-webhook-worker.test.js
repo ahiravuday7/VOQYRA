@@ -44,6 +44,8 @@ describe("Payment webhook worker", () => {
 
       failed: 0,
 
+      deadLettered: 0,
+
       idle: true,
 
       limitReached: false,
@@ -196,5 +198,49 @@ describe("Payment webhook worker", () => {
     const firstResult = await firstCyclePromise;
 
     expect(firstResult.action).toBe("run");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Dead-Letter Metrics
+|--------------------------------------------------------------------------
+*/
+
+  it("counts exhausted webhook events as failed and dead-lettered", async () => {
+    const results = [
+      {
+        action: "dead-lettered",
+      },
+
+      {
+        action: "idle",
+      },
+    ];
+
+    let index = 0;
+
+    const processor = async () => {
+      const result = results[index];
+
+      index += 1;
+
+      return result;
+    };
+
+    const result = await processPaymentWebhookBatch({
+      maxEvents: 10,
+
+      processor,
+    });
+
+    expect(result.claimed).toBe(1);
+
+    expect(result.processed).toBe(0);
+
+    expect(result.failed).toBe(1);
+
+    expect(result.deadLettered).toBe(1);
+
+    expect(result.idle).toBe(true);
   });
 });

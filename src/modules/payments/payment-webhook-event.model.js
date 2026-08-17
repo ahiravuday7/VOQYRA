@@ -39,6 +39,19 @@ export const PAYMENT_WEBHOOK_PROCESSING_STATUSES = Object.freeze({
   PROCESSED: "processed",
 
   FAILED: "failed",
+
+  /*
+    |--------------------------------------------------------------------------
+    | Dead Letter
+    |--------------------------------------------------------------------------
+    |
+    | Automatic processing has exhausted all retry attempts.
+    |
+    | Part 197 can later expose controlled admin recovery.
+    |--------------------------------------------------------------------------
+    */
+
+  DEAD_LETTERED: "dead-lettered",
 });
 
 export const PAYMENT_WEBHOOK_PROCESSING_STATUS_VALUES = Object.freeze(
@@ -277,8 +290,6 @@ const paymentWebhookEventSchema = new mongoose.Schema(
     nextAttemptAt: {
       type: Date,
 
-      required: true,
-
       default: Date.now,
     },
 
@@ -289,6 +300,18 @@ const paymentWebhookEventSchema = new mongoose.Schema(
     },
 
     processedAt: {
+      type: Date,
+
+      default: null,
+    },
+
+    /*
+|--------------------------------------------------------------------------
+| Dead Letter Timestamp
+|--------------------------------------------------------------------------
+*/
+
+    deadLetteredAt: {
       type: Date,
 
       default: null,
@@ -349,6 +372,24 @@ paymentWebhookEventSchema.index(
 
   {
     name: "payment_webhook_processing_queue",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Dead-Letter Operations
+|--------------------------------------------------------------------------
+*/
+
+paymentWebhookEventSchema.index(
+  {
+    processingStatus: 1,
+
+    deadLetteredAt: -1,
+  },
+
+  {
+    name: "payment_webhook_dead_letter_queue",
   },
 );
 

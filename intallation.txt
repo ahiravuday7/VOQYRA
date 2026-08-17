@@ -6158,6 +6158,65 @@ Now that Part 194 can process one webhook inbox event, Part 195 makes it run aut
 
 Your current server lifecycle already connects MongoDB before app.listen(), so we’ll start the worker only after MongoDB and HTTP startup succeed. We’ll also add graceful shutdown because there isn’t one in the current server lifecycle yet.
 |--------------------------------------------------------------------------
+Part 196 — Webhook Dead-Letter Handling 🚨
+
+Part 195 gives us an automatic worker. The next production-hardening step is to handle webhook events that keep failing after all retries.
+
+Right now, after 8 failed attempts an event effectively stops being picked up, but it still looks like an ordinary:
+
+processingStatus = failed
+
+That makes operations ambiguous.
+
+After Part 196:
+
+pending
+   ↓
+processing
+   ↓
+temporary failure
+   ↓
+failed → retry
+   ↓
+...
+8th failure
+   ↓
+dead-lettered
+
+A dead-lettered event is never automatically retried. Later, Part 197 can add admin visibility/manual retry.
+
+After Part 196
+
+Your webhook infrastructure becomes much safer:
+
+Razorpay webhook
+      ↓
+durable Mongo inbox
+      ↓
+worker
+      ↓
+success ─────────────→ processed
+      │
+      └ failure
+           ↓
+         retry
+           ↓
+      exponential backoff
+           ↓
+      max 8 attempts
+           ↓
+      dead-lettered
+           ↓
+      NO automatic retry
+
+That prevents permanently broken events from continuously consuming worker resources.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+
+
 info:
 The easiest way to remember is:
 

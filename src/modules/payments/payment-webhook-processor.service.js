@@ -20,6 +20,8 @@ import {
   claimNextPaymentWebhookEvent,
   markPaymentWebhookEventProcessed,
   markPaymentWebhookEventFailed,
+  deadLetterExhaustedPaymentWebhookEvents,
+  markPaymentWebhookEventDeadLettered,
 } from "./payment-webhook.repository.js";
 
 /*
@@ -393,6 +395,24 @@ export const processNextPaymentWebhookEvent = async () => {
   const staleBefore = new Date(now.getTime() - PAYMENT_WEBHOOK_STALE_CLAIM_MS);
 
   /*
+|--------------------------------------------------------------------------
+| Recover Exhausted / Abandoned Events
+|--------------------------------------------------------------------------
+|
+| This also repairs final-attempt events left in `processing` if Node
+| crashed while processing them.
+|--------------------------------------------------------------------------
+*/
+
+  await deadLetterExhaustedPaymentWebhookEvents({
+    maxAttempts: PAYMENT_WEBHOOK_MAX_ATTEMPTS,
+
+    staleBefore,
+
+    now,
+  });
+
+  /*
     |--------------------------------------------------------------------------
     | Atomic Claim
     |--------------------------------------------------------------------------
@@ -444,10 +464,60 @@ export const processNextPaymentWebhookEvent = async () => {
     };
   } catch (error) {
     /*
-      |--------------------------------------------------------------------------
-      | Retry Backoff
-      |--------------------------------------------------------------------------
-      */
+  |--------------------------------------------------------------------------
+  | Retry Limit
+  |--------------------------------------------------------------------------
+  |
+  | processingAttempts was already incremented atomically when this event
+  | was claimed.
+  |--------------------------------------------------------------------------
+  */
+
+    const exhausted =
+      webhookEvent.processingAttempts >= PAYMENT_WEBHOOK_MAX_ATTEMPTS;
+
+    const errorMessage = error?.code
+      ? `${error.code}: ${error.message}`
+      : (error?.message ?? "Payment webhook processing failed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Dead Letter
+  |--------------------------------------------------------------------------
+  */
+
+    if (exhausted) {
+      const deadLetteredWebhookEvent =
+        await markPaymentWebhookEventDeadLettered(
+          webhookEvent._id,
+
+          {
+            errorMessage,
+
+            deadLetteredAt: new Date(),
+          },
+        );
+
+      return {
+        action: "dead-lettered",
+
+        exhausted: true,
+
+        webhookEvent: deadLetteredWebhookEvent,
+
+        error: {
+          code: error?.code ?? "PAYMENT_WEBHOOK_PROCESSING_FAILED",
+
+          message: error?.message ?? "Payment webhook processing failed",
+        },
+      };
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Retryable Failure
+  |--------------------------------------------------------------------------
+  */
 
     const retryDelayMs = getWebhookRetryDelayMs(
       webhookEvent.processingAttempts,
@@ -459,9 +529,7 @@ export const processNextPaymentWebhookEvent = async () => {
       webhookEvent._id,
 
       {
-        errorMessage: error?.code
-          ? `${error.code}: ${error.message}`
-          : error?.message,
+        errorMessage,
 
         nextAttemptAt,
       },
@@ -470,8 +538,7 @@ export const processNextPaymentWebhookEvent = async () => {
     return {
       action: "failed",
 
-      exhausted:
-        webhookEvent.processingAttempts >= PAYMENT_WEBHOOK_MAX_ATTEMPTS,
+      exhausted: false,
 
       webhookEvent: failedWebhookEvent,
 

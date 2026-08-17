@@ -211,3 +211,124 @@ export const markPaymentWebhookEventFailed = (
     },
   ).lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Mark Webhook Event Dead-Lettered
+|--------------------------------------------------------------------------
+|
+| The event exhausted automatic processing attempts.
+|
+| Important:
+|
+| nextAttemptAt = null
+|
+| Therefore the normal worker queue can never claim it again.
+|--------------------------------------------------------------------------
+*/
+
+export const markPaymentWebhookEventDeadLettered = (
+  webhookEventId,
+
+  {
+    errorMessage,
+
+    deadLetteredAt = new Date(),
+  },
+) => {
+  return PaymentWebhookEvent.findOneAndUpdate(
+    {
+      _id: webhookEventId,
+
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+    },
+
+    {
+      $set: {
+        processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+
+        claimedAt: null,
+
+        nextAttemptAt: null,
+
+        deadLetteredAt,
+
+        lastError: String(
+          errorMessage ?? "Webhook processing retry limit exhausted",
+        ).slice(0, 2000),
+      },
+    },
+
+    {
+      returnDocument: "after",
+    },
+  ).lean();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Dead-Letter Exhausted / Abandoned Webhook Events
+|--------------------------------------------------------------------------
+|
+| Handles two recovery cases:
+|
+| 1. Old failed events that already exhausted attempts.
+|
+| 2. A worker claimed its final attempt and then crashed before it could
+|    mark the event processed/failed/dead-lettered.
+|--------------------------------------------------------------------------
+*/
+
+export const deadLetterExhaustedPaymentWebhookEvents = ({
+  maxAttempts,
+
+  staleBefore,
+
+  now = new Date(),
+}) => {
+  return PaymentWebhookEvent.updateMany(
+    {
+      processingAttempts: {
+        $gte: maxAttempts,
+      },
+
+      $or: [
+        /*
+          |--------------------------------------------------------------------------
+          | Exhausted Failed Event
+          |--------------------------------------------------------------------------
+          */
+
+        {
+          processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.FAILED,
+        },
+
+        /*
+          |--------------------------------------------------------------------------
+          | Abandoned Final Processing Attempt
+          |--------------------------------------------------------------------------
+          */
+
+        {
+          processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+
+          claimedAt: {
+            $lte: staleBefore,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+
+        claimedAt: null,
+
+        nextAttemptAt: null,
+
+        deadLetteredAt: now,
+      },
+    },
+  );
+};

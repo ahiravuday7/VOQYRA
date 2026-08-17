@@ -58,6 +58,8 @@ export const processPaymentWebhookBatch = async ({
 
   let failed = 0;
 
+  let deadLettered = 0;
+
   /*
     |--------------------------------------------------------------------------
     | Bounded Drain
@@ -81,6 +83,8 @@ export const processPaymentWebhookBatch = async ({
 
         failed,
 
+        deadLettered,
+
         idle: true,
 
         limitReached: false,
@@ -96,6 +100,16 @@ export const processPaymentWebhookBatch = async ({
     if (result.action === "failed") {
       failed += 1;
     }
+
+    if (result.action === "dead-lettered") {
+      /*
+       * Dead-lettered is still a processing failure,
+       * but we track it separately as well.
+       */
+      failed += 1;
+
+      deadLettered += 1;
+    }
   }
 
   return {
@@ -104,6 +118,8 @@ export const processPaymentWebhookBatch = async ({
     processed,
 
     failed,
+
+    deadLettered,
 
     idle: false,
 
@@ -201,6 +217,8 @@ const scheduleNextWorkerCycle = () => {
               processed: result.processed,
 
               failed: result.failed,
+
+              deadLettered: result.deadLettered,
 
               limitReached: result.limitReached,
             },
