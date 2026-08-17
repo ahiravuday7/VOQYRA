@@ -299,6 +299,66 @@ const createOnlinePaymentOrderFixture = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Create Razorpay Payment Confirmation Fixture
+|--------------------------------------------------------------------------
+|
+| Creates a real online Order and starts a real test Razorpay Payment
+| session through the API. The returned confirmation body contains a valid
+| deterministic test signature.
+|--------------------------------------------------------------------------
+*/
+
+const createRazorpayPaymentConfirmationFixture = async ({
+  customerAgent,
+  product,
+  variant = product.variants[0],
+  quantity = 2,
+}) => {
+  const order = await createOnlinePaymentOrderFixture({
+    customerAgent,
+    product,
+    variant,
+    quantity,
+  });
+
+  const initiationResponse = await customerAgent
+    .post(`/api/v1/orders/${order.id}/payments`)
+    .send({
+      provider: "razorpay",
+    })
+    .expect(201);
+
+  const payment = initiationResponse.body.data.payment;
+
+  const providerOrderId = payment.providerReference.orderId;
+
+  const providerPaymentId = `pay_test_${new mongoose.Types.ObjectId()}`;
+
+  const signature = createTestRazorpaySignature({
+    providerOrderId,
+    providerPaymentId,
+  });
+
+  return {
+    order,
+    payment,
+    providerOrderId,
+    providerPaymentId,
+    signature,
+
+    confirmationUrl:
+      `/api/v1/orders/${order.id}` + `/payments/${payment.id}/confirm`,
+
+    confirmationBody: {
+      razorpay_order_id: providerOrderId,
+      razorpay_payment_id: providerPaymentId,
+      razorpay_signature: signature,
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Multi-Item Customer Order
 |--------------------------------------------------------------------------
 */
@@ -28946,5 +29006,875 @@ describe("Customer online Payment initiation", () => {
     expect(firstResponse.body.data.checkout.orderId).toBe(
       secondResponse.body.data.checkout.orderId,
     );
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Customer Razorpay Payment Confirmation
+|--------------------------------------------------------------------------
+*/
+
+describe("Customer Razorpay Payment confirmation", () => {
+  /*
+  |--------------------------------------------------------------------------
+  | 1. Authentication
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 401 when Payment confirmation is requested without authentication", async () => {
+    const orderId = new mongoose.Types.ObjectId();
+
+    const paymentTransactionId = new mongoose.Types.ObjectId();
+
+    const response = await request(app)
+      .post(
+        `/api/v1/orders/${orderId}/payments/${paymentTransactionId}/confirm`,
+      )
+      .send({
+        razorpay_order_id: "order_test_unauthenticated",
+
+        razorpay_payment_id: "pay_test_unauthenticated",
+
+        razorpay_signature: "a".repeat(64),
+      });
+
+    expect(response.status).toBe(401);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 2. Admin Cannot Use Customer Confirmation Endpoint
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 403 when an admin attempts to confirm a customer Payment", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const orderId = new mongoose.Types.ObjectId();
+
+    const paymentTransactionId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent
+      .post(
+        `/api/v1/orders/${orderId}/payments/${paymentTransactionId}/confirm`,
+      )
+      .send({
+        razorpay_order_id: "order_test_admin",
+
+        razorpay_payment_id: "pay_test_admin",
+
+        razorpay_signature: "a".repeat(64),
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 3. Strict Request Validation
+  |--------------------------------------------------------------------------
+  */
+
+  it("validates IDs, confirmation fields, and rejects extra customer-controlled fields", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const validOrderId = new mongoose.Types.ObjectId();
+
+    const validPaymentTransactionId = new mongoose.Types.ObjectId();
+
+    const validBody = {
+      razorpay_order_id: "order_test_validation",
+
+      razorpay_payment_id: "pay_test_validation",
+
+      razorpay_signature: "a".repeat(64),
+    };
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Order ID
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidOrderResponse = await customerAgent
+      .post(
+        `/api/v1/orders/not-an-object-id/payments/${validPaymentTransactionId}/confirm`,
+      )
+      .send(validBody);
+
+    expect(invalidOrderResponse.status).toBe(400);
+
+    expect(invalidOrderResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Payment Transaction ID
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidPaymentIdResponse = await customerAgent
+      .post(`/api/v1/orders/${validOrderId}/payments/not-an-object-id/confirm`)
+      .send(validBody);
+
+    expect(invalidPaymentIdResponse.status).toBe(400);
+
+    expect(invalidPaymentIdResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Signature Format
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidSignatureResponse = await customerAgent
+      .post(
+        `/api/v1/orders/${validOrderId}/payments/${validPaymentTransactionId}/confirm`,
+      )
+      .send({
+        ...validBody,
+
+        razorpay_signature: "not-a-valid-signature",
+      });
+
+    expect(invalidSignatureResponse.status).toBe(400);
+
+    expect(invalidSignatureResponse.body.errorCode).toBe(
+      "REQUEST_VALIDATION_FAILED",
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Customer-Controlled Fields
+    |--------------------------------------------------------------------------
+    */
+
+    const extraFieldResponse = await customerAgent
+      .post(
+        `/api/v1/orders/${validOrderId}/payments/${validPaymentTransactionId}/confirm`,
+      )
+      .send({
+        ...validBody,
+
+        amount: 1,
+
+        status: "paid",
+      });
+
+    expect(extraFieldResponse.status).toBe(400);
+
+    expect(extraFieldResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 4. Ownership
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when another customer attempts to confirm the Payment", async () => {
+    const { agent: ownerAgent } = await createAuthenticatedCustomerAgent();
+
+    const { agent: otherCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent: ownerAgent,
+
+      product,
+    });
+
+    const response = await otherCustomerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("PAYMENT_TRANSACTION_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Database Must Remain Unchanged
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(storedPayment.verifiedAt).toBeNull();
+
+    expect(storedPayment.providerReference.paymentId).toBeNull();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 5. Provider Order ID Mismatch
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects confirmation when the browser Razorpay Order ID does not match the stored provider Order ID", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const response = await customerAgent.post(fixture.confirmationUrl).send({
+      ...fixture.confirmationBody,
+
+      razorpay_order_id: "order_test_tampered",
+    });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("PAYMENT_PROVIDER_ORDER_MISMATCH");
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Verification Should Be Stored
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(storedPayment.verifiedAt).toBeNull();
+
+    expect(storedPayment.providerReference.paymentId).toBeNull();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 6. Invalid Razorpay Signature
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects a cryptographically invalid Razorpay signature", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const response = await customerAgent.post(fixture.confirmationUrl).send({
+      ...fixture.confirmationBody,
+
+      razorpay_signature: "f".repeat(64),
+    });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("PAYMENT_SIGNATURE_INVALID");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Signature Must Not Mutate Payment
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(storedPayment.verifiedAt).toBeNull();
+
+    expect(storedPayment.providerReference.paymentId).toBeNull();
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 7. Successful Signature Verification
+  |--------------------------------------------------------------------------
+  */
+
+  it("verifies and privately persists a valid Razorpay Payment confirmation", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Capture State Before Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Confirm Payment
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.data.action).toBe("verify");
+
+    expect(response.body.data.verified).toBe(true);
+
+    expect(response.body.data.payment.id).toBe(fixture.payment.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Part 188 Does NOT Mark Payment Paid
+    |--------------------------------------------------------------------------
+    */
+
+    expect(response.body.data.payment.status).toBe("pending");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Provider References
+    |--------------------------------------------------------------------------
+    */
+
+    expect(response.body.data.payment.providerReference.orderId).toBe(
+      fixture.providerOrderId,
+    );
+
+    expect(response.body.data.payment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(response.body.data.payment.verifiedAt).toBeTruthy();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Signature Must Never Be Returned To Customer
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      response.body.data.payment.providerReference.signature,
+    ).toBeUndefined();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Signature Is Stored Privately
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(fixture.payment.id)
+      .select("+providerReference.signature")
+      .lean();
+
+    expect(storedPayment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(storedPayment.providerReference.signature).toBe(fixture.signature);
+
+    expect(storedPayment.verifiedAt).toBeInstanceOf(Date);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction Must Stay Pending
+    |--------------------------------------------------------------------------
+    */
+
+    expect(storedPayment.status).toBe("pending");
+
+    expect(storedPayment.paidAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Part 188 Must NOT Mark Order Paid
+    |--------------------------------------------------------------------------
+    */
+
+    const orderAfter = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfter.status).toBe("pending");
+
+    expect(orderAfter.payment.method).toBe("online");
+
+    expect(orderAfter.payment.status).toBe("pending");
+
+    expect(orderAfter.payment.paidAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Remain Reserved
+    |--------------------------------------------------------------------------
+    */
+
+    expect(orderAfter.inventoryStatus).toBe("reserved");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order State Must Not Change
+    |--------------------------------------------------------------------------
+    */
+
+    expect(orderAfter.status).toBe(orderBefore.status);
+
+    expect(orderAfter.payment.status).toBe(orderBefore.payment.status);
+
+    expect(orderAfter.inventoryStatus).toBe(orderBefore.inventoryStatus);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Physical Inventory Must Not Change
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 8. Idempotent Retry
+  |--------------------------------------------------------------------------
+  */
+
+  it("reuses the same verified confirmation when the customer submits it again", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+    const firstResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(firstResponse.status).toBe(200);
+
+    expect(firstResponse.body.data.action).toBe("verify");
+
+    const firstVerifiedAt = firstResponse.body.data.payment.verifiedAt;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Same Confirmation Again
+    |--------------------------------------------------------------------------
+    */
+
+    const secondResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(secondResponse.status).toBe(200);
+
+    expect(secondResponse.body.data.action).toBe("reuse");
+
+    expect(secondResponse.body.data.verified).toBe(true);
+
+    expect(secondResponse.body.data.payment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(secondResponse.body.data.payment.verifiedAt).toBe(firstVerifiedAt);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Duplicate PaymentTransaction
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 9. Different Provider Payment After Verification
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects a different Razorpay Payment ID after the transaction was already verified", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Original Payment
+    |--------------------------------------------------------------------------
+    */
+
+    await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Simulate Different Razorpay Payment
+    |--------------------------------------------------------------------------
+    */
+
+    const conflictingProviderPaymentId = `pay_test_${new mongoose.Types.ObjectId()}`;
+
+    const conflictingSignature = createTestRazorpaySignature({
+      providerOrderId: fixture.providerOrderId,
+
+      providerPaymentId: conflictingProviderPaymentId,
+    });
+
+    const response = await customerAgent.post(fixture.confirmationUrl).send({
+      razorpay_order_id: fixture.providerOrderId,
+
+      razorpay_payment_id: conflictingProviderPaymentId,
+
+      razorpay_signature: conflictingSignature,
+    });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("PAYMENT_PROVIDER_PAYMENT_CONFLICT");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Payment ID Must Remain
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(storedPayment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 10. Invalid Transaction State
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects confirmation when the PaymentTransaction is no longer pending", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Simulate Failed Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    await PaymentTransaction.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(fixture.payment.id),
+      },
+
+      {
+        $set: {
+          status: "failed",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Confirmation Must Be Rejected
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("PAYMENT_CONFIRMATION_STATE_INVALID");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 11. Missing Stored Provider Order ID
+  |--------------------------------------------------------------------------
+  */
+
+  it("rejects confirmation when the stored provider Order reference is missing", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Remove Trusted Provider Order Reference
+    |--------------------------------------------------------------------------
+    */
+
+    await PaymentTransaction.collection.updateOne(
+      {
+        _id: new mongoose.Types.ObjectId(fixture.payment.id),
+      },
+
+      {
+        $set: {
+          "providerReference.orderId": null,
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Confirmation Must Fail Closed
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody);
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "PAYMENT_PROVIDER_ORDER_REFERENCE_MISSING",
+    );
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 12. Unknown Payment Transaction
+  |--------------------------------------------------------------------------
+  */
+
+  it("returns 404 when the PaymentTransaction does not belong to the Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const unknownPaymentTransactionId = new mongoose.Types.ObjectId();
+
+    const response = await customerAgent
+      .post(
+        `/api/v1/orders/${fixture.order.id}/payments/${unknownPaymentTransactionId}/confirm`,
+      )
+      .send(fixture.confirmationBody);
+
+    expect(response.status).toBe(404);
+
+    expect(response.body.errorCode).toBe("PAYMENT_TRANSACTION_NOT_FOUND");
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | 13. Concurrent Duplicate Confirmation
+  |--------------------------------------------------------------------------
+  */
+
+  it("verifies once and safely reuses a concurrent duplicate confirmation", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fire Same Confirmation Twice Concurrently
+    |--------------------------------------------------------------------------
+    */
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      customerAgent
+        .post(fixture.confirmationUrl)
+        .send(fixture.confirmationBody),
+
+      customerAgent
+        .post(fixture.confirmationUrl)
+        .send(fixture.confirmationBody),
+    ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Both Requests Must Succeed
+    |--------------------------------------------------------------------------
+    */
+
+    expect(firstResponse.status).toBe(200);
+
+    expect(secondResponse.status).toBe(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Verification + One Reuse
+    |--------------------------------------------------------------------------
+    */
+
+    const actions = [
+      firstResponse.body.data.action,
+
+      secondResponse.body.data.action,
+    ].sort();
+
+    expect(actions).toEqual(["reuse", "verify"]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Final Database State
+    |--------------------------------------------------------------------------
+    */
+
+    const storedPayment = await PaymentTransaction.findById(fixture.payment.id)
+      .select("+providerReference.signature")
+      .lean();
+
+    expect(storedPayment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(storedPayment.providerReference.signature).toBe(fixture.signature);
+
+    expect(storedPayment.verifiedAt).toBeInstanceOf(Date);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Still Pending After Part 188
+    |--------------------------------------------------------------------------
+    */
+
+    expect(storedPayment.status).toBe("pending");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Still Exactly One Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
   });
 });

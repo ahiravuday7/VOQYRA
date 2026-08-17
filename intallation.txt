@@ -5731,6 +5731,30 @@ Inventory still reserved ✅
 
 
 is this order compulsory? createPaymentSession() buildCheckoutData() verifyPaymentConfirmation()
+
+Part 188: test gate — implemented:
+updated only:
+
+tests/integration/order.integration.test.js
+Razorpay confirmation fixture plus 13 integration tests covering:
+
+authentication / customer-role protection
+invalid IDs and strict body validation
+another customer's Payment
+Razorpay Order ID mismatch
+invalid signature
+valid HMAC signature
+private signature persistence
+verifiedAt
+PaymentTransaction remains pending
+Order payment remains pending
+inventory remains reserved
+duplicate confirmation → reuse
+conflicting Razorpay Payment ID
+invalid Payment state
+missing provider Order ID
+unknown PaymentTransaction
+concurrent duplicate confirmations
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
@@ -5743,3 +5767,11 @@ Virtual      → Calculated information
 Method       → What one session can do
 Query helper → How sessions can be filtered
 Model        → How the application talks to MongoDB
+
+project.zip
+installation.txt
+
+Read installation.txt first.
+Check the current source.
+Confirm the last completed Part.
+Continue from the next Part.
