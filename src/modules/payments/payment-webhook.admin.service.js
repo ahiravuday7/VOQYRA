@@ -11,7 +11,10 @@ import {
   toAdminPaymentWebhookEvent,
   toAdminPaymentWebhookEventList,
   toAdminPaymentWebhookQueueSummary,
+  toAdminPaymentWebhookWorkerHealth,
 } from "./payment-webhook.admin.mapper.js";
+
+import { getPaymentWebhookWorkerHealth } from "./payment-webhook-worker.service.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -133,4 +136,16 @@ export const getAdminPaymentWebhookQueueSummary = async () => {
   const summary = await getAdminPaymentWebhookQueueSummaryRepository();
 
   return toAdminPaymentWebhookQueueSummary(summary);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Webhook Worker Health
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminPaymentWebhookWorkerHealth = () => {
+  const health = getPaymentWebhookWorkerHealth();
+
+  return toAdminPaymentWebhookWorkerHealth(health);
 };

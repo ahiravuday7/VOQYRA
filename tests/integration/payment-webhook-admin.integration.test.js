@@ -676,4 +676,48 @@ describe("Admin Payment webhook operations", () => {
 
     expect(response.status).toBe(403);
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Worker Health
+|--------------------------------------------------------------------------
+*/
+
+  it("returns Payment webhook worker runtime health to an admin", async () => {
+    const { agent } = await createAuthenticatedAgent({
+      role: USER_ROLES.ADMIN,
+    });
+
+    const response = await agent.get(
+      "/api/v1/admin/payment-webhooks/worker-health",
+    );
+
+    expect(response.status).toBe(200);
+
+    const worker = response.body.data.worker;
+
+    expect(["stopped", "idle", "busy", "stopping"]).toContain(worker.status);
+
+    expect(typeof worker.started).toBe("boolean");
+
+    expect(typeof worker.busy).toBe("boolean");
+
+    expect(worker.configuration.intervalMs).toBeGreaterThanOrEqual(1000);
+
+    expect(worker.configuration.batchSize).toBeGreaterThan(0);
+
+    expect(worker.cycles.total).toBeGreaterThanOrEqual(0);
+  });
+
+  it("rejects customer access to Payment webhook worker health", async () => {
+    const { agent } = await createAuthenticatedAgent({
+      role: USER_ROLES.CUSTOMER,
+    });
+
+    const response = await agent.get(
+      "/api/v1/admin/payment-webhooks/worker-health",
+    );
+
+    expect(response.status).toBe(403);
+  });
 });

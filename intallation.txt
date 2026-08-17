@@ -6295,6 +6295,27 @@ When was the last successful processing?
 
 Is human attention required?
 |--------------------------------------------------------------------------
+Part 199 — Webhook Worker Runtime Health 🩺
+
+Part 198 tells admins what is in the queue. Part 199 tells them whether the worker itself is healthy.
+
+New endpoint:
+
+GET /api/v1/admin/payment-webhooks/worker-health
+
+It will report things like:
+
+started / stopped
+idle / busy / stopping
+interval
+batch size
+last cycle
+cycle duration
+processed / failed / dead-lettered
+last worker error
+total cycles
+
+No webhook, payment, Order, or inventory state changes happen here.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 

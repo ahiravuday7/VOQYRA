@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   processPaymentWebhookBatch,
   runPaymentWebhookWorkerCycle,
+  getPaymentWebhookWorkerHealth,
 } from "../../src/modules/payments/payment-webhook-worker.service.js";
 
 /*
@@ -242,5 +243,91 @@ describe("Payment webhook worker", () => {
     expect(result.deadLettered).toBe(1);
 
     expect(result.idle).toBe(true);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Worker Health Telemetry
+|--------------------------------------------------------------------------
+*/
+
+  it("records runtime health after a successful worker cycle", async () => {
+    const before = getPaymentWebhookWorkerHealth();
+
+    const processor = async () => {
+      return {
+        action: "idle",
+      };
+    };
+
+    const result = await runPaymentWebhookWorkerCycle({
+      maxEvents: 5,
+
+      processor,
+    });
+
+    expect(result.action).toBe("run");
+
+    const health = getPaymentWebhookWorkerHealth();
+
+    expect(health.cycles.total).toBeGreaterThan(before.cycles.total);
+
+    expect(health.cycles.successful).toBeGreaterThan(before.cycles.successful);
+
+    expect(health.lastCycle.startedAt).toBeInstanceOf(Date);
+
+    expect(health.lastCycle.finishedAt).toBeInstanceOf(Date);
+
+    expect(health.lastCycle.durationMs).toBeGreaterThanOrEqual(0);
+
+    expect(health.lastCycle.error).toBeNull();
+
+    expect(health.lastCycle.result).toMatchObject({
+      claimed: 0,
+
+      processed: 0,
+
+      failed: 0,
+
+      deadLettered: 0,
+
+      idle: true,
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Failed Cycle Health
+|--------------------------------------------------------------------------
+*/
+
+  it("records a worker cycle failure without losing runtime health", async () => {
+    const processor = async () => {
+      const error = new Error("Test worker failure");
+
+      error.code = "TEST_WORKER_FAILURE";
+
+      throw error;
+    };
+
+    await expect(
+      runPaymentWebhookWorkerCycle({
+        maxEvents: 1,
+
+        processor,
+      }),
+    ).rejects.toThrow("Test worker failure");
+
+    const health = getPaymentWebhookWorkerHealth();
+
+    expect(health.cycles.failed).toBeGreaterThanOrEqual(1);
+
+    expect(health.lastCycle.result).toBeNull();
+
+    expect(health.lastCycle.error).toEqual({
+      code: "TEST_WORKER_FAILURE",
+
+      message: "Test worker failure",
+    });
   });
 });

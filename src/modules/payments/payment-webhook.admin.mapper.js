@@ -179,3 +179,63 @@ export const toAdminPaymentWebhookQueueSummary = (summary) => {
     attentionRequired: summary.attentionRequired,
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Admin Payment Webhook Worker Health
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminPaymentWebhookWorkerHealth = (health) => {
+  return {
+    status: health.status,
+
+    started: health.started,
+
+    stopping: health.stopping,
+
+    busy: health.busy,
+
+    configuration: {
+      intervalMs: health.configuration.intervalMs,
+
+      batchSize: health.configuration.batchSize,
+    },
+
+    lifecycle: {
+      startedAt: health.lifecycle.startedAt,
+
+      stoppedAt: health.lifecycle.stoppedAt,
+    },
+
+    cycles: {
+      total: health.cycles.total,
+
+      successful: health.cycles.successful,
+
+      failed: health.cycles.failed,
+
+      skippedBusy: health.cycles.skippedBusy,
+    },
+
+    lastCycle: {
+      startedAt: health.lastCycle.startedAt,
+
+      finishedAt: health.lastCycle.finishedAt,
+
+      durationMs: health.lastCycle.durationMs,
+
+      result: health.lastCycle.result
+        ? {
+            ...health.lastCycle.result,
+          }
+        : null,
+
+      error: health.lastCycle.error
+        ? {
+            ...health.lastCycle.error,
+          }
+        : null,
+    },
+  };
+};

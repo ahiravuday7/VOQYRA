@@ -13,6 +13,7 @@ import {
   getAdminPaymentWebhookEventsController,
   requeueAdminPaymentWebhookEventController,
   getAdminPaymentWebhookQueueSummaryController,
+  getAdminPaymentWebhookWorkerHealthController,
 } from "./payment-webhook.admin.controller.js";
 
 import {
@@ -20,6 +21,7 @@ import {
   adminPaymentWebhookListRequestSchema,
   adminPaymentWebhookRequeueRequestSchema,
   adminPaymentWebhookSummaryRequestSchema,
+  adminPaymentWebhookWorkerHealthRequestSchema,
 } from "./payment-webhook.admin.validation.js";
 
 const router = Router();
@@ -67,6 +69,20 @@ router.get(
   validateRequest(adminPaymentWebhookSummaryRequestSchema),
 
   getAdminPaymentWebhookQueueSummaryController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Worker Health
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/worker-health",
+
+  validateRequest(adminPaymentWebhookWorkerHealthRequestSchema),
+
+  getAdminPaymentWebhookWorkerHealthController,
 );
 
 /*

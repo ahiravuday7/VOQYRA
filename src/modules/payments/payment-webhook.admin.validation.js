@@ -203,3 +203,17 @@ export const adminPaymentWebhookSummaryRequestSchema = z.strictObject({
 
   query: emptyObjectSchema,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Admin Webhook Worker Health
+|--------------------------------------------------------------------------
+*/
+
+export const adminPaymentWebhookWorkerHealthRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: emptyObjectSchema,
+
+  query: emptyObjectSchema,
+});

@@ -32,6 +32,34 @@ let workerBatchSize = DEFAULT_WORKER_BATCH_SIZE;
 
 /*
 |--------------------------------------------------------------------------
+| Worker Runtime Telemetry
+|--------------------------------------------------------------------------
+*/
+
+let workerStartedAt = null;
+
+let workerStoppedAt = null;
+
+let lastCycleStartedAt = null;
+
+let lastCycleFinishedAt = null;
+
+let lastCycleDurationMs = null;
+
+let lastCycleResult = null;
+
+let lastCycleError = null;
+
+let totalCycles = 0;
+
+let successfulCycles = 0;
+
+let failedCycles = 0;
+
+let skippedBusyCycles = 0;
+
+/*
+|--------------------------------------------------------------------------
 | Process Webhook Batch
 |--------------------------------------------------------------------------
 |
@@ -132,7 +160,7 @@ export const processPaymentWebhookBatch = async ({
 | Run Single Worker Cycle
 |--------------------------------------------------------------------------
 |
-| Prevent overlapping cycles.
+| Only one cycle may execute inside this Node process at a time.
 |--------------------------------------------------------------------------
 */
 
@@ -143,11 +171,13 @@ export const runPaymentWebhookWorkerCycle = ({
 } = {}) => {
   /*
     |--------------------------------------------------------------------------
-    | Existing Cycle Still Running
+    | Prevent Overlap
     |--------------------------------------------------------------------------
     */
 
   if (activeCyclePromise) {
+    skippedBusyCycles += 1;
+
     return Promise.resolve({
       action: "skip",
 
@@ -155,18 +185,90 @@ export const runPaymentWebhookWorkerCycle = ({
     });
   }
 
+  /*
+    |--------------------------------------------------------------------------
+    | Cycle Started
+    |--------------------------------------------------------------------------
+    */
+
+  const cycleStartedAt = new Date();
+
+  lastCycleStartedAt = cycleStartedAt;
+
+  lastCycleError = null;
+
   activeCyclePromise = (async () => {
-    const batch = await processPaymentWebhookBatch({
-      maxEvents,
+    try {
+      const batch = await processPaymentWebhookBatch({
+        maxEvents,
 
-      processor,
-    });
+        processor,
+      });
 
-    return {
-      action: "run",
+      /*
+          |--------------------------------------------------------------------------
+          | Success Metrics
+          |--------------------------------------------------------------------------
+          */
 
-      ...batch,
-    };
+      successfulCycles += 1;
+
+      lastCycleResult = {
+        claimed: batch.claimed,
+
+        processed: batch.processed,
+
+        failed: batch.failed,
+
+        deadLettered: batch.deadLettered,
+
+        idle: batch.idle,
+
+        limitReached: batch.limitReached,
+      };
+
+      return {
+        action: "run",
+
+        ...batch,
+      };
+    } catch (error) {
+      /*
+          |--------------------------------------------------------------------------
+          | Cycle Failure
+          |--------------------------------------------------------------------------
+          */
+
+      failedCycles += 1;
+
+      lastCycleResult = null;
+
+      lastCycleError = {
+        code: error?.code ?? null,
+
+        message: error?.message ?? "Payment webhook worker cycle failed",
+      };
+
+      throw error;
+    } finally {
+      /*
+          |--------------------------------------------------------------------------
+          | Cycle Finished
+          |--------------------------------------------------------------------------
+          */
+
+      const cycleFinishedAt = new Date();
+
+      lastCycleFinishedAt = cycleFinishedAt;
+
+      lastCycleDurationMs = Math.max(
+        cycleFinishedAt.getTime() - cycleStartedAt.getTime(),
+
+        0,
+      );
+
+      totalCycles += 1;
+    }
   })();
 
   return activeCyclePromise.finally(() => {
@@ -290,6 +392,10 @@ export const startPaymentWebhookWorker = ({
 
   workerStarted = true;
 
+  workerStartedAt = new Date();
+
+  workerStoppedAt = null;
+
   logger.info(
     {
       intervalMs: workerIntervalMs,
@@ -380,9 +486,100 @@ export const stopPaymentWebhookWorker = async () => {
 
   workerStopping = false;
 
+  workerStoppedAt = new Date();
+
   logger.info("Payment webhook worker stopped");
 
   return {
     action: "stop",
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Payment Webhook Worker Health
+|--------------------------------------------------------------------------
+|
+| Read-only runtime snapshot.
+|
+| Does not start, stop, or trigger processing.
+|--------------------------------------------------------------------------
+*/
+
+export const getPaymentWebhookWorkerHealth = () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Runtime Status
+    |--------------------------------------------------------------------------
+    */
+
+  let status = "stopped";
+
+  if (workerStopping) {
+    status = "stopping";
+  } else if (activeCyclePromise) {
+    status = "busy";
+  } else if (workerStarted) {
+    status = "idle";
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Last Cycle
+    |--------------------------------------------------------------------------
+    */
+
+  const lastCycle = {
+    startedAt: lastCycleStartedAt,
+
+    finishedAt: lastCycleFinishedAt,
+
+    durationMs: lastCycleDurationMs,
+
+    result: lastCycleResult
+      ? {
+          ...lastCycleResult,
+        }
+      : null,
+
+    error: lastCycleError
+      ? {
+          ...lastCycleError,
+        }
+      : null,
+  };
+
+  return {
+    status,
+
+    started: workerStarted,
+
+    stopping: workerStopping,
+
+    busy: Boolean(activeCyclePromise),
+
+    configuration: {
+      intervalMs: workerIntervalMs,
+
+      batchSize: workerBatchSize,
+    },
+
+    lifecycle: {
+      startedAt: workerStartedAt,
+
+      stoppedAt: workerStoppedAt,
+    },
+
+    cycles: {
+      total: totalCycles,
+
+      successful: successfulCycles,
+
+      failed: failedCycles,
+
+      skippedBusy: skippedBusyCycles,
+    },
+
+    lastCycle,
   };
 };

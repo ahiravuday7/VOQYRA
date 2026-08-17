@@ -3,6 +3,7 @@ import {
   getAdminPaymentWebhookEvents,
   requeueAdminPaymentWebhookEvent,
   getAdminPaymentWebhookQueueSummary,
+  getAdminPaymentWebhookWorkerHealth,
 } from "./payment-webhook.admin.service.js";
 
 /*
@@ -167,6 +168,49 @@ export const getAdminPaymentWebhookQueueSummaryController = async (
 
     data: {
       summary,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Webhook Worker Health
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/payment-webhooks/worker-health
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminPaymentWebhookWorkerHealthController = async (
+  request,
+
+  response,
+) => {
+  const health = getAdminPaymentWebhookWorkerHealth();
+
+  request.log?.info(
+    {
+      adminId: String(request.user._id),
+
+      workerStatus: health.status,
+
+      busy: health.busy,
+
+      totalCycles: health.cycles.total,
+
+      failedCycles: health.cycles.failed,
+    },
+
+    "Admin Payment webhook worker health retrieved",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Payment webhook worker health retrieved successfully",
+
+    data: {
+      worker: health,
     },
   });
 };
