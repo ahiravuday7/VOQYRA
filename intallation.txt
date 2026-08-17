@@ -6008,6 +6008,43 @@ captured
 
 That is the right split: customer-facing confirmation can use an immediate provider API verification, while Razorpay still recommends webhooks for reliable asynchronous event handling.
 |--------------------------------------------------------------------------
+Part 193 — Razorpay Webhook Ingestion Foundation 🔔
+
+This part gives your backend a safe webhook inbox.
+
+Razorpay signs webhooks using X-Razorpay-Signature over the exact raw request body, so the webhook route must use express.raw() and must run before express.json(). Razorpay also sends x-razorpay-event-id, which is specifically intended for duplicate-event detection because webhook delivery is at-least-once.
+
+For Part 193 we will not update PaymentTransaction, Order, or inventory yet.
+
+Razorpay webhook
+      ↓
+verify HMAC signature
+      ↓
+check event ID
+      ↓
+normalize event
+      ↓
+store MongoDB inbox event
+      ↓
+HTTP 200
+
+claim pending webhook
+      ↓
+find PaymentTransaction
+      ↓
+fetch fresh Payment from Razorpay
+      ↓
+Part 189 verification
+      ↓
+Part 190 state sync
+      ↓
+captured?
+      ↓
+Part 191 Order finalization
+      ↓
+mark webhook processed
+      ↓
+retry safely on temporary failure
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

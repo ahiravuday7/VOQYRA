@@ -53,6 +53,9 @@ process.env.RAZORPAY_KEY_ID = "rzp_test_clothing_commerce_test_key";
 
 process.env.RAZORPAY_KEY_SECRET = "clothing-commerce-test-razorpay-secret";
 
+process.env.RAZORPAY_WEBHOOK_SECRET =
+  "clothing-commerce-test-razorpay-webhook-secret-0123456789";
+
 process.env.AUTH_COOKIE_SAME_SITE = "lax";
 
 /*

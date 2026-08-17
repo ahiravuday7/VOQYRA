@@ -70,6 +70,11 @@ const environmentSchema = z.object({
     .trim()
     .min(1, "RAZORPAY_KEY_SECRET is required"),
 
+  RAZORPAY_WEBHOOK_SECRET: z
+    .string()
+    .trim()
+    .min(32, "RAZORPAY_WEBHOOK_SECRET must contain at least 32 characters"),
+
   AUTH_COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
 });
 

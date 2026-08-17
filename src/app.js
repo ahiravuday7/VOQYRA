@@ -25,6 +25,8 @@ import orderReturnReplacementAdminRoutes from "./modules/orders/order-return-rep
 
 import { initializePaymentProviders } from "./modules/payments/providers/payment-provider.bootstrap.js";
 
+import paymentWebhookRoutes from "./modules/payments/payment-webhook.routes.js";
+
 /*
 |--------------------------------------------------------------------------
 | Payment Provider Initialization
@@ -76,6 +78,23 @@ app.use(
 
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Razorpay Webhooks
+|--------------------------------------------------------------------------
+|
+| MUST stay before express.json().
+|
+| Razorpay signs the original raw request bytes.
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  "/api/v1/webhooks/payments",
+
+  paymentWebhookRoutes,
 );
 
 /*

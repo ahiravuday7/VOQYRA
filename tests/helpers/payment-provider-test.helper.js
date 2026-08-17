@@ -36,6 +36,45 @@ const TEST_RAZORPAY_KEY_SECRET = "clothing-commerce-test-razorpay-secret";
 
 /*
 |--------------------------------------------------------------------------
+| Test Razorpay Webhook Secret
+|--------------------------------------------------------------------------
+*/
+
+const TEST_RAZORPAY_WEBHOOK_SECRET =
+  "clothing-commerce-test-razorpay-webhook-secret-0123456789";
+
+/*
+|--------------------------------------------------------------------------
+| Create Test Razorpay Webhook Signature
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| Signature is generated from the exact raw request body.
+|--------------------------------------------------------------------------
+*/
+
+export const createTestRazorpayWebhookSignature = (rawBody) => {
+  const body = Buffer.isBuffer(rawBody)
+    ? rawBody
+    : Buffer.from(
+        rawBody,
+
+        "utf8",
+      );
+
+  return crypto
+    .createHmac(
+      "sha256",
+
+      TEST_RAZORPAY_WEBHOOK_SECRET,
+    )
+    .update(body)
+    .digest("hex");
+};
+
+/*
+|--------------------------------------------------------------------------
 | Test Razorpay Payment Details
 |--------------------------------------------------------------------------
 |
