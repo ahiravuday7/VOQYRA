@@ -1,3 +1,5 @@
+import { AUDIT_ACTOR_TYPES } from "../../shared/constants/audit.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Normalize Inventory Ledger Object
@@ -110,7 +112,25 @@ export const toAdminProductInventoryLedgerEntry = (ledgerEntry) => {
 
     referenceId: normalizedEntry.referenceId ?? null,
 
+    /*
+|--------------------------------------------------------------------------
+| Audit Actor
+|--------------------------------------------------------------------------
+|
+| Backward compatibility:
+|
+| Older ledger documents may not contain actorType.
+| If an actor ID exists, treat them as user-created.
+|--------------------------------------------------------------------------
+*/
+
+    actorType:
+      normalizedEntry.actorType ??
+      (normalizedEntry.actor ? AUDIT_ACTOR_TYPES.USER : null),
+
     actorId: normalizeIdentifier(normalizedEntry.actor),
+
+    systemActor: normalizedEntry.systemActor ?? null,
 
     createdAt: normalizedEntry.createdAt,
   };

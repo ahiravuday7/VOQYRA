@@ -1,3 +1,5 @@
+import { AUDIT_ACTOR_TYPES } from "../../shared/constants/audit.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Normalize Order Object
@@ -331,8 +333,22 @@ const mapCustomerOrderSummaryItem = (item) => {
 |--------------------------------------------------------------------------
 */
 
+/*
+|--------------------------------------------------------------------------
+| Map Admin Status History
+|--------------------------------------------------------------------------
+*/
+
 const mapAdminOrderStatusHistory = (statusHistory = []) => {
   return statusHistory.map((historyEntry) => {
+    /*
+     * Existing documents created before
+     * Part 201 may not contain changedByType.
+     */
+    const changedByType =
+      historyEntry.changedByType ??
+      (historyEntry.changedBy ? AUDIT_ACTOR_TYPES.USER : null);
+
     return {
       id: normalizeIdentifier(historyEntry._id),
 
@@ -340,7 +356,11 @@ const mapAdminOrderStatusHistory = (statusHistory = []) => {
 
       note: historyEntry.note ?? null,
 
+      changedByType,
+
       changedBy: normalizeIdentifier(historyEntry.changedBy),
+
+      systemActor: historyEntry.systemActor ?? null,
 
       changedAt: historyEntry.changedAt,
     };

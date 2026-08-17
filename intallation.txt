@@ -6365,7 +6365,67 @@ NO automatic release yet
 
 We deliberately stop there because inventory release writes an immutable inventory ledger whose actor currently must reference a real User. We should solve that audit requirement cleanly rather than pretending the customer cancelled the Order.
 |--------------------------------------------------------------------------
+Part 201 — System Audit Actor Foundation 🤖
 
+Before we automatically release expired reservations, we need to fix one architectural issue properly:
+
+Current inventory ledger:
+actor → must be a User
+
+But automatic expiry is performed by:
+
+system / background worker
+
+Using the customer ID would create false audit history. So Part 201 adds a proper distinction between:
+
+user action
+system action
+
+Part 201 does not expire Orders yet. Part 202 will use this foundation to release expired reservations atomically.
+
+After Part 201
+
+Your audit system can now truthfully represent:
+
+Human operation
+    ↓
+actorType = user
+actor = User ObjectId
+systemActor = null
+
+and:
+
+Automatic backend operation
+    ↓
+actorType = system
+actor = null
+systemActor = order-reservation-expiry-worker
+
+That removes the blocker we found in releaseOrderItemsInventoryInTransaction().
+
+Part 202 can now safely implement the actual expired-Order processor:
+
+find expired unpaid online Order
+        ↓
+lock/revalidate Order
+        ↓
+release reserved product inventory
+        ↓
+write SYSTEM inventory ledger
+        ↓
+Order inventory = released
+        ↓
+Order = cancelled/expired
+        ↓
+clear reservation expiry
+
+without falsely attributing the operation to the customer.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
 info:
 The easiest way to remember is:

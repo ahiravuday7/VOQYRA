@@ -6,6 +6,12 @@ import {
   PRODUCT_INVENTORY_OPERATION_VALUES,
 } from "../../shared/constants/product-inventory.constants.js";
 
+import {
+  AUDIT_ACTOR_TYPES,
+  AUDIT_ACTOR_TYPE_VALUES,
+  SYSTEM_AUDIT_ACTOR_VALUES,
+} from "../../shared/constants/audit.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Inventory State Schema
@@ -269,14 +275,62 @@ const productInventoryLedgerSchema = new mongoose.Schema(
       immutable: true,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Audit Actor
+|--------------------------------------------------------------------------
+|
+| Existing human actions:
+|
+| actorType = user
+| actor     = User ObjectId
+|
+| Automated actions:
+|
+| actorType   = system
+| actor       = null
+| systemActor = stable system identifier
+|--------------------------------------------------------------------------
+*/
+
+    actorType: {
+      type: String,
+
+      required: true,
+
+      enum: AUDIT_ACTOR_TYPE_VALUES,
+
+      default: AUDIT_ACTOR_TYPES.USER,
+
+      immutable: true,
+    },
+
     actor: {
       type: mongoose.Schema.Types.ObjectId,
 
       ref: "User",
 
-      required: true,
+      default: null,
 
       immutable: true,
+
+      required: function () {
+        return this.actorType === AUDIT_ACTOR_TYPES.USER;
+      },
+    },
+
+    systemActor: {
+      type: String,
+
+      default: null,
+
+      enum: [...SYSTEM_AUDIT_ACTOR_VALUES, null],
+
+      immutable: true,
+
+      required: function () {
+        return this.actorType === AUDIT_ACTOR_TYPES.SYSTEM;
+      },
     },
   },
 
@@ -516,6 +570,20 @@ productInventoryLedgerSchema.index(
 
 productInventoryLedgerSchema.index({
   actor: 1,
+  createdAt: -1,
+});
+
+/*
+|--------------------------------------------------------------------------
+| System Actor Audit
+|--------------------------------------------------------------------------
+*/
+
+productInventoryLedgerSchema.index({
+  actorType: 1,
+
+  systemActor: 1,
+
   createdAt: -1,
 });
 

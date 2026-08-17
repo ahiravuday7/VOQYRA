@@ -15,6 +15,12 @@ import {
   ORDER_STATUS_VALUES,
 } from "../../shared/constants/order.constants.js";
 
+import {
+  AUDIT_ACTOR_TYPES,
+  AUDIT_ACTOR_TYPE_VALUES,
+  SYSTEM_AUDIT_ACTOR_VALUES,
+} from "../../shared/constants/audit.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Integer Validator
@@ -837,12 +843,44 @@ const orderStatusHistorySchema = new mongoose.Schema(
       maxlength: 500,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Status Change Actor
+|--------------------------------------------------------------------------
+*/
+
+    changedByType: {
+      type: String,
+
+      required: true,
+
+      enum: AUDIT_ACTOR_TYPE_VALUES,
+
+      default: AUDIT_ACTOR_TYPES.USER,
+    },
+
     changedBy: {
       type: mongoose.Schema.Types.ObjectId,
 
       ref: "User",
 
-      required: true,
+      default: null,
+
+      required: function () {
+        return this.changedByType === AUDIT_ACTOR_TYPES.USER;
+      },
+    },
+
+    systemActor: {
+      type: String,
+
+      default: null,
+
+      enum: [...SYSTEM_AUDIT_ACTOR_VALUES, null],
+
+      required: function () {
+        return this.changedByType === AUDIT_ACTOR_TYPES.SYSTEM;
+      },
     },
 
     changedAt: {
