@@ -36,6 +36,53 @@ const TEST_RAZORPAY_KEY_SECRET = "clothing-commerce-test-razorpay-secret";
 
 /*
 |--------------------------------------------------------------------------
+| Test Razorpay Payment Details
+|--------------------------------------------------------------------------
+|
+| Part 189 provider lookups must stay completely offline.
+|--------------------------------------------------------------------------
+*/
+
+const testRazorpayPaymentDetails = new Map();
+
+export const setTestRazorpayPaymentDetails = ({
+  providerPaymentId,
+
+  providerOrderId,
+
+  amount,
+
+  currency = "INR",
+
+  status = "captured",
+
+  captured = true,
+
+  method = "upi",
+}) => {
+  testRazorpayPaymentDetails.set(providerPaymentId, {
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount,
+
+    currency,
+
+    status,
+
+    captured,
+
+    method,
+  });
+};
+
+export const clearTestRazorpayPaymentDetails = () => {
+  testRazorpayPaymentDetails.clear();
+};
+
+/*
+|--------------------------------------------------------------------------
 | Create Test Razorpay Signature
 |--------------------------------------------------------------------------
 |
@@ -115,6 +162,20 @@ export const testRazorpayPaymentProviderAdapter = Object.freeze({
 
       receivedBuffer,
     );
+  },
+
+  async fetchPaymentDetails({ providerPaymentId }) {
+    const details = testRazorpayPaymentDetails.get(providerPaymentId);
+
+    if (!details) {
+      throw new Error(
+        `Test Razorpay Payment details are not configured: ${providerPaymentId}`,
+      );
+    }
+
+    return {
+      ...details,
+    };
   },
 
   async createPaymentSession({

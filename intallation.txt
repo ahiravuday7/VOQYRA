@@ -5756,6 +5756,56 @@ missing provider Order ID
 unknown PaymentTransaction
 concurrent duplicate confirmations
 |--------------------------------------------------------------------------
+Part 189 — Provider Payment Details Verification 🔐
+
+We’re starting Part 189.
+
+Part 188 proved that the Razorpay Checkout response is authentic. Part 189 adds the next security boundary: ask Razorpay directly what actually happened to that payment.
+
+Razorpay’s Payment API can fetch a payment by payment_id and returns trusted fields including order_id, amount, currency, status, and captured. Current Razorpay payment states include created, authorized, captured, refunded, and failed.
+
+For Part 189 we still do NOT mark the Order paid or commit inventory. That comes afterward.
+
+Important Part 189 boundary
+
+After this part, our architecture becomes:
+
+Razorpay Checkout
+        ↓
+razorpay_payment_id
+razorpay_signature
+        ↓
+Part 188
+Verify HMAC signature
+        ↓
+PaymentTransaction
+verifiedAt ✅
+        ↓
+Part 189
+Fetch Payment directly from Razorpay
+        ↓
+GET /v1/payments/:paymentId
+        ↓
+Verify:
+paymentId ✅
+orderId ✅
+amount ✅
+currency ✅
+        ↓
+Read:
+status
+captured
+payment method
+        ↓
+NO Order paid yet
+NO inventory commit yet
+
+This distinction matters because an authorized Razorpay payment is not the same as a captured payment. Razorpay exposes capture separately, and its API uses the captured state/flag to tell us when payment capture has actually happened.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

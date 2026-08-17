@@ -9,7 +9,10 @@ import {
 
 import { PAYMENT_PROVIDERS } from "../../src/modules/payments/payment.model.js";
 
-import { testRazorpayPaymentProviderAdapter } from "../helpers/payment-provider-test.helper.js";
+import {
+  testRazorpayPaymentProviderAdapter,
+  clearTestRazorpayPaymentDetails,
+} from "../helpers/payment-provider-test.helper.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -98,6 +101,8 @@ beforeAll(async () => {
 */
 
 beforeEach(async () => {
+  clearTestRazorpayPaymentDetails();
+
   const database = mongoose.connection.db;
 
   if (!database) {

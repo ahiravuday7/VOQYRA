@@ -5,6 +5,8 @@ import {
   assertPaymentProviderCheckoutResult,
   assertPaymentProviderConfirmationInput,
   assertPaymentProviderConfirmationResult,
+  assertPaymentProviderDetailsInput,
+  assertPaymentProviderDetailsResult,
 } from "./payment-provider.contract.js";
 
 import { getPaymentProvider } from "./payment-provider.registry.js";
@@ -186,4 +188,130 @@ export const verifyPaymentProviderConfirmation = ({
   assertPaymentProviderConfirmationResult(verified);
 
   return verified;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Fetch And Verify Payment Provider Details
+|--------------------------------------------------------------------------
+|
+| Signature verification proves the Checkout response is authentic.
+|
+| This second verification asks the provider directly for the Payment and
+| compares it with trusted PaymentTransaction values from our database.
+|
+| No local Payment/Order state is changed in Part 189.
+|--------------------------------------------------------------------------
+*/
+
+export const fetchAndVerifyPaymentProviderDetails = async ({
+  provider,
+
+  providerPaymentId,
+
+  providerOrderId,
+
+  amount,
+
+  currency,
+}) => {
+  const input = {
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount,
+
+    currency,
+  };
+
+  assertPaymentProviderDetailsInput(input);
+
+  const adapter = getPaymentProvider(provider);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Provider Lookup
+  |--------------------------------------------------------------------------
+  |
+  | Important:
+  |
+  | Only providerPaymentId goes to the provider adapter.
+  |
+  | We do NOT give the adapter our expected amount/order/currency and then
+  | blindly trust the same values coming back.
+  |--------------------------------------------------------------------------
+  */
+
+  const details = await adapter.fetchPaymentDetails({
+    providerPaymentId,
+  });
+
+  assertPaymentProviderDetailsResult(details);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Payment ID Integrity
+  |--------------------------------------------------------------------------
+  */
+
+  if (details.providerPaymentId !== providerPaymentId) {
+    throw new Error(
+      "Payment provider returned a different Payment ID than requested",
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Provider Order Integrity
+  |--------------------------------------------------------------------------
+  */
+
+  if (details.providerOrderId !== providerOrderId) {
+    throw new Error(
+      "Payment provider returned a different Order ID than expected",
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Trusted Amount Integrity
+  |--------------------------------------------------------------------------
+  */
+
+  if (details.amount !== amount) {
+    throw new Error(
+      "Payment provider returned a different amount than expected",
+    );
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Trusted Currency Integrity
+  |--------------------------------------------------------------------------
+  */
+
+  if (details.currency.toUpperCase() !== currency.toUpperCase()) {
+    throw new Error(
+      "Payment provider returned a different currency than expected",
+    );
+  }
+
+  return {
+    provider,
+
+    providerPaymentId: details.providerPaymentId,
+
+    providerOrderId: details.providerOrderId,
+
+    amount: details.amount,
+
+    currency: details.currency.toUpperCase(),
+
+    status: details.status.toLowerCase(),
+
+    captured: details.captured,
+
+    method: details.method ?? null,
+  };
 };

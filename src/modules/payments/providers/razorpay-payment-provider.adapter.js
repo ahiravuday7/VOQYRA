@@ -207,6 +207,39 @@ const razorpayPaymentProviderAdapter = Object.freeze({
     });
   },
 
+  async fetchPaymentDetails({ providerPaymentId }) {
+    /*
+  |--------------------------------------------------------------------------
+  | Fetch Payment Directly From Razorpay
+  |--------------------------------------------------------------------------
+  */
+
+    const razorpayPayment =
+      await razorpayClient.payments.fetch(providerPaymentId);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Normalize Provider Response
+  |--------------------------------------------------------------------------
+  */
+
+    return {
+      providerPaymentId: razorpayPayment.id,
+
+      providerOrderId: razorpayPayment.order_id,
+
+      amount: fromRazorpayAmount(razorpayPayment.amount),
+
+      currency: razorpayPayment.currency,
+
+      status: razorpayPayment.status,
+
+      captured: razorpayPayment.captured === true,
+
+      method: razorpayPayment.method ?? null,
+    };
+  },
+
   async createPaymentSession({
     paymentNumber,
 

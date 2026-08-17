@@ -57,6 +57,12 @@ export const assertPaymentProviderAdapter = (adapter) => {
     );
   }
 
+  if (typeof adapter.fetchPaymentDetails !== "function") {
+    throw new TypeError(
+      "Payment provider adapter must implement fetchPaymentDetails",
+    );
+  }
+
   return adapter;
 };
 
@@ -106,6 +112,96 @@ export const assertPaymentProviderConfirmationResult = (result) => {
     throw new TypeError(
       "Payment provider confirmation verification must return a boolean",
     );
+  }
+
+  return result;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Provider Details Input
+|--------------------------------------------------------------------------
+|
+| These values come from trusted backend PaymentTransaction state.
+|
+| Only providerPaymentId is sent to the provider adapter.
+| The remaining values are used after the provider response returns to
+| verify that Razorpay did not return a different payment relationship.
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderDetailsInput = (input) => {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Payment provider details input is required");
+  }
+
+  if (!isNonEmptyString(input.providerPaymentId)) {
+    throw new TypeError("Payment provider Payment ID is required");
+  }
+
+  if (!isNonEmptyString(input.providerOrderId)) {
+    throw new TypeError("Payment provider Order ID is required");
+  }
+
+  if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
+    throw new TypeError("Payment provider expected amount is invalid");
+  }
+
+  if (!isNonEmptyString(input.currency)) {
+    throw new TypeError("Payment provider expected currency is invalid");
+  }
+
+  return input;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Assert Payment Provider Details Result
+|--------------------------------------------------------------------------
+|
+| Every provider adapter normalizes its payment lookup into this shape.
+|--------------------------------------------------------------------------
+*/
+
+export const assertPaymentProviderDetailsResult = (result) => {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new TypeError("Payment provider details result is required");
+  }
+
+  if (!isNonEmptyString(result.providerPaymentId)) {
+    throw new TypeError(
+      "Payment provider details must contain providerPaymentId",
+    );
+  }
+
+  if (!isNonEmptyString(result.providerOrderId)) {
+    throw new TypeError(
+      "Payment provider details must contain providerOrderId",
+    );
+  }
+
+  if (!Number.isSafeInteger(result.amount) || result.amount <= 0) {
+    throw new TypeError("Payment provider details amount is invalid");
+  }
+
+  if (!isNonEmptyString(result.currency)) {
+    throw new TypeError("Payment provider details currency is invalid");
+  }
+
+  if (!isNonEmptyString(result.status)) {
+    throw new TypeError("Payment provider details status is invalid");
+  }
+
+  if (typeof result.captured !== "boolean") {
+    throw new TypeError("Payment provider captured flag must be a boolean");
+  }
+
+  if (
+    result.method !== null &&
+    result.method !== undefined &&
+    !isNonEmptyString(result.method)
+  ) {
+    throw new TypeError("Payment provider method is invalid");
   }
 
   return result;
