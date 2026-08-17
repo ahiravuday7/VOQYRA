@@ -803,3 +803,103 @@ export const findOrderForInventoryReservationExpiry = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Claim Reservation For Successful Payment
+|--------------------------------------------------------------------------
+|
+| Compare-and-swap:
+|
+| Only succeeds when the Order still has the exact reservation version
+| the Payment transaction originally read.
+|--------------------------------------------------------------------------
+*/
+
+export const claimOrderReservationForPaymentFinalization = ({
+  orderId,
+
+  expectedVersion,
+
+  session,
+}) => {
+  return Order.findOneAndUpdate(
+    {
+      _id: orderId,
+
+      status: ORDER_STATUSES.PENDING,
+
+      "payment.status": ORDER_PAYMENT_STATUSES.PENDING,
+
+      inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+      inventoryReservationVersion: expectedVersion,
+    },
+
+    {
+      $inc: {
+        inventoryReservationVersion: 1,
+      },
+    },
+
+    {
+      returnDocument: "after",
+
+      session,
+
+      runValidators: true,
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Claim Reservation For Automatic Expiry
+|--------------------------------------------------------------------------
+*/
+
+export const claimOrderReservationForExpiry = ({
+  orderId,
+
+  expectedVersion,
+
+  now = new Date(),
+
+  session,
+}) => {
+  return Order.findOneAndUpdate(
+    {
+      _id: orderId,
+
+      status: ORDER_STATUSES.PENDING,
+
+      "payment.method": ORDER_PAYMENT_METHODS.ONLINE,
+
+      "payment.status": ORDER_PAYMENT_STATUSES.PENDING,
+
+      inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+      inventoryReservationVersion: expectedVersion,
+
+      inventoryReservationExpiresAt: {
+        $ne: null,
+
+        $lte: now,
+      },
+    },
+
+    {
+      $inc: {
+        inventoryReservationVersion: 1,
+      },
+    },
+
+    {
+      returnDocument: "after",
+
+      session,
+
+      runValidators: true,
+    },
+  );
+};

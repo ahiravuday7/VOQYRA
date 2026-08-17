@@ -45,7 +45,11 @@ import {
   finalizeCapturedCustomerOnlineOrder,
 } from "../../src/modules/payments/payment.service.js";
 
-import { findExpiredOnlineOrderReservations } from "../../src/modules/orders/order.repository.js";
+import {
+  findExpiredOnlineOrderReservations,
+  claimOrderReservationForExpiry,
+  claimOrderReservationForPaymentFinalization,
+} from "../../src/modules/orders/order.repository.js";
 
 import {
   AUDIT_ACTOR_TYPES,
@@ -53,6 +57,8 @@ import {
 } from "../../src/shared/constants/audit.constants.js";
 
 import { expireOnlineOrderInventoryReservation } from "../../src/modules/orders/order.service.js";
+
+import { markVerifiedPaymentTransactionPaid } from "../../src/modules/payments/payment.repository.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
@@ -32169,5 +32175,282 @@ describe("Expired online Order reservation processing", () => {
     const storedPayment = await PaymentTransaction.findById(payment.id).lean();
 
     expect(storedPayment.status).toBe("pending");
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 204 — Payment vs Reservation Expiry Race Protection
+|--------------------------------------------------------------------------
+*/
+
+describe("Online Payment and reservation-expiry race protection", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Paid Payment Blocks Expiry
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not expire an Order after its trusted Payment has already become paid", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Trusted Paid Transaction
+        |--------------------------------------------------------------------------
+        */
+
+    await PaymentTransaction.updateOne(
+      {
+        _id: payment.id,
+      },
+
+      {
+        $set: {
+          status: "paid",
+
+          paidAt: new Date(),
+
+          providerVerifiedAt: new Date(),
+
+          "providerReference.paymentId": "pay_race_paid",
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Force Expiry
+        |--------------------------------------------------------------------------
+        */
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() - 60_000),
+        },
+      },
+    );
+
+    const result = await expireOnlineOrderInventoryReservation(order.id);
+
+    expect(result.action).toBe("skip");
+
+    expect(result.reason).toBe("payment-state-blocks-expiry");
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+
+    /*
+     * Payment block happens before CAS claim.
+     */
+    expect(storedOrder.inventoryReservationVersion).toBe(0);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Reservation Claims
+    |--------------------------------------------------------------------------
+    */
+
+  it("allows only one concurrent reservation settlement claim to succeed", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() - 60_000),
+        },
+      },
+    );
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    const expectedVersion = storedOrder.inventoryReservationVersion ?? 0;
+
+    const sessionA = await mongoose.startSession();
+
+    const sessionB = await mongoose.startSession();
+
+    try {
+      const results = await Promise.allSettled([
+        sessionA.withTransaction(async () => {
+          return claimOrderReservationForPaymentFinalization({
+            orderId: order.id,
+
+            expectedVersion,
+
+            session: sessionA,
+          });
+        }),
+
+        sessionB.withTransaction(async () => {
+          return claimOrderReservationForExpiry({
+            orderId: order.id,
+
+            expectedVersion,
+
+            now: new Date(),
+
+            session: sessionB,
+          });
+        }),
+      ]);
+
+      const successfulClaims = results
+        .filter((result) => {
+          return result.status === "fulfilled";
+        })
+        .map((result) => {
+          return result.value;
+        })
+        .filter(Boolean);
+
+      /*
+       * Exactly one reservation claim wins.
+       */
+      expect(successfulClaims).toHaveLength(1);
+
+      const finalOrder = await Order.findById(order.id).lean();
+
+      expect(finalOrder.inventoryReservationVersion).toBe(expectedVersion + 1);
+    } finally {
+      await sessionA.endSession();
+
+      await sessionB.endSession();
+    }
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancelled Payment Cannot Resurrect
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not allow a cancelled PaymentTransaction to become paid again", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const paymentBefore = await PaymentTransaction.findById(payment.id).lean();
+
+    const lateProviderPaymentId = "pay_late_capture";
+
+    /*
+        |--------------------------------------------------------------------------
+        | Expiry Has Cancelled The Attempt
+        |--------------------------------------------------------------------------
+        */
+
+    await PaymentTransaction.updateOne(
+      {
+        _id: payment.id,
+      },
+
+      {
+        $set: {
+          status: "cancelled",
+
+          cancelledAt: new Date(),
+
+          providerVerifiedAt: new Date(),
+
+          "providerReference.paymentId": lateProviderPaymentId,
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Late Capture Tries To Mark It Paid
+        |--------------------------------------------------------------------------
+        */
+
+    const updated = await markVerifiedPaymentTransactionPaid(
+      payment.id,
+
+      {
+        orderId: order.id,
+
+        customerId: paymentBefore.customer,
+
+        provider: paymentBefore.provider,
+
+        providerOrderId: paymentBefore.providerReference.orderId,
+
+        providerPaymentId: lateProviderPaymentId,
+
+        paidAt: new Date(),
+      },
+    );
+
+    expect(updated).toBeNull();
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("cancelled");
   });
 });

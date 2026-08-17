@@ -1025,6 +1025,30 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Inventory Reservation State Version
+|--------------------------------------------------------------------------
+|
+| Used only for concurrency arbitration between:
+|
+| - successful online Payment finalization
+| - automatic reservation expiry
+|
+| Every terminal reservation resolution increments this value.
+|--------------------------------------------------------------------------
+*/
+
+    inventoryReservationVersion: {
+      type: Number,
+
+      required: true,
+
+      min: 0,
+
+      default: 0,
+    },
+
     statusHistory: {
       type: [orderStatusHistorySchema],
 

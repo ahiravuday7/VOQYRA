@@ -6601,6 +6601,61 @@ new: true → returnDocument: "after"
 
 Once those warnings are removed, Part 203 is clean and we can move to Part 204 — payment capture vs reservation-expiry race protection.
 |--------------------------------------------------------------------------
+Part 204 — Payment Capture vs Reservation Expiry Race Protection ⚔️
+
+Now we protect the most dangerous concurrency case:
+
+Reservation expires
+        ↓
+expiry worker starts releasing inventory
+
+
+AT THE SAME TIME
+
+
+Razorpay says payment captured
+        ↓
+payment finalization starts committing inventory
+
+We must guarantee:
+
+ONLY ONE CAN WIN
+
+We will use an Order reservation version / compare-and-swap guard.
+
+What Part 204 guarantees
+
+Before:
+
+Payment capture ──────┐
+                     ├── possibly fight over reserved stock ❌
+Reservation expiry ──┘
+
+After:
+
+                Order reservationVersion = 0
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+       Payment tries CAS      Expiry tries CAS
+              │                     │
+              └──────────┬──────────┘
+                         │
+                  exactly one wins
+                         ↓
+          reservationVersion = 1
+                  /             \
+             COMMITTED         RELEASED
+
+And a PaymentTransaction that expiry already changed to:
+
+cancelled
+
+cannot later become:
+
+paid
+
+through a late browser return or webhook transition.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

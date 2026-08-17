@@ -60,6 +60,8 @@ import {
   findCustomerOrderForReturnRequest,
   findExpiredOnlineOrderReservations,
   findOrderForInventoryReservationExpiry,
+  claimOrderReservationForExpiry,
+  claimOrderReservationForPaymentFinalization,
 } from "./order.repository.js";
 
 import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
@@ -6198,7 +6200,6 @@ const executeAtomicAdminOrderConfirmation = async ({
 
         await commitOrderItemsInventoryInTransaction(order, {
           actorUserId: adminId,
-
           session,
         });
 
@@ -6403,10 +6404,10 @@ export const expireOnlineOrderInventoryReservation = async (
     await session.withTransaction(
       async () => {
         /*
-          |--------------------------------------------------------------------------
-          | Revalidate Expiry
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Revalidate Expiry
+        |--------------------------------------------------------------------------
+        */
 
         const order = await findOrderForInventoryReservationExpiry(
           orderId,
@@ -6419,17 +6420,10 @@ export const expireOnlineOrderInventoryReservation = async (
         );
 
         /*
-          |--------------------------------------------------------------------------
-          | Idempotent Skip
-          |--------------------------------------------------------------------------
-          |
-          | Another request/worker may already have:
-          |
-          | - finalized payment
-          | - cancelled Order
-          | - released inventory
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Idempotent Skip
+        |--------------------------------------------------------------------------
+        */
 
         if (!order) {
           result = {
@@ -6444,18 +6438,15 @@ export const expireOnlineOrderInventoryReservation = async (
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Payment Safety Gate
-          |--------------------------------------------------------------------------
-          |
-          | Never release inventory for:
-          |
-          | authorized
-          | paid
-          | partially-refunded
-          | refunded
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Payment Safety Gate
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT:
+        |
+        | This must happen BEFORE the reservation-version claim.
+        |--------------------------------------------------------------------------
+        */
 
         const blockingPayment = await findPaymentTransactionBlockingOrderExpiry(
           order._id,
@@ -6480,13 +6471,44 @@ export const expireOnlineOrderInventoryReservation = async (
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Release Product Reservations
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Reservation Settlement Race Guard
+        |--------------------------------------------------------------------------
+        */
+
+        const expectedReservationVersion =
+          order.inventoryReservationVersion ?? 0;
+
+        const claimedOrder = await claimOrderReservationForExpiry({
+          orderId: order._id,
+
+          expectedVersion: expectedReservationVersion,
+
+          now,
+
+          session,
+        });
+
+        if (!claimedOrder) {
+          result = {
+            action: "skip",
+
+            reason: "reservation-settlement-race-lost",
+
+            order: null,
+          };
+
+          return;
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Release Product Reservations
+        |--------------------------------------------------------------------------
+        */
 
         await releaseOrderItemsInventoryInTransaction(
-          order,
+          claimedOrder,
 
           {
             systemActor: SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
@@ -6496,13 +6518,13 @@ export const expireOnlineOrderInventoryReservation = async (
         );
 
         /*
-          |--------------------------------------------------------------------------
-          | Cancel Still-Open Payment Attempts
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Cancel Open Payment Attempts
+        |--------------------------------------------------------------------------
+        */
 
         await cancelOpenPaymentTransactionsForExpiredOrder(
-          order._id,
+          claimedOrder._id,
 
           {
             cancelledAt: now,
@@ -6512,29 +6534,29 @@ export const expireOnlineOrderInventoryReservation = async (
         );
 
         /*
-          |--------------------------------------------------------------------------
-          | Build System-Cancelled Order
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Build Expired Order State
+        |--------------------------------------------------------------------------
+        */
 
         const expiredState = buildExpiredOnlineOrderState(
-          order,
+          claimedOrder,
 
           {
             expiredAt: now,
           },
         );
 
-        order.set(expiredState);
+        claimedOrder.set(expiredState);
 
         /*
-          |--------------------------------------------------------------------------
-          | Persist Order
-          |--------------------------------------------------------------------------
-          */
+        |--------------------------------------------------------------------------
+        | Save Order
+        |--------------------------------------------------------------------------
+        */
 
         const savedOrder = await saveOrderDocument(
-          order,
+          claimedOrder,
 
           {
             session,
@@ -7169,6 +7191,34 @@ export const finalizePaidOnlineOrderInTransaction = async (
   assertOrderItemsAreFullyReserved(order);
 
   /*
+|--------------------------------------------------------------------------
+| Reservation Settlement Race Guard
+|--------------------------------------------------------------------------
+*/
+
+  const expectedReservationVersion = order.inventoryReservationVersion ?? 0;
+
+  const claimedOrder = await claimOrderReservationForPaymentFinalization({
+    orderId: order._id,
+
+    expectedVersion: expectedReservationVersion,
+
+    session,
+  });
+
+  if (!claimedOrder) {
+    throw new AppError(
+      "Order inventory reservation was resolved by another operation",
+
+      409,
+
+      {
+        errorCode: "ORDER_RESERVATION_SETTLEMENT_CONFLICT",
+      },
+    );
+  }
+
+  /*
     |--------------------------------------------------------------------------
     | Mark Order Payment Paid — IN MEMORY ONLY
     |--------------------------------------------------------------------------
@@ -7183,9 +7233,9 @@ export const finalizePaidOnlineOrderInTransaction = async (
     |--------------------------------------------------------------------------
     */
 
-  const currentPayment = normalizeOrderSubdocument(order.payment) ?? {};
+  const currentPayment = normalizeOrderSubdocument(claimedOrder.payment) ?? {};
 
-  order.set({
+  claimedOrder.set({
     payment: {
       ...currentPayment,
 
@@ -7225,15 +7275,10 @@ export const finalizePaidOnlineOrderInTransaction = async (
     |--------------------------------------------------------------------------
     */
 
-  await commitOrderItemsInventoryInTransaction(
-    order,
-
-    {
-      actorUserId,
-
-      session,
-    },
-  );
+  await commitOrderItemsInventoryInTransaction(claimedOrder, {
+    actorUserId,
+    session,
+  });
 
   /*
     |--------------------------------------------------------------------------
@@ -7241,12 +7286,12 @@ export const finalizePaidOnlineOrderInTransaction = async (
     |--------------------------------------------------------------------------
     */
 
-  const existingStatusHistory = (order.statusHistory ?? []).map(
+  const existingStatusHistory = (claimedOrder.statusHistory ?? []).map(
     normalizeOrderSubdocument,
   );
 
-  order.set({
-    items: buildCommittedOrderItems(order.items),
+  claimedOrder.set({
+    items: buildCommittedOrderItems(claimedOrder.items),
 
     status: ORDER_STATUSES.CONFIRMED,
 
@@ -7281,13 +7326,9 @@ export const finalizePaidOnlineOrderInTransaction = async (
     |--------------------------------------------------------------------------
     */
 
-  const savedOrder = await saveOrderDocument(
-    order,
-
-    {
-      session,
-    },
-  );
+  const savedOrder = await saveOrderDocument(claimedOrder, {
+    session,
+  });
 
   return {
     action: "finalize",
@@ -8106,7 +8147,6 @@ export const buildAdminRefundedOrderState = (
   const existingStatusHistory = (order.statusHistory ?? []).map(
     normalizeOrderSubdocument,
   );
-
   const refundedState = {
     status: ORDER_STATUSES.REFUNDED,
 
