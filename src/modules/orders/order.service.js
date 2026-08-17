@@ -1,3 +1,4 @@
+import env from "../../config/environment.js";
 import { randomBytes } from "node:crypto";
 
 import mongoose from "mongoose";
@@ -99,6 +100,38 @@ const ORDER_NUMBER_RANDOM_BYTES = 3;
 const MAX_ORDER_NUMBER_GENERATION_ATTEMPTS = 10;
 
 const MAX_ORDER_CREATION_ATTEMPTS = 3;
+
+/*
+|--------------------------------------------------------------------------
+| Online Order Reservation Expiry
+|--------------------------------------------------------------------------
+*/
+
+const ONLINE_ORDER_RESERVATION_TTL_MS =
+  env.ONLINE_ORDER_RESERVATION_TTL_MINUTES * 60 * 1000;
+
+/*
+|--------------------------------------------------------------------------
+| Calculate Inventory Reservation Expiry
+|--------------------------------------------------------------------------
+|
+| Only online Orders expire automatically.
+|
+| COD remains null for now.
+|--------------------------------------------------------------------------
+*/
+
+const calculateOrderInventoryReservationExpiry = ({
+  paymentMethod,
+
+  now = new Date(),
+}) => {
+  if (paymentMethod !== ORDER_PAYMENT_METHODS.ONLINE) {
+    return null;
+  }
+
+  return new Date(now.getTime() + ONLINE_ORDER_RESERVATION_TTL_MS);
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -4617,11 +4650,35 @@ const buildInitialOrderStatusHistory = (actorUserId) => {
 
 const buildNewOrderDocumentData = ({
   orderNumber,
+
   customerId,
+
   orderData,
+
   checkoutSnapshot,
+
   reservedItems,
 }) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Inventory Reservation Expiry
+  |--------------------------------------------------------------------------
+  |
+  | paymentMethod comes from the validated customer Order request.
+  |
+  | online
+  |   → expiry Date
+  |
+  | cash-on-delivery
+  |   → null
+  |--------------------------------------------------------------------------
+  */
+
+  const inventoryReservationExpiresAt =
+    calculateOrderInventoryReservationExpiry({
+      paymentMethod: orderData.paymentMethod,
+    });
+
   return {
     orderNumber,
 
@@ -4648,10 +4705,18 @@ const buildNewOrderDocumentData = ({
     status: ORDER_STATUSES.PENDING,
 
     /*
-     * Every item has already been reserved
-     * inside the current transaction.
+     * Inventory has already been reserved
+     * in the current MongoDB transaction.
      */
     inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Part 200
+    |--------------------------------------------------------------------------
+    */
+
+    inventoryReservationExpiresAt,
 
     statusHistory: buildInitialOrderStatusHistory(customerId),
 
@@ -6161,6 +6226,8 @@ export const buildCustomerCancelledOrderState = (
 
     inventoryStatus: ORDER_INVENTORY_STATUSES.RELEASED,
 
+    inventoryReservationExpiresAt: null,
+
     cancellation: {
       reason,
 
@@ -6786,6 +6853,8 @@ export const finalizePaidOnlineOrderInTransaction = async (
     status: ORDER_STATUSES.CONFIRMED,
 
     inventoryStatus: ORDER_INVENTORY_STATUSES.COMMITTED,
+
+    inventoryReservationExpiresAt: null,
 
     statusHistory: [
       ...existingStatusHistory,

@@ -387,6 +387,9 @@ export const toCustomerOrderSummary = (order) => {
 
     inventoryStatus: normalizedOrder.inventoryStatus,
 
+    inventoryReservationExpiresAt:
+      normalizedOrder.inventoryReservationExpiresAt ?? null,
+
     cancellation: mapCustomerOrderCancellation(normalizedOrder.cancellation),
 
     createdAt: normalizedOrder.createdAt,
@@ -432,6 +435,9 @@ export const toCustomerOrder = (order) => {
     status: normalizedOrder.status,
 
     inventoryStatus: normalizedOrder.inventoryStatus,
+
+    inventoryReservationExpiresAt:
+      normalizedOrder.inventoryReservationExpiresAt ?? null,
 
     statusHistory: mapCustomerOrderStatusHistory(normalizedOrder.statusHistory),
 
@@ -511,6 +517,9 @@ export const toAdminOrderSummary = (order) => {
 
     inventoryStatus: normalizedOrder.inventoryStatus,
 
+    inventoryReservationExpiresAt:
+      normalizedOrder.inventoryReservationExpiresAt ?? null,
+
     cancellation: mapAdminOrderCancellation(normalizedOrder.cancellation),
 
     refund: mapAdminOrderRefund(normalizedOrder.refund),
@@ -571,6 +580,9 @@ export const toAdminOrder = (order) => {
     status: normalizedOrder.status,
 
     inventoryStatus: normalizedOrder.inventoryStatus,
+
+    inventoryReservationExpiresAt:
+      normalizedOrder.inventoryReservationExpiresAt ?? null,
 
     statusHistory: mapAdminOrderStatusHistory(normalizedOrder.statusHistory),
 

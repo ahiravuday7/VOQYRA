@@ -1,3 +1,5 @@
+import env from "../../src/config/environment.js";
+
 import mongoose from "mongoose";
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -42,6 +44,8 @@ import {
   synchronizeCustomerPaymentProviderState,
   finalizeCapturedCustomerOnlineOrder,
 } from "../../src/modules/payments/payment.service.js";
+
+import { findExpiredOnlineOrderReservations } from "../../src/modules/orders/order.repository.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
@@ -31563,5 +31567,210 @@ describe("Razorpay Payment webhook processing", () => {
     expect(webhook.processingAttempts).toBe(1);
 
     expect(webhook.nextAttemptAt.getTime()).toBeGreaterThan(before.getTime());
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 200 — Online Order Inventory Reservation Expiry
+|--------------------------------------------------------------------------
+*/
+
+describe("Online Order inventory reservation expiry", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Online Order Gets Expiry
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates an expiry deadline for a new online Order reservation", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const before = Date.now();
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const after = Date.now();
+
+    /*
+        |--------------------------------------------------------------------------
+        | API Response
+        |--------------------------------------------------------------------------
+        */
+
+    expect(order.inventoryReservationExpiresAt).toBeTruthy();
+
+    const expiresAt = new Date(order.inventoryReservationExpiresAt).getTime();
+
+    const expectedTtlMs = env.ONLINE_ORDER_RESERVATION_TTL_MINUTES * 60 * 1000;
+
+    /*
+     * Deadline must fall inside:
+     *
+     * request start + TTL
+     *
+     * and:
+     *
+     * request end + TTL
+     */
+    expect(expiresAt).toBeGreaterThanOrEqual(before + expectedTtlMs);
+
+    expect(expiresAt).toBeLessThanOrEqual(after + expectedTtlMs);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Database
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.inventoryReservationExpiresAt).toBeInstanceOf(Date);
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.payment.method).toBe("online");
+
+    expect(storedOrder.payment.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. COD Does Not Expire
+    |--------------------------------------------------------------------------
+    */
+
+  it("does not create an automatic reservation expiry for a cash-on-delivery Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createCustomerOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    expect(order.payment.method).toBe("cash-on-delivery");
+
+    expect(order.inventoryReservationExpiresAt).toBeNull();
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.inventoryReservationExpiresAt).toBeNull();
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Expiry Candidate Query
+    |--------------------------------------------------------------------------
+    */
+
+  it("finds only expired unpaid online Orders with reserved inventory", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Expired Online Order
+        |--------------------------------------------------------------------------
+        */
+
+    const expiredOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await Order.updateOne(
+      {
+        _id: expiredOrder.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() - 60_000),
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | Future Online Order
+        |--------------------------------------------------------------------------
+        */
+
+    const activeOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    await Order.updateOne(
+      {
+        _id: activeOrder.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      },
+    );
+
+    /*
+        |--------------------------------------------------------------------------
+        | COD Order
+        |--------------------------------------------------------------------------
+        */
+
+    await createCustomerOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Find Expired Candidates
+        |--------------------------------------------------------------------------
+        */
+
+    const candidates = await findExpiredOnlineOrderReservations({
+      now: new Date(),
+
+      limit: 50,
+    });
+
+    const candidateIds = candidates.map((candidate) => {
+      return String(candidate._id);
+    });
+
+    expect(candidateIds).toContain(expiredOrder.id);
+
+    expect(candidateIds).not.toContain(activeOrder.id);
+
+    expect(candidates).toHaveLength(1);
   });
 });

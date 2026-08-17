@@ -1,6 +1,13 @@
 import mongoose from "mongoose";
 import Order from "./order.model.js";
 
+import {
+  ORDER_INVENTORY_STATUSES,
+  ORDER_PAYMENT_METHODS,
+  ORDER_PAYMENT_STATUSES,
+  ORDER_STATUSES,
+} from "../../shared/constants/order.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Create Order Document
@@ -681,4 +688,75 @@ export const bumpOrderReturnRequestVersion = async (
   );
 
   return result.matchedCount === 1;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Expired Online Inventory Reservations
+|--------------------------------------------------------------------------
+|
+| Part 200 only identifies candidates.
+|
+| It does NOT:
+|
+| - release inventory
+| - cancel Order
+| - update PaymentTransaction
+|
+| Part 201 will perform those mutations safely.
+|--------------------------------------------------------------------------
+*/
+
+export const findExpiredOnlineOrderReservations = ({
+  now = new Date(),
+
+  limit = 50,
+} = {}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Bounded Query
+    |--------------------------------------------------------------------------
+    */
+
+  const safeLimit = Math.min(
+    Math.max(
+      Number.isSafeInteger(limit) ? limit : 50,
+
+      1,
+    ),
+
+    100,
+  );
+
+  return Order.find({
+    status: ORDER_STATUSES.PENDING,
+
+    "payment.method": ORDER_PAYMENT_METHODS.ONLINE,
+
+    "payment.status": ORDER_PAYMENT_STATUSES.PENDING,
+
+    inventoryStatus: ORDER_INVENTORY_STATUSES.RESERVED,
+
+    inventoryReservationExpiresAt: {
+      $ne: null,
+
+      $lte: now,
+    },
+  })
+    .sort({
+      inventoryReservationExpiresAt: 1,
+
+      _id: 1,
+    })
+    .limit(safeLimit)
+    .select({
+      _id: 1,
+
+      orderNumber: 1,
+
+      customer: 1,
+
+      inventoryReservationExpiresAt: 1,
+    })
+    .lean();
 };

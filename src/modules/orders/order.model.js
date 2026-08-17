@@ -965,6 +965,28 @@ const orderSchema = new mongoose.Schema(
       default: ORDER_INVENTORY_STATUSES.PENDING,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Inventory Reservation Expiry
+|--------------------------------------------------------------------------
+|
+| Only online Orders receive a reservation expiry.
+|
+| Example:
+|
+| Order created at:  14:30
+| Expiry:            15:00
+|
+| COD Orders currently keep this field null.
+|--------------------------------------------------------------------------
+*/
+
+    inventoryReservationExpiresAt: {
+      type: Date,
+
+      default: null,
+    },
+
     statusHistory: {
       type: [orderStatusHistorySchema],
 
@@ -1400,6 +1422,39 @@ orderSchema.index({
   "items.variantId": 1,
   createdAt: -1,
 });
+
+/*
+|--------------------------------------------------------------------------
+| Online Inventory Reservation Expiry
+|--------------------------------------------------------------------------
+|
+| Future expiry worker query:
+|
+| pending Order
+| online payment
+| unpaid
+| reserved inventory
+| expiry <= now
+|--------------------------------------------------------------------------
+*/
+
+orderSchema.index(
+  {
+    status: 1,
+
+    "payment.method": 1,
+
+    "payment.status": 1,
+
+    inventoryStatus: 1,
+
+    inventoryReservationExpiresAt: 1,
+  },
+
+  {
+    name: "order_online_inventory_reservation_expiry",
+  },
+);
 
 /*
 |--------------------------------------------------------------------------

@@ -6317,6 +6317,53 @@ total cycles
 
 No webhook, payment, Order, or inventory state changes happen here.
 |--------------------------------------------------------------------------
+Part 200 — Online Order Inventory Reservation Expiry ⏳
+
+Now we move back into the Order lifecycle.
+
+The problem:
+
+Customer creates online Order
+        ↓
+inventory reserved
+        ↓
+customer never pays
+        ↓
+Order remains pending forever
+        ↓
+reservedStock stays locked forever ❌
+
+Part 200 adds a reservation expiry deadline, but deliberately does not release inventory yet.
+
+After this part:
+
+Online Order created
+        ↓
+inventory reserved
+        ↓
+inventoryReservationExpiresAt = now + 30 minutes
+        ↓
+future worker can find expired Orders safely
+
+The 30-minute duration will be configurable.
+
+Part 200 boundary
+
+After this part:
+
+Online Order
+   ↓
+reserved inventory
+   ↓
+30-minute deadline
+   ↓
+deadline passes
+   ↓
+repository identifies Order ✅
+   ↓
+NO automatic release yet
+
+We deliberately stop there because inventory release writes an immutable inventory ledger whose actor currently must reference a real User. We should solve that audit requirement cleanly rather than pretending the customer cancelled the Order.
 |--------------------------------------------------------------------------
 
 
