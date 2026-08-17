@@ -22,6 +22,8 @@ import {
   findPaymentTransactionById,
   findCustomerPaymentTransactionForConfirmation,
   recordVerifiedPaymentProviderConfirmation,
+  markVerifiedPaymentTransactionAuthorized,
+  markVerifiedPaymentTransactionPaid,
 } from "./payment.repository.js";
 
 import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
@@ -30,6 +32,7 @@ import {
   createPaymentProviderSession,
   buildPaymentProviderCheckoutData,
   verifyPaymentProviderConfirmation,
+  fetchAndVerifyPaymentProviderDetails,
 } from "./providers/payment-provider.service.js";
 
 /*
@@ -323,6 +326,171 @@ const createPaymentConfirmationConflictError = () => {
       errorCode: "PAYMENT_CONFIRMATION_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Provider State Synchronization Errors
+|--------------------------------------------------------------------------
+*/
+
+const createPaymentProviderVerificationRequiredError = () => {
+  return new AppError(
+    "Payment confirmation must be verified before provider state can be synchronized",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_VERIFICATION_REQUIRED",
+    },
+  );
+};
+
+const createPaymentProviderPaymentMissingError = () => {
+  return new AppError("Payment provider Payment reference is missing", 409, {
+    errorCode: "PAYMENT_PROVIDER_PAYMENT_REFERENCE_MISSING",
+  });
+};
+
+const createPaymentProviderSynchronizationStateInvalidError = (status) => {
+  return new AppError(
+    "Payment provider state cannot be synchronized in the current transaction state",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_SYNCHRONIZATION_STATE_INVALID",
+
+      details: {
+        status: status ?? null,
+      },
+    },
+  );
+};
+
+const createPaymentProviderStateInvalidError = ({
+  status,
+
+  captured,
+}) => {
+  return new AppError(
+    "Payment provider returned a state that cannot be applied to this Payment transaction",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_STATE_INVALID",
+
+      details: {
+        providerStatus: status ?? null,
+
+        captured: captured ?? null,
+      },
+    },
+  );
+};
+
+const createPaymentProviderSynchronizationConflictError = () => {
+  return new AppError(
+    "Payment provider state changed while synchronization was being processed",
+    409,
+    {
+      errorCode: "PAYMENT_PROVIDER_SYNCHRONIZATION_CONFLICT",
+    },
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Provider State Rank
+|--------------------------------------------------------------------------
+|
+| State synchronization must always move forward:
+|
+| pending
+|    ↓
+| authorized
+|    ↓
+| paid
+|
+| Never backwards.
+|--------------------------------------------------------------------------
+*/
+
+const PAYMENT_TRANSACTION_PROVIDER_STATE_RANK = Object.freeze({
+  [PAYMENT_TRANSACTION_STATUSES.PENDING]: 0,
+
+  [PAYMENT_TRANSACTION_STATUSES.AUTHORIZED]: 1,
+
+  [PAYMENT_TRANSACTION_STATUSES.PAID]: 2,
+});
+
+const getPaymentTransactionProviderStateRank = (status) => {
+  return PAYMENT_TRANSACTION_PROVIDER_STATE_RANK[status] ?? null;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Resolve Trusted Provider State
+|--------------------------------------------------------------------------
+|
+| Converts provider-neutral Payment details from Part 189 into our local
+| PaymentTransaction state.
+|--------------------------------------------------------------------------
+*/
+
+const resolvePaymentProviderTargetStatus = ({
+  status,
+
+  captured,
+}) => {
+  const normalizedStatus = status.trim().toLowerCase();
+
+  /*
+  |--------------------------------------------------------------------------
+  | Provider Payment Created
+  |--------------------------------------------------------------------------
+  */
+
+  if (normalizedStatus === "created" && captured === false) {
+    return PAYMENT_TRANSACTION_STATUSES.PENDING;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Provider Payment Authorized
+  |--------------------------------------------------------------------------
+  */
+
+  if (normalizedStatus === "authorized" && captured === false) {
+    return PAYMENT_TRANSACTION_STATUSES.AUTHORIZED;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Provider Payment Captured
+  |--------------------------------------------------------------------------
+  */
+
+  if (normalizedStatus === "captured" && captured === true) {
+    return PAYMENT_TRANSACTION_STATUSES.PAID;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Fail Closed
+  |--------------------------------------------------------------------------
+  |
+  | Examples:
+  |
+  | failed
+  | refunded
+  | captured + captured=false
+  | authorized + captured=true
+  |
+  | These require separate lifecycle handling later.
+  |--------------------------------------------------------------------------
+  */
+
+  throw createPaymentProviderStateInvalidError({
+    status: normalizedStatus,
+
+    captured,
+  });
 };
 
 /*
@@ -1462,4 +1630,307 @@ export const confirmCustomerRazorpayPayment = async ({
   }
 
   throw createPaymentConfirmationConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Synchronize Customer Payment Provider State
+|--------------------------------------------------------------------------
+|
+| Part 190:
+|
+| verified Razorpay Payment
+|       ↓
+| fetch provider Payment
+|       ↓
+| verify:
+|   payment ID
+|   order ID
+|   amount
+|   currency
+|       ↓
+| interpret trusted provider state
+|       ↓
+| update PaymentTransaction only
+|
+| IMPORTANT:
+|
+| This function DOES NOT:
+|
+| - mark Order.payment paid
+| - confirm the Order
+| - commit inventory
+| - reduce reservedStock
+|--------------------------------------------------------------------------
+*/
+
+export const synchronizeCustomerPaymentProviderState = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Load Customer-Owned Transaction
+    |--------------------------------------------------------------------------
+    */
+
+  const paymentTransaction =
+    await findCustomerPaymentTransactionForConfirmation(
+      paymentTransactionId,
+
+      orderId,
+
+      customerId,
+    );
+
+  if (!paymentTransaction) {
+    throw createPaymentTransactionNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Checkout Verification Required
+    |--------------------------------------------------------------------------
+    */
+
+  if (!paymentTransaction.verifiedAt) {
+    throw createPaymentProviderVerificationRequiredError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Trusted Provider References
+    |--------------------------------------------------------------------------
+    */
+
+  const providerOrderId = paymentTransaction.providerReference?.orderId;
+
+  if (!providerOrderId) {
+    throw createPaymentProviderOrderMissingError();
+  }
+
+  const providerPaymentId = paymentTransaction.providerReference?.paymentId;
+
+  if (!providerPaymentId) {
+    throw createPaymentProviderPaymentMissingError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Current Local State
+    |--------------------------------------------------------------------------
+    |
+    | Only these states participate in Part 190:
+    |
+    | pending
+    | authorized
+    | paid
+    |--------------------------------------------------------------------------
+    */
+
+  const currentStateRank = getPaymentTransactionProviderStateRank(
+    paymentTransaction.status,
+  );
+
+  if (currentStateRank === null) {
+    throw createPaymentProviderSynchronizationStateInvalidError(
+      paymentTransaction.status,
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Fetch Trusted Provider Payment
+    |--------------------------------------------------------------------------
+    |
+    | Part 189 verifies:
+    |
+    | providerPaymentId
+    | providerOrderId
+    | amount
+    | currency
+    |--------------------------------------------------------------------------
+    */
+
+  const providerPayment = await fetchAndVerifyPaymentProviderDetails({
+    provider: paymentTransaction.provider,
+
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount: paymentTransaction.amount,
+
+    currency: paymentTransaction.currency,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Resolve Local Target State
+    |--------------------------------------------------------------------------
+    */
+
+  const targetStatus = resolvePaymentProviderTargetStatus(providerPayment);
+
+  const targetStateRank = getPaymentTransactionProviderStateRank(targetStatus);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Never Downgrade
+    |--------------------------------------------------------------------------
+    |
+    | Examples:
+    |
+    | paid + provider says authorized
+    | => stay paid
+    |
+    | authorized + provider says created
+    | => stay authorized
+    |--------------------------------------------------------------------------
+    */
+
+  if (currentStateRank >= targetStateRank) {
+    return {
+      action:
+        currentStateRank === targetStateRank &&
+        targetStatus === PAYMENT_TRANSACTION_STATUSES.PENDING
+          ? "pending"
+          : "reuse",
+
+      providerPayment,
+
+      paymentTransaction,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Local Observation Time
+    |--------------------------------------------------------------------------
+    |
+    | This is when OUR backend observed the trusted state.
+    |--------------------------------------------------------------------------
+    */
+
+  const observedAt = new Date();
+
+  let updatedPaymentTransaction = null;
+
+  /*
+    |--------------------------------------------------------------------------
+    | pending → authorized
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetStatus === PAYMENT_TRANSACTION_STATUSES.AUTHORIZED) {
+    updatedPaymentTransaction = await markVerifiedPaymentTransactionAuthorized(
+      paymentTransaction._id,
+
+      {
+        orderId,
+
+        customerId,
+
+        provider: paymentTransaction.provider,
+
+        providerOrderId,
+
+        providerPaymentId,
+
+        authorizedAt: observedAt,
+      },
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | pending / authorized → paid
+    |--------------------------------------------------------------------------
+    */
+
+  if (targetStatus === PAYMENT_TRANSACTION_STATUSES.PAID) {
+    updatedPaymentTransaction = await markVerifiedPaymentTransactionPaid(
+      paymentTransaction._id,
+
+      {
+        orderId,
+
+        customerId,
+
+        provider: paymentTransaction.provider,
+
+        providerOrderId,
+
+        providerPaymentId,
+
+        paidAt: observedAt,
+      },
+    );
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Successful Atomic Transition
+    |--------------------------------------------------------------------------
+    */
+
+  if (updatedPaymentTransaction) {
+    return {
+      action:
+        targetStatus === PAYMENT_TRANSACTION_STATUSES.AUTHORIZED
+          ? "authorize"
+          : "pay",
+
+      providerPayment,
+
+      paymentTransaction: updatedPaymentTransaction,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Request Resolution
+    |--------------------------------------------------------------------------
+    |
+    | Another request may have already moved:
+    |
+    | pending → authorized
+    |
+    | or:
+    |
+    | pending/authorized → paid
+    |--------------------------------------------------------------------------
+    */
+
+  const currentPaymentTransaction =
+    await findCustomerPaymentTransactionForConfirmation(
+      paymentTransactionId,
+
+      orderId,
+
+      customerId,
+    );
+
+  const synchronizedStateRank = getPaymentTransactionProviderStateRank(
+    currentPaymentTransaction?.status,
+  );
+
+  if (
+    currentPaymentTransaction &&
+    synchronizedStateRank !== null &&
+    synchronizedStateRank >= targetStateRank
+  ) {
+    return {
+      action: "reuse",
+
+      providerPayment,
+
+      paymentTransaction: currentPaymentTransaction,
+    };
+  }
+
+  throw createPaymentProviderSynchronizationConflictError();
 };

@@ -578,3 +578,178 @@ export const recordVerifiedPaymentProviderConfirmation = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Mark Verified Payment Transaction Authorized
+|--------------------------------------------------------------------------
+|
+| Atomic transition:
+|
+| pending
+|    ↓
+| authorized
+|
+| The transaction must already:
+|
+| - belong to the customer/order
+| - have verified Checkout confirmation
+| - contain the exact trusted provider Order ID
+| - contain the exact trusted provider Payment ID
+|--------------------------------------------------------------------------
+*/
+
+export const markVerifiedPaymentTransactionAuthorized = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    authorizedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      status: PAYMENT_TRANSACTION_STATUSES.PENDING,
+
+      verifiedAt: {
+        $ne: null,
+      },
+
+      "providerReference.orderId": providerOrderId,
+
+      "providerReference.paymentId": providerPaymentId,
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+
+        authorizedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Mark Verified Payment Transaction Paid
+|--------------------------------------------------------------------------
+|
+| Allowed transitions:
+|
+| pending
+|    ↓
+| paid
+|
+| OR:
+|
+| authorized
+|    ↓
+| paid
+|
+| This handles Razorpay automatic capture as well as a later capture.
+|--------------------------------------------------------------------------
+*/
+
+export const markVerifiedPaymentTransactionPaid = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    paidAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      status: {
+        $in: [
+          PAYMENT_TRANSACTION_STATUSES.PENDING,
+
+          PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+        ],
+      },
+
+      verifiedAt: {
+        $ne: null,
+      },
+
+      "providerReference.orderId": providerOrderId,
+
+      "providerReference.paymentId": providerPaymentId,
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.PAID,
+
+        paidAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

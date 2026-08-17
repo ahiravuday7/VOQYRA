@@ -5802,6 +5802,89 @@ NO inventory commit yet
 
 This distinction matters because an authorized Razorpay payment is not the same as a captured payment. Razorpay exposes capture separately, and its API uses the captured state/flag to tell us when payment capture has actually happened.
 |--------------------------------------------------------------------------
+Part 190 — Synchronize Provider State → PaymentTransaction 🔐
+
+Part 189 can now ask Razorpay directly:
+
+What happened to pay_xxx?
+
+Part 190 converts that trusted provider state into our local PaymentTransaction:
+
+Razorpay created
+      ↓
+PaymentTransaction = pending
+
+
+Razorpay authorized
+      ↓
+PaymentTransaction = authorized
+
+
+Razorpay captured
+      ↓
+PaymentTransaction = paid
+
+Razorpay currently distinguishes authorized from captured; an authorized payment can later be captured, and automatic capture is the default unless configured otherwise.
+
+Important: Part 190 still does not change:
+
+Order.status
+Order.payment.status
+Order.inventoryStatus
+Product stock
+reservedStock
+
+We update only PaymentTransaction.
+
+After Part 190
+
+Your flow will be:
+
+POST payment
+      ↓
+PaymentTransaction = pending
+      ↓
+Razorpay Checkout
+      ↓
+Part 188
+signature verified
+      ↓
+verifiedAt ✅
+      ↓
+Part 189
+fetch Payment from Razorpay
+      ↓
+verify ID/order/amount/currency
+      ↓
+Part 190
+provider status mapping
+      ↓
+
+
+created
+   ↓
+pending
+
+
+authorized
+   ↓
+authorized + authorizedAt
+
+
+captured
+   ↓
+paid + paidAt
+
+But still:
+
+PaymentTransaction = paid ✅
+
+
+Order.payment = pending
+Order.status = pending
+Inventory = reserved
+
+That temporary separation is intentional. It gives us a safe recovery boundary: your existing findSuccessfulPaymentTransactionForOrder() already prevents creating another payment if the provider payment succeeded but the Order has not yet been finalized.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
