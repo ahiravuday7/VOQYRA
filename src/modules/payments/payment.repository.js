@@ -536,7 +536,15 @@ export const recordVerifiedPaymentProviderConfirmation = (
 
       provider,
 
-      status: PAYMENT_TRANSACTION_STATUSES.PENDING,
+      status: {
+        $in: [
+          PAYMENT_TRANSACTION_STATUSES.PENDING,
+
+          PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+
+          PAYMENT_TRANSACTION_STATUSES.PAID,
+        ],
+      },
 
       "providerReference.orderId": providerOrderId,
 
@@ -551,6 +559,10 @@ export const recordVerifiedPaymentProviderConfirmation = (
           "providerReference.paymentId": {
             $exists: false,
           },
+        },
+
+        {
+          "providerReference.paymentId": providerPaymentId,
         },
       ],
     },
@@ -630,9 +642,19 @@ export const markVerifiedPaymentTransactionAuthorized = (
 
       status: PAYMENT_TRANSACTION_STATUSES.PENDING,
 
-      verifiedAt: {
-        $ne: null,
-      },
+      $or: [
+        {
+          verifiedAt: {
+            $ne: null,
+          },
+        },
+
+        {
+          providerVerifiedAt: {
+            $ne: null,
+          },
+        },
+      ],
 
       "providerReference.orderId": providerOrderId,
 
@@ -721,9 +743,19 @@ export const markVerifiedPaymentTransactionPaid = (
         ],
       },
 
-      verifiedAt: {
-        $ne: null,
-      },
+      $or: [
+        {
+          verifiedAt: {
+            $ne: null,
+          },
+        },
+
+        {
+          providerVerifiedAt: {
+            $ne: null,
+          },
+        },
+      ],
 
       "providerReference.orderId": providerOrderId,
 
@@ -746,6 +778,218 @@ export const markVerifiedPaymentTransactionPaid = (
   )
     .select("+providerReference.signature")
     .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Payment Transaction By Provider Order
+|--------------------------------------------------------------------------
+|
+| Webhooks do not know our MongoDB Order ID or PaymentTransaction ID.
+|
+| Razorpay does give us its trusted Order reference.
+|--------------------------------------------------------------------------
+*/
+
+export const findPaymentTransactionByProviderOrderReference = (
+  provider,
+
+  providerOrderId,
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    provider,
+
+    "providerReference.orderId": providerOrderId,
+  })
+    .sort({
+      attemptNumber: -1,
+    })
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Record Direct Provider Verification
+|--------------------------------------------------------------------------
+|
+| Browser confirmation may never happen.
+|
+| After Part 189 successfully fetches and verifies the Payment directly
+| from Razorpay, we can safely attach providerPaymentId and record:
+|
+| providerVerifiedAt
+|--------------------------------------------------------------------------
+*/
+
+export const recordProviderVerifiedPaymentReference = (
+  paymentTransactionId,
+
+  {
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    providerVerifiedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      provider,
+
+      "providerReference.orderId": providerOrderId,
+
+      providerVerifiedAt: null,
+
+      $or: [
+        {
+          "providerReference.paymentId": null,
+        },
+
+        {
+          "providerReference.paymentId": {
+            $exists: false,
+          },
+        },
+
+        {
+          "providerReference.paymentId": providerPaymentId,
+        },
+      ],
+    },
+
+    {
+      $set: {
+        "providerReference.paymentId": providerPaymentId,
+
+        providerVerifiedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Mark Trusted Provider Payment Failed
+|--------------------------------------------------------------------------
+|
+| Payment attempt failed.
+|
+| Order remains:
+|
+| pending
+| inventory reserved
+|
+| This lets the customer safely create another payment attempt against the
+| same Order.
+|--------------------------------------------------------------------------
+*/
+
+export const markTrustedPaymentTransactionFailed = (
+  paymentTransactionId,
+
+  {
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    failedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      provider,
+
+      status: {
+        $in: [
+          PAYMENT_TRANSACTION_STATUSES.PENDING,
+
+          PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+        ],
+      },
+
+      "providerReference.orderId": providerOrderId,
+
+      "providerReference.paymentId": providerPaymentId,
+
+      $or: [
+        {
+          verifiedAt: {
+            $ne: null,
+          },
+        },
+
+        {
+          providerVerifiedAt: {
+            $ne: null,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.FAILED,
+
+        failure: {
+          code: "PROVIDER_PAYMENT_FAILED",
+
+          message: "Payment provider reported that the Payment failed",
+
+          source: provider,
+
+          step: "payment",
+
+          reason: "provider-reported-failed",
+
+          failedAt,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  ).lean();
 
   if (session) {
     query.session(session);

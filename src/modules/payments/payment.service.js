@@ -1532,6 +1532,23 @@ export const confirmCustomerRazorpayPayment = async ({
   }
 
   /*
+|--------------------------------------------------------------------------
+| Existing Provider Payment Identity
+|--------------------------------------------------------------------------
+|
+| A webhook may have already attached the provider Payment ID before the
+| browser confirmation reached us.
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    paymentTransaction.providerReference?.paymentId &&
+    paymentTransaction.providerReference.paymentId !== razorpayPaymentId
+  ) {
+    throw createPaymentProviderPaymentConflictError();
+  }
+
+  /*
     |--------------------------------------------------------------------------
     | Idempotent Retry
     |--------------------------------------------------------------------------
@@ -1539,12 +1556,8 @@ export const confirmCustomerRazorpayPayment = async ({
 
   if (
     paymentTransaction.verifiedAt &&
-    paymentTransaction.providerReference?.paymentId
+    paymentTransaction.providerReference?.paymentId === razorpayPaymentId
   ) {
-    if (paymentTransaction.providerReference.paymentId !== razorpayPaymentId) {
-      throw createPaymentProviderPaymentConflictError();
-    }
-
     return {
       action: "reuse",
 
@@ -1553,12 +1566,33 @@ export const confirmCustomerRazorpayPayment = async ({
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Confirmation State
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Browser Verification State
+|--------------------------------------------------------------------------
+|
+| Normally:
+|
+| pending
+|
+| But when a webhook wins the race first:
+|
+| authorized
+| paid
+|
+| are also valid provided direct provider verification already happened.
+|--------------------------------------------------------------------------
+*/
 
-  if (paymentTransaction.status !== PAYMENT_TRANSACTION_STATUSES.PENDING) {
+  const browserConfirmationStateIsValid =
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PENDING ||
+    (paymentTransaction.providerVerifiedAt &&
+      [
+        PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
+
+        PAYMENT_TRANSACTION_STATUSES.PAID,
+      ].includes(paymentTransaction.status));
+
+  if (!browserConfirmationStateIsValid) {
     throw createPaymentConfirmationStateInvalidError(paymentTransaction.status);
   }
 
@@ -1696,6 +1730,8 @@ export const synchronizeCustomerPaymentProviderState = async ({
   paymentTransactionId,
 
   customerId,
+
+  trustedProviderPayment = null,
 }) => {
   /*
     |--------------------------------------------------------------------------
@@ -1722,7 +1758,11 @@ export const synchronizeCustomerPaymentProviderState = async ({
     |--------------------------------------------------------------------------
     */
 
-  if (!paymentTransaction.verifiedAt) {
+  const hasTrustedVerification = Boolean(
+    paymentTransaction.verifiedAt || paymentTransaction.providerVerifiedAt,
+  );
+
+  if (!hasTrustedVerification) {
     throw createPaymentProviderVerificationRequiredError();
   }
 
@@ -1768,30 +1808,57 @@ export const synchronizeCustomerPaymentProviderState = async ({
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Fetch Trusted Provider Payment
-    |--------------------------------------------------------------------------
-    |
-    | Part 189 verifies:
-    |
-    | providerPaymentId
-    | providerOrderId
-    | amount
-    | currency
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Trusted Provider Payment
+|--------------------------------------------------------------------------
+|
+| Browser flow:
+|
+| no value supplied
+|   ↓
+| fetch from Razorpay here
+|
+| Webhook worker:
+|
+| already fetched and verified through Part 189
+|   ↓
+| reuse the trusted result
+|--------------------------------------------------------------------------
+*/
 
-  const providerPayment = await fetchAndVerifyPaymentProviderDetails({
-    provider: paymentTransaction.provider,
+  const providerPayment =
+    trustedProviderPayment ??
+    (await fetchAndVerifyPaymentProviderDetails({
+      provider: paymentTransaction.provider,
 
-    providerPaymentId,
+      providerPaymentId,
 
-    providerOrderId,
+      providerOrderId,
 
-    amount: paymentTransaction.amount,
+      amount: paymentTransaction.amount,
 
-    currency: paymentTransaction.currency,
-  });
+      currency: paymentTransaction.currency,
+    }));
+
+  /*
+|--------------------------------------------------------------------------
+| Defensive Internal Consistency
+|--------------------------------------------------------------------------
+*/
+
+  const providerPaymentMatches =
+    providerPayment.provider === paymentTransaction.provider &&
+    providerPayment.providerPaymentId === providerPaymentId &&
+    providerPayment.providerOrderId === providerOrderId &&
+    providerPayment.amount === paymentTransaction.amount &&
+    providerPayment.currency?.toUpperCase() ===
+      paymentTransaction.currency?.toUpperCase();
+
+  if (!providerPaymentMatches) {
+    throw new Error(
+      "Trusted provider Payment details do not match the Payment transaction",
+    );
+  }
 
   /*
     |--------------------------------------------------------------------------
@@ -2016,14 +2083,26 @@ export const finalizeCapturedCustomerOnlineOrder = async ({
         }
 
         /*
-          |--------------------------------------------------------------------------
-          | Part 190 Must Have Reached Paid
-          |--------------------------------------------------------------------------
-          */
+|--------------------------------------------------------------------------
+| Trusted Payment Verification
+|--------------------------------------------------------------------------
+|
+| Browser confirmation:
+|   verifiedAt
+|
+| Webhook/provider reconciliation:
+|   providerVerifiedAt
+|--------------------------------------------------------------------------
+*/
+
+        const hasTrustedPaymentVerification = Boolean(
+          paymentTransaction.verifiedAt ||
+          paymentTransaction.providerVerifiedAt,
+        );
 
         if (
           paymentTransaction.status !== PAYMENT_TRANSACTION_STATUSES.PAID ||
-          !paymentTransaction.verifiedAt ||
+          !hasTrustedPaymentVerification ||
           !paymentTransaction.paidAt
         ) {
           throw createPaymentOrderFinalizationRequiresPaidError(

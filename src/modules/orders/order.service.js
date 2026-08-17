@@ -6554,9 +6554,29 @@ export const finalizePaidOnlineOrderInTransaction = async (
 
   const providerPaymentId = paymentTransaction.providerReference?.paymentId;
 
+  /*
+|--------------------------------------------------------------------------
+| Trusted Payment Verification
+|--------------------------------------------------------------------------
+|
+| Browser flow:
+|   verifiedAt
+|
+| Webhook recovery flow:
+|   providerVerifiedAt
+|
+| Either one is sufficient because both represent a trusted server-side
+| verification path.
+|--------------------------------------------------------------------------
+*/
+
+  const hasTrustedPaymentVerification = Boolean(
+    paymentTransaction.verifiedAt || paymentTransaction.providerVerifiedAt,
+  );
+
   const paymentTransactionIsValid =
     paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
-    paymentTransaction.verifiedAt &&
+    hasTrustedPaymentVerification &&
     paymentTransaction.paidAt &&
     paymentTransaction.provider &&
     providerOrderId &&

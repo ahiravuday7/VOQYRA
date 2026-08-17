@@ -432,6 +432,31 @@ const paymentTransactionSchema = new mongoose.Schema(
       default: null,
     },
 
+    /*
+|--------------------------------------------------------------------------
+| Direct Provider Verification
+|--------------------------------------------------------------------------
+|
+| verifiedAt
+|   =
+| browser Checkout signature was verified.
+|
+| providerVerifiedAt
+|   =
+| our backend fetched the Payment directly from the provider and verified
+| its trusted identifiers, amount and currency.
+|
+| A webhook may complete the payment even when the browser never returns,
+| therefore these two verification timestamps must remain separate.
+|--------------------------------------------------------------------------
+*/
+
+    providerVerifiedAt: {
+      type: Date,
+
+      default: null,
+    },
+
     paidAt: {
       type: Date,
 

@@ -6046,6 +6046,111 @@ mark webhook processed
       ↓
 retry safely on temporary failure
 |--------------------------------------------------------------------------
+Part 194 — Process Razorpay Webhook Inbox ♻️
+
+Now we make the webhook useful.
+
+Razorpay explicitly says webhook delivery is at least once and events can arrive out of order. Also, a payment.authorized webhook is only a snapshot of that moment; the payment may already have moved to captured. Therefore Part 194 will treat a webhook as a signal, then fetch the current Payment directly from Razorpay before changing business state.
+
+The flow becomes:
+
+Webhook inbox = pending
+        ↓
+Atomically claim event
+        ↓
+Find PaymentTransaction by Razorpay order_id
+        ↓
+Fetch CURRENT Payment from Razorpay
+        ↓
+Verify paymentId/orderId/amount/currency
+        ↓
+providerVerifiedAt ✅
+        ↓
+authorized → PaymentTransaction authorized
+captured   → PaymentTransaction paid
+failed     → PaymentTransaction failed
+        ↓
+captured?
+   ↓ yes
+Finalize Order + inventory
+        ↓
+Webhook inbox = processed
+
+No cron/scheduler yet. Part 194 only builds the processor. Scheduling comes next.
+
+Important behavior for payment.failed
+
+Part 194 intentionally does:
+
+PaymentTransaction = failed
+
+but does not do:
+
+Order = cancelled ❌
+inventory released ❌
+
+Instead:
+
+PaymentTransaction = failed
+
+
+Order.status = pending
+Order.payment = pending
+Order.inventoryStatus = reserved
+
+Why?
+
+Because the customer can retry payment against the same reserved Order.
+
+Your existing payment-attempt logic already treats FAILED as not active, so another payment attempt can be created.
+
+After Part 194
+
+You now support both success paths:
+
+PATH A — Browser works
+
+
+Razorpay Checkout
+      ↓
+/confirm
+      ↓
+signature verified
+      ↓
+provider API verification
+      ↓
+Payment paid
+      ↓
+Order confirmed
+
+and more importantly:
+
+PATH B — Browser disappears
+
+
+Customer pays
+      ↓
+closes browser / network fails
+      ↓
+NO /confirm call
+      ↓
+Razorpay webhook
+      ↓
+durable inbox
+      ↓
+worker
+      ↓
+fresh Razorpay API verification
+      ↓
+providerVerifiedAt
+      ↓
+Payment paid
+      ↓
+Order confirmed
+      ↓
+inventory committed
+
+That second path is why webhook processing is essential. Razorpay specifically recommends building for duplicate and out-of-order delivery, and its docs note that a payment may advance from authorized to captured rapidly; fetching current provider truth protects your application from stale webhook snapshots.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

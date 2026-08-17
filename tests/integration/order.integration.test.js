@@ -31,7 +31,12 @@ import PaymentTransaction from "../../src/modules/payments/payment.model.js";
 import {
   createTestRazorpaySignature,
   setTestRazorpayPaymentDetails,
+  createTestRazorpayWebhookSignature,
 } from "../helpers/payment-provider-test.helper.js";
+
+import PaymentWebhookEvent from "../../src/modules/payments/payment-webhook-event.model.js";
+
+import { processNextPaymentWebhookEvent } from "../../src/modules/payments/payment-webhook-processor.service.js";
 
 import {
   synchronizeCustomerPaymentProviderState,
@@ -497,6 +502,90 @@ const createCapturedOnlinePaymentFixture = async ({
 
     variant,
   };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Send Razorpay Payment Webhook
+|--------------------------------------------------------------------------
+*/
+
+const sendPaymentWebhookFixture = async ({
+  eventId,
+
+  eventType,
+
+  providerPaymentId,
+
+  providerOrderId,
+
+  amount,
+
+  currency = "INR",
+
+  status,
+
+  captured,
+
+  method = "upi",
+}) => {
+  const payload = {
+    entity: "event",
+
+    event: eventType,
+
+    contains: ["payment"],
+
+    payload: {
+      payment: {
+        entity: {
+          id: providerPaymentId,
+
+          entity: "payment",
+
+          /*
+           * Razorpay webhook amount is in paise.
+           */
+          amount: amount * 100,
+
+          currency,
+
+          status,
+
+          order_id: providerOrderId,
+
+          method,
+
+          captured,
+        },
+      },
+    },
+
+    created_at: Math.floor(Date.now() / 1000),
+  };
+
+  const rawBody = JSON.stringify(payload);
+
+  const signature = createTestRazorpayWebhookSignature(rawBody);
+
+  return request(app)
+    .post("/api/v1/webhooks/payments/razorpay")
+    .set(
+      "Content-Type",
+
+      "application/json",
+    )
+    .set(
+      "x-razorpay-event-id",
+
+      eventId,
+    )
+    .set(
+      "x-razorpay-signature",
+
+      signature,
+    )
+    .send(rawBody);
 };
 
 /*
@@ -30998,5 +31087,481 @@ describe("Customer Razorpay Payment confirmation workflow", () => {
         order: fixture.order.id,
       }),
     ).toBe(1);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 194 — Razorpay Webhook Processing
+|--------------------------------------------------------------------------
+*/
+
+describe("Razorpay Payment webhook processing", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | 1. Captured Webhook Without Browser Confirmation
+    |--------------------------------------------------------------------------
+    */
+
+  it("finalizes a captured Payment even when the browser confirmation never arrives", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity: 2,
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Start Razorpay Payment
+        |--------------------------------------------------------------------------
+        */
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_webhook_${new mongoose.Types.ObjectId()}`;
+
+    /*
+        |--------------------------------------------------------------------------
+        | Current Razorpay Truth
+        |--------------------------------------------------------------------------
+        */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Webhook Arrives
+        |--------------------------------------------------------------------------
+        */
+
+    await sendPaymentWebhookFixture({
+      eventId: "evt_part194_captured_browserless",
+
+      eventType: "payment.captured",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "captured",
+
+      captured: true,
+    }).then((response) => {
+      expect(response.status).toBe(200);
+    });
+
+    /*
+        |--------------------------------------------------------------------------
+        | Process Inbox
+        |--------------------------------------------------------------------------
+        */
+
+    const result = await processNextPaymentWebhookEvent();
+
+    expect(result.action).toBe("processed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Payment
+        |--------------------------------------------------------------------------
+        */
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("paid");
+
+    /*
+     * Browser never returned.
+     */
+    expect(storedPayment.verifiedAt).toBeNull();
+
+    /*
+     * Direct Razorpay verification succeeded.
+     */
+    expect(storedPayment.providerVerifiedAt).toBeInstanceOf(Date);
+
+    expect(storedPayment.providerReference.paymentId).toBe(providerPaymentId);
+
+    /*
+        |--------------------------------------------------------------------------
+        | Order
+        |--------------------------------------------------------------------------
+        */
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.payment.status).toBe("paid");
+
+    expect(storedOrder.inventoryStatus).toBe("committed");
+
+    /*
+        |--------------------------------------------------------------------------
+        | Inbox
+        |--------------------------------------------------------------------------
+        */
+
+    const webhook = await PaymentWebhookEvent.findOne({
+      providerEventId: "evt_part194_captured_browserless",
+    }).lean();
+
+    expect(webhook.processingStatus).toBe("processed");
+
+    expect(webhook.processingAttempts).toBe(1);
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 2. Authorized Webhook
+    |--------------------------------------------------------------------------
+    */
+
+  it("authorizes the Payment but keeps the Order reserved when Razorpay is not captured", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_webhook_${new mongoose.Types.ObjectId()}`;
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "authorized",
+
+      captured: false,
+
+      method: "card",
+    });
+
+    await sendPaymentWebhookFixture({
+      eventId: "evt_part194_authorized",
+
+      eventType: "payment.authorized",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "authorized",
+
+      captured: false,
+
+      method: "card",
+    });
+
+    const result = await processNextPaymentWebhookEvent();
+
+    expect(result.action).toBe("processed");
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("authorized");
+
+    expect(storedPayment.providerVerifiedAt).toBeInstanceOf(Date);
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.payment.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 3. Out-Of-Order Event
+    |--------------------------------------------------------------------------
+    */
+
+  it("uses fresh Razorpay state instead of trusting an older authorized webhook snapshot", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_webhook_${new mongoose.Types.ObjectId()}`;
+
+    /*
+     * Webhook says authorized...
+     *
+     * ...but CURRENT Razorpay API says captured.
+     */
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    await sendPaymentWebhookFixture({
+      eventId: "evt_part194_out_of_order",
+
+      eventType: "payment.authorized",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "authorized",
+
+      captured: false,
+    });
+
+    await processNextPaymentWebhookEvent();
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    /*
+     * Fresh API truth wins.
+     */
+    expect(storedPayment.status).toBe("paid");
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("confirmed");
+
+    expect(storedOrder.payment.status).toBe("paid");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 4. Failed Payment
+    |--------------------------------------------------------------------------
+    */
+
+  it("marks the Payment attempt failed while leaving the Order and reservation available for another attempt", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_webhook_${new mongoose.Types.ObjectId()}`;
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    await sendPaymentWebhookFixture({
+      eventId: "evt_part194_failed",
+
+      eventType: "payment.failed",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "failed",
+
+      captured: false,
+    });
+
+    const result = await processNextPaymentWebhookEvent();
+
+    expect(result.action).toBe("processed");
+
+    const storedPayment = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(storedPayment.status).toBe("failed");
+
+    expect(storedPayment.failure.failedAt).toBeInstanceOf(Date);
+
+    const storedOrder = await Order.findById(order.id).lean();
+
+    expect(storedOrder.status).toBe("pending");
+
+    expect(storedOrder.payment.status).toBe("pending");
+
+    expect(storedOrder.inventoryStatus).toBe("reserved");
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | 5. Missing Local Transaction → Retry
+    |--------------------------------------------------------------------------
+    */
+
+  it("keeps the webhook retryable when its local PaymentTransaction is not available yet", async () => {
+    const providerOrderId = "order_missing_part194";
+
+    const providerPaymentId = "pay_missing_part194";
+
+    await sendPaymentWebhookFixture({
+      eventId: "evt_part194_retry_missing",
+
+      eventType: "payment.captured",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: 899,
+
+      status: "captured",
+
+      captured: true,
+    });
+
+    const before = new Date();
+
+    const result = await processNextPaymentWebhookEvent();
+
+    expect(result.action).toBe("failed");
+
+    expect(result.error.code).toBe(
+      "PAYMENT_WEBHOOK_PAYMENT_TRANSACTION_NOT_FOUND",
+    );
+
+    const webhook = await PaymentWebhookEvent.findOne({
+      providerEventId: "evt_part194_retry_missing",
+    }).lean();
+
+    expect(webhook.processingStatus).toBe("failed");
+
+    expect(webhook.processingAttempts).toBe(1);
+
+    expect(webhook.nextAttemptAt.getTime()).toBeGreaterThan(before.getTime());
   });
 });
