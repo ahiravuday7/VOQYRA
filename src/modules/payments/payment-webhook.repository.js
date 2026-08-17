@@ -512,3 +512,295 @@ export const requeueDeadLetteredPaymentWebhookEvent = (
     },
   ).lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Admin Payment Webhook Queue Summary
+|--------------------------------------------------------------------------
+|
+| Operational overview only.
+|
+| No webhook state is modified here.
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminPaymentWebhookQueueSummary = async ({
+  now = new Date(),
+} = {}) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Status Counters
+    |--------------------------------------------------------------------------
+    */
+
+  const [
+    total,
+
+    pending,
+
+    processing,
+
+    processed,
+
+    failed,
+
+    deadLettered,
+
+    authorizedEvents,
+
+    capturedEvents,
+
+    failedEvents,
+
+    dueNow,
+
+    oldestUnresolved,
+
+    latestProcessed,
+
+    latestDeadLettered,
+  ] = await Promise.all([
+    /*
+      |--------------------------------------------------------------------------
+      | Total
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Pending
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PENDING,
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Processing
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Processed
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Failed / Retryable
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.FAILED,
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Dead Letter
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Event Type — Authorized
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      eventType: "payment.authorized",
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Event Type — Captured
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      eventType: "payment.captured",
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Event Type — Failed
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      eventType: "payment.failed",
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Events Due For Worker Processing
+      |--------------------------------------------------------------------------
+      |
+      | Includes:
+      |
+      | pending + due now
+      | failed + retry due now
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.countDocuments({
+      processingStatus: {
+        $in: [
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.PENDING,
+
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.FAILED,
+        ],
+      },
+
+      nextAttemptAt: {
+        $lte: now,
+      },
+    }),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Oldest Unresolved Event
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.findOne({
+      processingStatus: {
+        $in: [
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.PENDING,
+
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSING,
+
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.FAILED,
+
+          PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+        ],
+      },
+    })
+      .sort({
+        receivedAt: 1,
+      })
+      .select({
+        receivedAt: 1,
+      })
+      .lean(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Latest Successfully Processed Event
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.findOne({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.PROCESSED,
+
+      processedAt: {
+        $ne: null,
+      },
+    })
+      .sort({
+        processedAt: -1,
+      })
+      .select({
+        processedAt: 1,
+      })
+      .lean(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Latest Dead-Letter Event
+      |--------------------------------------------------------------------------
+      */
+
+    PaymentWebhookEvent.findOne({
+      processingStatus: PAYMENT_WEBHOOK_PROCESSING_STATUSES.DEAD_LETTERED,
+
+      deadLetteredAt: {
+        $ne: null,
+      },
+    })
+      .sort({
+        deadLetteredAt: -1,
+      })
+      .select({
+        deadLetteredAt: 1,
+      })
+      .lean(),
+  ]);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Unresolved Queue
+    |--------------------------------------------------------------------------
+    */
+
+  const unresolved = pending + processing + failed + deadLettered;
+
+  return {
+    total,
+
+    byStatus: {
+      pending,
+
+      processing,
+
+      processed,
+
+      failed,
+
+      deadLettered,
+    },
+
+    byEventType: {
+      paymentAuthorized: authorizedEvents,
+
+      paymentCaptured: capturedEvents,
+
+      paymentFailed: failedEvents,
+    },
+
+    queue: {
+      unresolved,
+
+      dueNow,
+
+      oldestUnresolvedReceivedAt: oldestUnresolved?.receivedAt ?? null,
+    },
+
+    activity: {
+      latestProcessedAt: latestProcessed?.processedAt ?? null,
+
+      latestDeadLetteredAt: latestDeadLettered?.deadLetteredAt ?? null,
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Operations Attention Flag
+      |--------------------------------------------------------------------------
+      |
+      | We only flag dead-letter events here.
+      |
+      | A temporary `failed` retry is expected behavior and does not
+      | automatically mean human intervention is required.
+      |--------------------------------------------------------------------------
+      */
+
+    attentionRequired: deadLettered > 0,
+  };
+};

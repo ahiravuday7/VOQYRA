@@ -12,12 +12,14 @@ import {
   getAdminPaymentWebhookEventController,
   getAdminPaymentWebhookEventsController,
   requeueAdminPaymentWebhookEventController,
+  getAdminPaymentWebhookQueueSummaryController,
 } from "./payment-webhook.admin.controller.js";
 
 import {
   adminPaymentWebhookDetailsRequestSchema,
   adminPaymentWebhookListRequestSchema,
   adminPaymentWebhookRequeueRequestSchema,
+  adminPaymentWebhookSummaryRequestSchema,
 } from "./payment-webhook.admin.validation.js";
 
 const router = Router();
@@ -46,6 +48,25 @@ router.get(
   validateRequest(adminPaymentWebhookListRequestSchema),
 
   getAdminPaymentWebhookEventsController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Webhook Queue Summary
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| /summary must be declared before /:webhookEventId.
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/summary",
+
+  validateRequest(adminPaymentWebhookSummaryRequestSchema),
+
+  getAdminPaymentWebhookQueueSummaryController,
 );
 
 /*

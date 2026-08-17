@@ -131,3 +131,51 @@ export const toAdminPaymentWebhookEventList = ({
     },
   };
 };
+
+/*
+|--------------------------------------------------------------------------
+| Admin Payment Webhook Queue Summary
+|--------------------------------------------------------------------------
+*/
+
+export const toAdminPaymentWebhookQueueSummary = (summary) => {
+  return {
+    total: summary.total,
+
+    byStatus: {
+      pending: summary.byStatus.pending,
+
+      processing: summary.byStatus.processing,
+
+      processed: summary.byStatus.processed,
+
+      failed: summary.byStatus.failed,
+
+      deadLettered: summary.byStatus.deadLettered,
+    },
+
+    byEventType: {
+      paymentAuthorized: summary.byEventType.paymentAuthorized,
+
+      paymentCaptured: summary.byEventType.paymentCaptured,
+
+      paymentFailed: summary.byEventType.paymentFailed,
+    },
+
+    queue: {
+      unresolved: summary.queue.unresolved,
+
+      dueNow: summary.queue.dueNow,
+
+      oldestUnresolvedReceivedAt: summary.queue.oldestUnresolvedReceivedAt,
+    },
+
+    activity: {
+      latestProcessedAt: summary.activity.latestProcessedAt,
+
+      latestDeadLetteredAt: summary.activity.latestDeadLetteredAt,
+    },
+
+    attentionRequired: summary.attentionRequired,
+  };
+};

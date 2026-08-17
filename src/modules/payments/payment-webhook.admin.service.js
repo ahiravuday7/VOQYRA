@@ -2,6 +2,7 @@ import AppError from "../../shared/errors/app-error.js";
 
 import {
   findAdminPaymentWebhookEventById,
+  getAdminPaymentWebhookQueueSummary as getAdminPaymentWebhookQueueSummaryRepository,
   listAdminPaymentWebhookEvents,
   requeueDeadLetteredPaymentWebhookEvent,
 } from "./payment-webhook.repository.js";
@@ -9,6 +10,7 @@ import {
 import {
   toAdminPaymentWebhookEvent,
   toAdminPaymentWebhookEventList,
+  toAdminPaymentWebhookQueueSummary,
 } from "./payment-webhook.admin.mapper.js";
 
 /*
@@ -119,4 +121,16 @@ export const requeueAdminPaymentWebhookEvent = async ({
   }
 
   throw createPaymentWebhookRequeueStateInvalidError(existing.processingStatus);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Webhook Queue Summary
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminPaymentWebhookQueueSummary = async () => {
+  const summary = await getAdminPaymentWebhookQueueSummaryRepository();
+
+  return toAdminPaymentWebhookQueueSummary(summary);
 };

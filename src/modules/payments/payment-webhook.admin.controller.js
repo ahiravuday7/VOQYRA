@@ -2,6 +2,7 @@ import {
   getAdminPaymentWebhookEvent,
   getAdminPaymentWebhookEvents,
   requeueAdminPaymentWebhookEvent,
+  getAdminPaymentWebhookQueueSummary,
 } from "./payment-webhook.admin.service.js";
 
 /*
@@ -123,6 +124,49 @@ export const requeueAdminPaymentWebhookEventController = async (
 
     data: {
       paymentWebhookEvent: webhookEvent,
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Payment Webhook Queue Summary
+|--------------------------------------------------------------------------
+|
+| GET /api/v1/admin/payment-webhooks/summary
+|--------------------------------------------------------------------------
+*/
+
+export const getAdminPaymentWebhookQueueSummaryController = async (
+  request,
+
+  response,
+) => {
+  const summary = await getAdminPaymentWebhookQueueSummary();
+
+  request.log?.info(
+    {
+      adminId: String(request.user._id),
+
+      unresolved: summary.queue.unresolved,
+
+      dueNow: summary.queue.dueNow,
+
+      deadLettered: summary.byStatus.deadLettered,
+
+      attentionRequired: summary.attentionRequired,
+    },
+
+    "Admin Payment webhook queue summary retrieved",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Payment webhook queue summary retrieved successfully",
+
+    data: {
+      summary,
     },
   });
 };

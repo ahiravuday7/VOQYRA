@@ -6246,6 +6246,54 @@ existing Part 195 worker picks it up
 
 Do not add a separate “process immediately” admin endpoint yet. Requeueing into the durable queue is safer because it continues through the same concurrency, retry, and dead-letter protections as every other webhook.
 |--------------------------------------------------------------------------
+Part 198 — Admin Webhook Queue Summary 📊
+
+Now we add a compact operational view for admins.
+
+New endpoint:
+
+GET /api/v1/admin/payment-webhooks/summary
+
+It will show:
+
+total events
+pending
+processing
+processed
+failed
+dead-lettered
+
+
+payment.authorized count
+payment.captured count
+payment.failed count
+
+
+events due for processing now
+oldest unresolved event
+latest processed event
+latest dead-letter event
+
+
+attentionRequired = true/false
+
+This is read-only. No payment, Order, inventory, or webhook state changes happen in Part 198.
+
+Are webhooks flowing?
+
+How many are waiting?
+
+How many are currently processing?
+
+Are retries piling up?
+
+Are any events dead-lettered?
+
+Which webhook type is failing?
+
+When was the last successful processing?
+
+Is human attention required?
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
