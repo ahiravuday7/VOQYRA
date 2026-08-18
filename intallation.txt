@@ -7545,6 +7545,28 @@ Attempt #2 stays paid ✅
 Order stays confirmed ✅
 Inventory stays committed once ✅
 |--------------------------------------------------------------------------
+Part 207.8.1 — Safely Represent a Late Capture on a Previously Failed Attempt
+
+While checking this edge case, I found a real gap in the current production flow.
+
+Right now:
+
+Payment attempt #1 = failed
+Payment attempt #2 = paid → Order confirmed
+
+
+later provider truth for attempt #1 = captured
+
+cannot be represented correctly because your normal transition only allows:
+
+pending    → paid
+authorized → paid
+
+and rejects:
+
+failed → paid
+
+For a provider-confirmed late capture, however, we must record the financial truth without finalizing the Order again.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

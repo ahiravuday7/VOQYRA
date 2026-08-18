@@ -1032,6 +1032,146 @@ export const markVerifiedPaymentTransactionPaid = (
 
 /*
 |--------------------------------------------------------------------------
+| Mark Previously Failed Payment As Late Captured
+|--------------------------------------------------------------------------
+|
+| Exceptional Part 207 recovery transition:
+|
+| failed
+|   ↓
+| provider CURRENT truth says captured
+|   ↓
+| paid
+|
+| IMPORTANT:
+|
+| This repository function only records the PaymentTransaction truth.
+|
+| It does NOT:
+|
+| - finalize the Order
+| - commit inventory
+| - replace Order.payment.transactionId
+|
+| The webhook processor must decide whether this Payment can safely
+| finalize the Order or requires manual review.
+|--------------------------------------------------------------------------
+*/
+
+export const markFailedPaymentTransactionLateCaptured = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    paidAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      /*
+      |--------------------------------------------------------------------------
+      | Exceptional Transition Only From Failed
+      |--------------------------------------------------------------------------
+      */
+
+      status: PAYMENT_TRANSACTION_STATUSES.FAILED,
+
+      /*
+      |--------------------------------------------------------------------------
+      | Trusted Verification Required
+      |--------------------------------------------------------------------------
+      */
+
+      $or: [
+        {
+          verifiedAt: {
+            $ne: null,
+          },
+        },
+
+        {
+          providerVerifiedAt: {
+            $ne: null,
+          },
+        },
+      ],
+
+      /*
+      |--------------------------------------------------------------------------
+      | Exact Provider Identity
+      |--------------------------------------------------------------------------
+      */
+
+      "providerReference.orderId": providerOrderId,
+
+      "providerReference.paymentId": providerPaymentId,
+    },
+
+    {
+      $set: {
+        status: PAYMENT_TRANSACTION_STATUSES.PAID,
+
+        paidAt,
+
+        /*
+        |--------------------------------------------------------------------------
+        | Previous Failure Snapshot Is No Longer Financial Truth
+        |--------------------------------------------------------------------------
+        */
+
+        failure: {
+          code: null,
+
+          message: null,
+
+          source: null,
+
+          step: null,
+
+          reason: null,
+
+          failedAt: null,
+        },
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Payment Transaction By Provider Order
 |--------------------------------------------------------------------------
 |
