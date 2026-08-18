@@ -6739,6 +6739,37 @@ manual-review
 
 because automatically rebuilding inventory reservations after cancellation would be dangerous.
 |--------------------------------------------------------------------------
+Part 206.2 — Unit Tests for Payment Reconciliation Classification
+Now we test the classifier before connecting it to MongoDB or any worker.
+
+Why these tests matter
+
+We're locking down four distinct outcomes:
+
+Paid + trusted + pending/reserved Order
+→ recoverable ✅
+
+
+Paid + Order already finalized
+→ already-finalized ✅
+
+
+Not paid
+→ not-applicable ✅
+
+
+Paid but unsafe/inconsistent
+→ manual-review ⚠️
+
+Especially important:
+
+Payment = paid
+Order = cancelled
+Inventory = released
+
+must never automatically become confirmed.
+
+That could oversell inventory or resurrect a cancelled Order.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
