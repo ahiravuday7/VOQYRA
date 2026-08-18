@@ -1,3 +1,5 @@
+import env from "../../config/environment.js";
+
 import logger from "../../config/logger.js";
 
 import { findRecoverablePaymentReconciliationCandidates } from "./payment.repository.js";
@@ -13,7 +15,29 @@ import {
 |--------------------------------------------------------------------------
 */
 
-const DEFAULT_RECONCILIATION_BATCH_SIZE = 25;
+const DEFAULT_WORKER_INTERVAL_MS =
+  env.PAYMENT_RECONCILIATION_WORKER_INTERVAL_MS;
+
+const DEFAULT_RECONCILIATION_BATCH_SIZE =
+  env.PAYMENT_RECONCILIATION_WORKER_BATCH_SIZE;
+
+/*
+|--------------------------------------------------------------------------
+| Worker State
+|--------------------------------------------------------------------------
+*/
+
+let workerStarted = false;
+
+let workerStopping = false;
+
+let workerTimer = null;
+
+let activeCyclePromise = null;
+
+let workerIntervalMs = DEFAULT_WORKER_INTERVAL_MS;
+
+let workerBatchSize = DEFAULT_RECONCILIATION_BATCH_SIZE;
 
 /*
 |--------------------------------------------------------------------------
@@ -271,5 +295,266 @@ export const processPaymentReconciliationBatch = async ({
      * so another cycle may have additional work.
      */
     limitReached: candidates.length >= safeMaxPayments,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Run Payment Reconciliation Worker Cycle
+|--------------------------------------------------------------------------
+|
+| Prevent overlapping reconciliation cycles inside this Node process.
+|--------------------------------------------------------------------------
+*/
+
+export const runPaymentReconciliationWorkerCycle = ({
+  maxPayments = workerBatchSize,
+
+  finder = findRecoverablePaymentReconciliationCandidates,
+
+  processor = reconcilePaidPaymentTransaction,
+} = {}) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Existing Cycle Still Running
+  |--------------------------------------------------------------------------
+  */
+
+  if (activeCyclePromise) {
+    return activeCyclePromise;
+  }
+
+  activeCyclePromise = processPaymentReconciliationBatch({
+    maxPayments,
+
+    finder,
+
+    processor,
+  })
+    .then((result) => {
+      logger.debug(
+        {
+          candidates: result.candidates,
+
+          recovered: result.recovered,
+
+          alreadyFinalized: result.alreadyFinalized,
+
+          manualReview: result.manualReview,
+
+          skipped: result.skipped,
+
+          failed: result.failed,
+
+          idle: result.idle,
+
+          limitReached: result.limitReached,
+        },
+
+        "Payment reconciliation worker cycle completed",
+      );
+
+      return result;
+    })
+    .catch((error) => {
+      logger.error(
+        {
+          error,
+        },
+
+        "Payment reconciliation worker cycle failed",
+      );
+
+      throw error;
+    })
+    .finally(() => {
+      activeCyclePromise = null;
+    });
+
+  return activeCyclePromise;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Schedule Next Reconciliation Cycle
+|--------------------------------------------------------------------------
+|
+| setTimeout is deliberately used instead of setInterval.
+|
+| cycle finishes
+|      ↓
+| wait interval
+|      ↓
+| next cycle
+|
+| A slow MongoDB transaction therefore cannot cause scheduled cycles
+| to pile up.
+|--------------------------------------------------------------------------
+*/
+
+const scheduleNextPaymentReconciliationWorkerCycle = () => {
+  if (!workerStarted || workerStopping) {
+    return;
+  }
+
+  workerTimer = setTimeout(
+    async () => {
+      workerTimer = null;
+
+      try {
+        await runPaymentReconciliationWorkerCycle();
+      } catch {
+        /*
+         * Error already logged by run...().
+         *
+         * Reconciliation is a recovery worker, so one failed cycle
+         * must not permanently stop future recovery attempts.
+         */
+      } finally {
+        scheduleNextPaymentReconciliationWorkerCycle();
+      }
+    },
+
+    workerIntervalMs,
+  );
+
+  /*
+   * Do not keep Node alive solely because of this timer.
+   */
+  workerTimer.unref?.();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Start Payment Reconciliation Worker
+|--------------------------------------------------------------------------
+*/
+
+export const startPaymentReconciliationWorker = ({
+  intervalMs = DEFAULT_WORKER_INTERVAL_MS,
+
+  batchSize = DEFAULT_RECONCILIATION_BATCH_SIZE,
+} = {}) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Idempotent Start
+  |--------------------------------------------------------------------------
+  */
+
+  if (workerStarted) {
+    return {
+      started: false,
+
+      reason: "already-started",
+    };
+  }
+
+  workerIntervalMs = intervalMs;
+
+  workerBatchSize = batchSize;
+
+  workerStopping = false;
+
+  workerStarted = true;
+
+  logger.info(
+    {
+      intervalMs: workerIntervalMs,
+
+      batchSize: workerBatchSize,
+    },
+
+    "Payment reconciliation worker started",
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Immediate Startup Recovery
+  |--------------------------------------------------------------------------
+  |
+  | If the API crashed after a Payment became paid but before the Order
+  | finalized, we should not wait 30 seconds after restart before trying
+  | recovery.
+  |--------------------------------------------------------------------------
+  */
+
+  void runPaymentReconciliationWorkerCycle()
+    .catch(() => {
+      /*
+       * Error already logged.
+       */
+    })
+    .finally(() => {
+      scheduleNextPaymentReconciliationWorkerCycle();
+    });
+
+  return {
+    started: true,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Stop Payment Reconciliation Worker
+|--------------------------------------------------------------------------
+*/
+
+export const stopPaymentReconciliationWorker = async () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Already Stopped
+    |--------------------------------------------------------------------------
+    */
+
+  if (!workerStarted) {
+    return {
+      stopped: false,
+
+      reason: "not-started",
+    };
+  }
+
+  workerStopping = true;
+
+  workerStarted = false;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Cancel Future Scheduled Cycle
+    |--------------------------------------------------------------------------
+    */
+
+  if (workerTimer) {
+    clearTimeout(workerTimer);
+
+    workerTimer = null;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Let Current Reconciliation Transaction Finish
+    |--------------------------------------------------------------------------
+    |
+    | We do not want SIGTERM to interrupt inventory/payment recovery halfway
+    | through the current transaction.
+    |--------------------------------------------------------------------------
+    */
+
+  if (activeCyclePromise) {
+    try {
+      await activeCyclePromise;
+    } catch {
+      /*
+       * Error already logged.
+       */
+    }
+  }
+
+  workerStopping = false;
+
+  logger.info("Payment reconciliation worker stopped");
+
+  return {
+    stopped: true,
   };
 };

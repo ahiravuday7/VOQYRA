@@ -6983,7 +6983,65 @@ Because Zod has defaults:
 
 the application works even when your current .env doesn't contain them.
 |--------------------------------------------------------------------------
-Part 206.1 — Define Recoverable Payment/Order States
+Part 206.8.2 — Add Reconciliation Worker Start/Stop Lifecycle
+
+What the worker now does
+
+Its lifecycle becomes:
+
+Application starts
+      ↓
+startPaymentReconciliationWorker()
+      ↓
+immediate recovery cycle
+      ↓
+find max 25 candidates
+      ↓
+process sequentially
+      ↓
+cycle completes
+      ↓
+wait 30 seconds
+      ↓
+next cycle
+
+And if a cycle takes 45 seconds:
+
+cycle starts
+   ↓
+45 sec processing
+   ↓
+cycle finishes
+   ↓
+30 sec wait
+   ↓
+next cycle
+
+not:
+
+0 sec  → cycle 1
+30 sec → cycle 2 starts while cycle 1 running ❌
+Graceful shutdown
+
+On shutdown we'll eventually have:
+
+SIGTERM
+   ↓
+stop scheduling reconciliation
+   ↓
+wait for active reconciliation transaction
+   ↓
+stop worker
+   ↓
+disconnect MongoDB
+
+Exactly what we want. ✅
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
 info:
 The easiest way to remember is:
