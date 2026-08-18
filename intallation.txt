@@ -7636,6 +7636,14 @@ NO second ledger settlement
 
 That is the critical protection for money arriving after inventory has already been released.
 |--------------------------------------------------------------------------
+Part 207.9.2 — Webhook Protection for Late Capture After Reservation Expiry
+
+Update 2 files:
+
+src/modules/payments/payment-reconciliation.service.js
+src/modules/payments/payment-webhook-processor.service.js
+
+No Order or inventory mutation should happen in this part.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

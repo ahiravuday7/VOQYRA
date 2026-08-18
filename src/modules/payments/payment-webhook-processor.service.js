@@ -10,7 +10,20 @@ import {
   findOtherSuccessfulPaymentTransactionForOrder,
   markFailedPaymentTransactionLateCaptured,
   recordPaymentReconciliationManualReview,
+  markCancelledPaymentTransactionLateCaptured,
 } from "./payment.repository.js";
+
+import { findOrderById } from "../orders/order.repository.js";
+
+import {
+  ORDER_INVENTORY_STATUSES,
+  ORDER_STATUSES,
+} from "../../shared/constants/order.constants.js";
+
+import {
+  AUDIT_ACTOR_TYPES,
+  SYSTEM_AUDIT_ACTORS,
+} from "../../shared/constants/audit.constants.js";
 
 import { PAYMENT_RECONCILIATION_REASONS } from "./payment-reconciliation.service.js";
 
@@ -516,6 +529,142 @@ const processClaimedPaymentWebhookEvent = async (webhookEvent) => {
   }
 
   /*
+|--------------------------------------------------------------------------
+| Cancelled Payment Captured After Local Cancellation
+|--------------------------------------------------------------------------
+|
+| Most importantly:
+|
+| reservation expiry may have already:
+|
+| - cancelled the Order
+| - released inventory
+| - cancelled this PaymentTransaction
+|
+| If Razorpay later says captured, financial truth must be recorded,
+| but the expired Order must NEVER be automatically resurrected.
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    verifiedPaymentTransaction.status ===
+      PAYMENT_TRANSACTION_STATUSES.CANCELLED &&
+    providerPayment.status === "captured" &&
+    providerPayment.captured === true
+  ) {
+    const observedAt = new Date();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Record Financial Truth
+  |--------------------------------------------------------------------------
+  */
+
+    let lateCapturedPayment = await markCancelledPaymentTransactionLateCaptured(
+      verifiedPaymentTransaction._id,
+
+      {
+        orderId: verifiedPaymentTransaction.order,
+
+        customerId: verifiedPaymentTransaction.customer,
+
+        provider: verifiedPaymentTransaction.provider,
+
+        providerOrderId: providerPayment.providerOrderId,
+
+        providerPaymentId: providerPayment.providerPaymentId,
+
+        paidAt: observedAt,
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Concurrent Resolution
+  |--------------------------------------------------------------------------
+  */
+
+    if (!lateCapturedPayment) {
+      const current = await findPaymentTransactionByProviderOrderReference(
+        verifiedPaymentTransaction.provider,
+
+        providerPayment.providerOrderId,
+      );
+
+      const alreadyResolved =
+        current?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+        current.providerReference?.paymentId ===
+          providerPayment.providerPaymentId;
+
+      if (!alreadyResolved) {
+        throw createWebhookProcessingError(
+          "Unable to record late captured cancelled Payment",
+
+          "PAYMENT_WEBHOOK_CANCELLED_LATE_CAPTURE_STATE_CONFLICT",
+        );
+      }
+
+      lateCapturedPayment = current;
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inspect Current Order
+  |--------------------------------------------------------------------------
+  */
+
+    const order = await findOrderById(lateCapturedPayment.order);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Choose Durable Manual Review Reason
+  |--------------------------------------------------------------------------
+  */
+
+    let reconciliationReason =
+      PAYMENT_RECONCILIATION_REASONS.ORDER_STATE_CONFLICT;
+
+    if (!order) {
+      reconciliationReason = PAYMENT_RECONCILIATION_REASONS.ORDER_NOT_FOUND;
+    } else if (wasOrderAutomaticallyExpired(order)) {
+      reconciliationReason =
+        PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_RESERVATION_EXPIRED;
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Manual Review Only
+  |--------------------------------------------------------------------------
+  |
+  | Even if this was some other kind of cancelled Payment rather than
+  | automatic expiry, CANCELLED → CAPTURED is unsafe for automatic Order
+  | finalization.
+  |--------------------------------------------------------------------------
+  */
+
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        lateCapturedPayment._id,
+
+        {
+          reason: reconciliationReason,
+
+          attemptedAt: observedAt,
+        },
+      );
+
+    return {
+      action: "late-capture-manual-review",
+
+      paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+      providerPayment,
+
+      orderFinalization: null,
+    };
+  }
+
+  /*
     |--------------------------------------------------------------------------
     | Parts 190 — Synchronize Current Provider State
     |--------------------------------------------------------------------------
@@ -736,4 +885,31 @@ export const processNextPaymentWebhookEvent = async () => {
       },
     };
   }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Automatically Expired Order
+|--------------------------------------------------------------------------
+*/
+
+const wasOrderAutomaticallyExpired = (order) => {
+  if (!order) {
+    return false;
+  }
+
+  if (
+    order.status !== ORDER_STATUSES.CANCELLED ||
+    order.inventoryStatus !== ORDER_INVENTORY_STATUSES.RELEASED
+  ) {
+    return false;
+  }
+
+  return (order.statusHistory ?? []).some((entry) => {
+    return (
+      entry.status === ORDER_STATUSES.CANCELLED &&
+      entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+      entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY
+    );
+  });
 };
