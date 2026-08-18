@@ -6775,6 +6775,20 @@ Part 206.3 — Find Recoverable Payment Reconciliation Candidates
 
 Now we add the bounded MongoDB query that finds paid transactions whose Orders still need finalization.
 |--------------------------------------------------------------------------
+Part 206.3.1 — Integration Test for Reconciliation Candidate Query
+
+Now we prove the repository finder returns only genuinely recoverable payments.
+paid + already finalized
+→ excluded ✅
+
+pending/unpaid transaction
+→ excluded ✅
+
+paid but untrusted
+→ excluded ✅
+
+paid + cancelled/released Order
+→ excluded ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

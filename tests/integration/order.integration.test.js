@@ -58,7 +58,10 @@ import {
 
 import { expireOnlineOrderInventoryReservation } from "../../src/modules/orders/order.service.js";
 
-import { markVerifiedPaymentTransactionPaid } from "../../src/modules/payments/payment.repository.js";
+import {
+  markVerifiedPaymentTransactionPaid,
+  findRecoverablePaymentReconciliationCandidates,
+} from "../../src/modules/payments/payment.repository.js";
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
@@ -33078,5 +33081,236 @@ describe("Online Payment and reservation-expiry race protection", () => {
     const storedPayment = await PaymentTransaction.findById(payment.id).lean();
 
     expect(storedPayment.status).toBe("cancelled");
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 206 — Payment Reconciliation Candidate Discovery
+|--------------------------------------------------------------------------
+*/
+
+describe("Payment reconciliation candidate discovery", () => {
+  it("returns only trusted paid Payments whose Orders still require finalization", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | 1. Recoverable
+    |--------------------------------------------------------------------------
+    |
+    | Payment = paid
+    | Order   = pending
+    | payment = pending
+    | inventory = reserved
+    |--------------------------------------------------------------------------
+    */
+
+    const recoverableFixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      quantity: 1,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | 2. Already Finalized — Must Be Excluded
+    |--------------------------------------------------------------------------
+    */
+
+    const finalizedFixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      quantity: 1,
+    });
+
+    const finalizationResult = await finalizeCapturedCustomerOnlineOrder({
+      orderId: finalizedFixture.order.id,
+
+      paymentTransactionId: finalizedFixture.payment.id,
+
+      customerId: customer._id,
+    });
+
+    expect(finalizationResult.action).toBe("finalize");
+
+    /*
+    |--------------------------------------------------------------------------
+    | 3. Unpaid Payment — Must Be Excluded
+    |--------------------------------------------------------------------------
+    */
+
+    const unpaidFixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      quantity: 1,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | 4. Paid But Untrusted — Must Be Excluded
+    |--------------------------------------------------------------------------
+    */
+
+    const untrustedFixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      quantity: 1,
+    });
+
+    /*
+    | Simulate damaged/incomplete trusted verification evidence.
+    |
+    | Payment still says paid, but neither verification path exists.
+    */
+
+    await PaymentTransaction.updateOne(
+      {
+        _id: untrustedFixture.payment.id,
+      },
+      {
+        $set: {
+          verifiedAt: null,
+
+          providerVerifiedAt: null,
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | 5. Paid + Cancelled Order — Must Be Excluded
+    |--------------------------------------------------------------------------
+    |
+    | This represents an unsafe state that Part 206 must never
+    | automatically resurrect.
+    |--------------------------------------------------------------------------
+    */
+
+    const cancelledFixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      quantity: 1,
+    });
+
+    await Order.updateOne(
+      {
+        _id: cancelledFixture.order.id,
+      },
+      {
+        $set: {
+          status: "cancelled",
+
+          inventoryStatus: "released",
+        },
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discover Candidates
+    |--------------------------------------------------------------------------
+    */
+
+    const candidates = await findRecoverablePaymentReconciliationCandidates({
+      limit: 50,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Candidate
+    |--------------------------------------------------------------------------
+    */
+
+    expect(candidates).toHaveLength(1);
+
+    const candidate = candidates[0];
+
+    expect(String(candidate._id)).toBe(String(recoverableFixture.payment.id));
+
+    expect(String(candidate.order)).toBe(String(recoverableFixture.order.id));
+
+    expect(candidate.provider).toBe("razorpay");
+
+    expect(candidate.providerReference.orderId).toBe(
+      recoverableFixture.providerOrderId,
+    );
+
+    expect(candidate.providerReference.paymentId).toBe(
+      recoverableFixture.providerPaymentId,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Already Finalized Must Not Be Returned
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      candidates.some(
+        (item) => String(item._id) === String(finalizedFixture.payment.id),
+      ),
+    ).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unpaid Must Not Be Returned
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      candidates.some(
+        (item) => String(item._id) === String(unpaidFixture.payment.id),
+      ),
+    ).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Untrusted Paid Payment Must Not Be Returned
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      candidates.some(
+        (item) => String(item._id) === String(untrustedFixture.payment.id),
+      ),
+    ).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Cancelled Order Must Not Be Returned
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      candidates.some(
+        (item) => String(item._id) === String(cancelledFixture.payment.id),
+      ),
+    ).toBe(false);
   });
 });
