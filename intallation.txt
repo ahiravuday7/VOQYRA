@@ -7130,6 +7130,47 @@ to tell operations:
 
 The payment succeeded, but automatic Order recovery was unsafe.
 |--------------------------------------------------------------------------
+Part 206.10.1 — Admin Reconciliation List Validation
+
+We’ll expose reconciliation incidents separately from webhook observability:
+
+GET /api/v1/admin/payment-reconciliations
+
+What the endpoint will eventually support
+
+For everything requiring attention:
+
+GET /api/v1/admin/payment-reconciliations?status=manual-review
+
+Successful recoveries:
+
+GET /api/v1/admin/payment-reconciliations?status=recovered
+
+Specific problem:
+
+GET /api/v1/admin/payment-reconciliations?reason=payment-amount-mismatch
+
+Date range:
+
+GET /api/v1/admin/payment-reconciliations?from=2026-08-01&to=2026-08-18
+
+And pagination:
+
+GET /api/v1/admin/payment-reconciliations?page=1&limit=20
+Why none is not allowed
+
+A normal payment has:
+
+reconciliation.status = none
+
+That is not an observability incident.
+
+This endpoint should focus on:
+
+manual-review ⚠️
+recovered     ✅
+
+instead of becoming another generic PaymentTransaction listing endpoint.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
