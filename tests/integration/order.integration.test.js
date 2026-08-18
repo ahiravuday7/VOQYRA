@@ -5634,6 +5634,141 @@ describe("GET /api/v1/admin/orders/:orderId", () => {
 
     expect(order.updatedBy).toBe(String(customer._id));
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Automatically Expired Reservation Audit
+|--------------------------------------------------------------------------
+*/
+
+  it("returns system audit history for an automatically expired online Order", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Online Order
+  |--------------------------------------------------------------------------
+  */
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force Reservation Into The Past
+  |--------------------------------------------------------------------------
+  */
+
+    const expiredAt = new Date();
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiredAt.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Run Automatic Expiry Processor
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(order.id, {
+      now: expiredAt,
+    });
+
+    expect(expiryResult.action).toBe("expire");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Admin Reads Order
+  |--------------------------------------------------------------------------
+  */
+
+    const response = await adminAgent.get(`/api/v1/admin/orders/${order.id}`);
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.success).toBe(true);
+
+    const returnedOrder = response.body.data.order;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expired Order State
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrder.status).toBe("cancelled");
+
+    expect(returnedOrder.inventoryStatus).toBe("released");
+
+    expect(returnedOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Automatic Cancellation Audit
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrder.cancellation.reason).toBe(
+      "Online payment reservation expired",
+    );
+
+    expect(returnedOrder.cancellation.cancelledBy).toBeNull();
+
+    expect(returnedOrder.cancellation.cancelledAt).toBeTruthy();
+
+    /*
+  |--------------------------------------------------------------------------
+  | System Status History
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrder.statusHistory).toHaveLength(2);
+
+    const expiryHistoryEntry = returnedOrder.statusHistory.at(-1);
+
+    expect(expiryHistoryEntry.status).toBe("cancelled");
+
+    expect(expiryHistoryEntry.note).toBe(
+      "Online payment reservation expired automatically",
+    );
+
+    expect(expiryHistoryEntry.changedByType).toBe(AUDIT_ACTOR_TYPES.SYSTEM);
+
+    expect(expiryHistoryEntry.changedBy).toBeNull();
+
+    expect(expiryHistoryEntry.systemActor).toBe(
+      SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    expect(expiryHistoryEntry.changedAt).toBeTruthy();
+
+    /*
+  |--------------------------------------------------------------------------
+  | System Must Not Pretend To Be A Human User
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrder.updatedBy).toBe(String(customer._id));
+  });
 });
 
 /*

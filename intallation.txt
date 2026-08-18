@@ -6665,6 +6665,9 @@ Part 205.3 — Integration Tests for Expired-Reservation Filtering
 |--------------------------------------------------------------------------
 Part 205.4 — Expose Expiry Filter in Admin Observability Response
 |--------------------------------------------------------------------------
+Part 205.5 — Verify Admin Can See System Expiry Audit History
+
+Now we test that an admin opening an automatically expired Order can see exactly who/what cancelled it.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
