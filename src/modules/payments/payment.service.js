@@ -1657,23 +1657,43 @@ export const confirmCustomerRazorpayPayment = async ({
 */
 
   const browserConfirmationStateIsValid =
+    /*
+  |--------------------------------------------------------------------------
+  | Normal Pending Confirmation
+  |--------------------------------------------------------------------------
+  */
+
     paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PENDING ||
     /*
   |--------------------------------------------------------------------------
-  | Expired Reservation Browser Return
-  |--------------------------------------------------------------------------
-  |
-  | We allow signature verification for CANCELLED, but use a dedicated
-  | persistence function below.
-  |
-  | This does NOT mean cancelled Payments can use the normal state machine.
+  | Reservation Expired Before Browser Returned
   |--------------------------------------------------------------------------
   */
 
     paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED ||
     /*
   |--------------------------------------------------------------------------
-  | Webhook Won The Race
+  | Already Recorded Expiry Late-Capture
+  |--------------------------------------------------------------------------
+  |
+  | First browser return may have changed:
+  |
+  | cancelled → paid
+  |
+  | and stored:
+  |
+  | reconciliation.status = manual-review
+  | reconciliation.reason =
+  |   late-capture-after-reservation-expired
+  |
+  | A browser refresh must be allowed to reach our special idempotent guard.
+  |--------------------------------------------------------------------------
+  */
+
+    isReservationExpiryLateCaptureManualReview(paymentTransaction) ||
+    /*
+  |--------------------------------------------------------------------------
+  | Provider/Webhook Already Won Normal Race
   |--------------------------------------------------------------------------
   */
 

@@ -7903,6 +7903,56 @@ NO Order finalizer
 
 So browser retries remain safe. ✅
 |--------------------------------------------------------------------------
+Part 207.13.2.1 — Fix Browser Refresh After Late-Capture Manual Review
+
+Before adding the full Part 207.13.3 test, fix one small retry hole.
+
+Your existing normal late-browser flow permits a PAID Payment when providerVerifiedAt already exists; the current integration test explicitly relies on that condition.
+
+But our new expiry flow can produce:
+
+PaymentTransaction
+├─ status = paid
+├─ verifiedAt = set
+├─ providerVerifiedAt = null
+└─ reconciliation
+   ├─ status = manual-review
+   └─ reason = late-capture-after-reservation-expired
+
+So a browser refresh could currently fail before reaching our safe retry guard.
+
+Now we're ready for the actual end-to-end test:
+
+Order + Payment created
+        ↓
+reservation expires
+        ↓
+Order cancelled
+Payment cancelled
+inventory released
+        ↓
+Razorpay current truth = captured
+        ↓
+browser sends valid /confirm
+        ↓
+Payment = paid + manual-review
+
+
+BUT
+
+
+Order remains cancelled
+release ledger = 1
+commit ledger = 0
+
+
+        ↓
+browser sends /confirm AGAIN
+        ↓
+safe reuse
+no extra audit attempt
+no Order resurrection
+no inventory movement
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
