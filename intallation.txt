@@ -7568,6 +7568,25 @@ failed → paid
 
 For a provider-confirmed late capture, however, we must record the financial truth without finalizing the Order again.
 |--------------------------------------------------------------------------
+Part 207.8.2 — Protect the Order From an Older Payment That Captures Late
+
+We now wire the exceptional transition from 207.8.1 into webhook processing.
+
+The rule is:
+
+old failed attempt becomes captured
+             ↓
+record financial truth: failed → paid
+             ↓
+is ANOTHER successful payment already present?
+             │
+       ┌─────┴─────┐
+       │           │
+      YES          NO
+       │           │
+manual-review    finalize normally
+NO Order change
+NO inventory change
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

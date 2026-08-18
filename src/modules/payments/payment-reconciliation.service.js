@@ -91,6 +91,8 @@ export const PAYMENT_RECONCILIATION_REASONS = Object.freeze({
   ORDER_ALREADY_FINALIZED: "order-already-finalized",
 
   ORDER_STATE_CONFLICT: "order-state-conflict",
+
+  LATE_CAPTURE_AFTER_ORDER_PAID: "late-capture-after-order-paid",
 });
 
 /*

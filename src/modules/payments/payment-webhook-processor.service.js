@@ -7,7 +7,12 @@ import {
   findPaymentTransactionByProviderOrderReference,
   recordProviderVerifiedPaymentReference,
   markTrustedPaymentTransactionFailed,
+  findOtherSuccessfulPaymentTransactionForOrder,
+  markFailedPaymentTransactionLateCaptured,
+  recordPaymentReconciliationManualReview,
 } from "./payment.repository.js";
+
+import { PAYMENT_RECONCILIATION_REASONS } from "./payment-reconciliation.service.js";
 
 import { fetchAndVerifyPaymentProviderDetails } from "./providers/payment-provider.service.js";
 
@@ -325,6 +330,188 @@ const processClaimedPaymentWebhookEvent = async (webhookEvent) => {
       providerPayment,
 
       orderFinalization: null,
+    };
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Previously Failed Payment Captured Late
+|--------------------------------------------------------------------------
+|
+| Exceptional provider correction:
+|
+| local PaymentTransaction = failed
+|
+| but CURRENT trusted Razorpay state now says:
+|
+| status   = captured
+| captured = true
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    verifiedPaymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.FAILED &&
+    providerPayment.status === "captured" &&
+    providerPayment.captured === true
+  ) {
+    const observedAt = new Date();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Record Financial Truth
+  |--------------------------------------------------------------------------
+  |
+  | Razorpay says the customer was charged.
+  |
+  | The local PaymentTransaction must therefore no longer remain "failed".
+  |--------------------------------------------------------------------------
+  */
+
+    let lateCapturedPayment = await markFailedPaymentTransactionLateCaptured(
+      verifiedPaymentTransaction._id,
+
+      {
+        orderId: verifiedPaymentTransaction.order,
+
+        customerId: verifiedPaymentTransaction.customer,
+
+        provider: verifiedPaymentTransaction.provider,
+
+        providerOrderId: providerPayment.providerOrderId,
+
+        providerPaymentId: providerPayment.providerPaymentId,
+
+        paidAt: observedAt,
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Concurrent Resolution
+  |--------------------------------------------------------------------------
+  |
+  | Another worker/request may have already performed the same exceptional
+  | transition.
+  |--------------------------------------------------------------------------
+  */
+
+    if (!lateCapturedPayment) {
+      const current = await findPaymentTransactionByProviderOrderReference(
+        verifiedPaymentTransaction.provider,
+
+        providerPayment.providerOrderId,
+      );
+
+      const alreadyResolved =
+        current?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+        current.providerReference?.paymentId ===
+          providerPayment.providerPaymentId;
+
+      if (!alreadyResolved) {
+        throw createWebhookProcessingError(
+          "Unable to record late captured provider Payment",
+
+          "PAYMENT_WEBHOOK_LATE_CAPTURE_STATE_CONFLICT",
+        );
+      }
+
+      lateCapturedPayment = current;
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Check For Another Successful Payment
+  |--------------------------------------------------------------------------
+  |
+  | Example:
+  |
+  | attempt #1 = failed, then captures late
+  | attempt #2 = already paid
+  |
+  | Both Payments are now financially successful.
+  |
+  | Only ONE of them may settle the Order.
+  |--------------------------------------------------------------------------
+  */
+
+    const competingSuccessfulPayment =
+      await findOtherSuccessfulPaymentTransactionForOrder(
+        lateCapturedPayment.order,
+
+        lateCapturedPayment._id,
+      );
+
+    if (competingSuccessfulPayment) {
+      /*
+    |--------------------------------------------------------------------------
+    | Durable Manual Review
+    |--------------------------------------------------------------------------
+    |
+    | Do NOT:
+    |
+    | - finalize the Order with the old payment
+    | - replace Order.payment.transactionId
+    | - commit inventory again
+    |
+    | Operations will normally need to investigate/refund the duplicate charge.
+    |--------------------------------------------------------------------------
+    */
+
+      const auditedPaymentTransaction =
+        await recordPaymentReconciliationManualReview(
+          lateCapturedPayment._id,
+
+          {
+            reason:
+              PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_ORDER_PAID,
+
+            attemptedAt: observedAt,
+          },
+        );
+
+      return {
+        action: "late-capture-manual-review",
+
+        paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+        providerPayment,
+
+        orderFinalization: null,
+      };
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Competing Successful Payment
+  |--------------------------------------------------------------------------
+  |
+  | Example:
+  |
+  | attempt #1 failed locally
+  | no later payment succeeded
+  | Razorpay now confirms attempt #1 was captured
+  |
+  | In this case the Payment may legitimately recover the Order.
+  |--------------------------------------------------------------------------
+  */
+
+    const orderFinalization = await finalizeCapturedCustomerOnlineOrder({
+      orderId: lateCapturedPayment.order,
+
+      paymentTransactionId: lateCapturedPayment._id,
+
+      customerId: lateCapturedPayment.customer,
+    });
+
+    return {
+      action: orderFinalization.action,
+
+      paymentTransaction:
+        orderFinalization.paymentTransaction ?? lateCapturedPayment,
+
+      providerPayment,
+
+      orderFinalization,
     };
   }
 

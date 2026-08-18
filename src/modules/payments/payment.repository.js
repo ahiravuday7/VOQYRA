@@ -150,6 +150,52 @@ export const findSuccessfulPaymentTransactionForOrder = (
 
 /*
 |--------------------------------------------------------------------------
+| Find Another Successful Payment For Order
+|--------------------------------------------------------------------------
+|
+| Used for late-capture protection.
+|
+| Example:
+|
+| Attempt #1 = failed → captures late
+| Attempt #2 = already paid
+|
+| We must detect attempt #2 while explicitly excluding attempt #1.
+|--------------------------------------------------------------------------
+*/
+
+export const findOtherSuccessfulPaymentTransactionForOrder = (
+  orderId,
+
+  excludedPaymentTransactionId,
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOne({
+    order: orderId,
+
+    _id: {
+      $ne: excludedPaymentTransactionId,
+    },
+
+    status: {
+      $in: SUCCESSFUL_PAYMENT_TRANSACTION_STATUS_VALUES,
+    },
+  })
+    .sort({
+      attemptNumber: -1,
+    })
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Recoverable Payment Reconciliation Candidates
 |--------------------------------------------------------------------------
 |
