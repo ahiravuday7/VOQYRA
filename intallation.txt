@@ -7047,6 +7047,7 @@ src/server.js
 
 Your current server already manages the payment webhook worker and reservation-expiry worker. We’ll add reconciliation to the same lifecycle.
 |--------------------------------------------------------------------------
+Part 206.9.1 — Persist Payment Reconciliation Observability
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

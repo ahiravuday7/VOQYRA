@@ -59,6 +59,39 @@ export const PAYMENT_PROVIDER_VALUES = Object.freeze(
 
 /*
 |--------------------------------------------------------------------------
+| Payment Reconciliation Record Status
+|--------------------------------------------------------------------------
+|
+| NONE
+|   =
+| No reconciliation outcome has been recorded.
+|
+| RECOVERED
+|   =
+| A paid PaymentTransaction was successfully used to recover/finalize
+| an Order that had remained pending.
+|
+| MANUAL_REVIEW
+|   =
+| A trusted paid Payment exists, but automatically mutating the Order would
+| be unsafe. An administrator must investigate.
+|--------------------------------------------------------------------------
+*/
+
+export const PAYMENT_RECONCILIATION_RECORD_STATUSES = Object.freeze({
+  NONE: "none",
+
+  RECOVERED: "recovered",
+
+  MANUAL_REVIEW: "manual-review",
+});
+
+export const PAYMENT_RECONCILIATION_RECORD_STATUS_VALUES = Object.freeze(
+  Object.values(PAYMENT_RECONCILIATION_RECORD_STATUSES),
+);
+
+/*
+|--------------------------------------------------------------------------
 | Payment Failure
 |--------------------------------------------------------------------------
 */
@@ -209,6 +242,124 @@ const paymentProviderReferenceSchema = new mongoose.Schema(
       default: null,
 
       select: false,
+    },
+  },
+
+  {
+    _id: false,
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Payment Reconciliation Audit
+|--------------------------------------------------------------------------
+|
+| This is durable operational metadata.
+|
+| It does NOT change the provider Payment status.
+|
+| Example:
+|
+| PaymentTransaction.status = paid
+|
+| reconciliation.status = manual-review
+|
+| means the provider Payment succeeded, but the related Order needs
+| operational investigation.
+|--------------------------------------------------------------------------
+*/
+
+const paymentReconciliationSchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+
+      enum: PAYMENT_RECONCILIATION_RECORD_STATUS_VALUES,
+
+      required: true,
+
+      default: PAYMENT_RECONCILIATION_RECORD_STATUSES.NONE,
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Classification Reason
+      |--------------------------------------------------------------------------
+      |
+      | Examples:
+      |
+      | order-requires-finalization
+      | order-state-conflict
+      | payment-amount-mismatch
+      | payment-currency-mismatch
+      |--------------------------------------------------------------------------
+      */
+
+    reason: {
+      type: String,
+
+      trim: true,
+
+      maxlength: 200,
+
+      default: null,
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | First Detection
+      |--------------------------------------------------------------------------
+      */
+
+    detectedAt: {
+      type: Date,
+
+      default: null,
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Last Reconciliation Attempt
+      |--------------------------------------------------------------------------
+      */
+
+    lastAttemptedAt: {
+      type: Date,
+
+      default: null,
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Number Of Reconciliation Attempts
+      |--------------------------------------------------------------------------
+      */
+
+    attemptCount: {
+      type: Number,
+
+      min: 0,
+
+      default: 0,
+
+      validate: {
+        validator: Number.isInteger,
+
+        message: "Payment reconciliation attempt count must be an integer",
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Successful Recovery
+      |--------------------------------------------------------------------------
+      */
+
+    recoveredAt: {
+      type: Date,
+
+      default: null,
     },
   },
 
@@ -498,6 +649,30 @@ const paymentTransactionSchema = new mongoose.Schema(
     },
 
     /*
+|--------------------------------------------------------------------------
+| Reconciliation Observability
+|--------------------------------------------------------------------------
+*/
+
+    reconciliation: {
+      type: paymentReconciliationSchema,
+
+      default: () => ({
+        status: PAYMENT_RECONCILIATION_RECORD_STATUSES.NONE,
+
+        reason: null,
+
+        detectedAt: null,
+
+        lastAttemptedAt: null,
+
+        attemptCount: 0,
+
+        recoveredAt: null,
+      }),
+    },
+
+    /*
       |--------------------------------------------------------------------------
       | Audit
       |--------------------------------------------------------------------------
@@ -615,6 +790,31 @@ paymentTransactionSchema.index(
     sparse: true,
 
     name: "provider_payment_reference",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Payment Reconciliation Observability
+|--------------------------------------------------------------------------
+|
+| Supports future admin queries such as:
+|
+| reconciliation.status = manual-review
+|
+| ordered by detection time.
+|--------------------------------------------------------------------------
+*/
+
+paymentTransactionSchema.index(
+  {
+    "reconciliation.status": 1,
+
+    "reconciliation.detectedAt": -1,
+  },
+
+  {
+    name: "payment_reconciliation_observability",
   },
 );
 
