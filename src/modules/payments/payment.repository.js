@@ -1502,3 +1502,157 @@ export const recordPaymentReconciliationManualReview = (
 
   return query;
 };
+
+/*
+|--------------------------------------------------------------------------
+| Build Admin Payment Reconciliation Filter
+|--------------------------------------------------------------------------
+*/
+
+const buildAdminPaymentReconciliationFilter = (filters = {}) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Only Reconciliation Outcomes
+  |--------------------------------------------------------------------------
+  |
+  | Never return:
+  |
+  | reconciliation.status = none
+  |
+  | This endpoint is specifically for operational reconciliation history.
+  |--------------------------------------------------------------------------
+  */
+
+  const filter = {
+    "reconciliation.status": {
+      $in: [
+        PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+
+        PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+      ],
+    },
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Status
+  |--------------------------------------------------------------------------
+  */
+
+  if (filters.status) {
+    filter["reconciliation.status"] = filters.status;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Reason
+  |--------------------------------------------------------------------------
+  */
+
+  if (filters.reason) {
+    filter["reconciliation.reason"] = filters.reason;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Business References
+  |--------------------------------------------------------------------------
+  */
+
+  if (filters.paymentNumber) {
+    filter.paymentNumber = filters.paymentNumber;
+  }
+
+  if (filters.orderNumber) {
+    filter.orderNumber = filters.orderNumber;
+  }
+
+  if (filters.providerPaymentId) {
+    filter["providerReference.paymentId"] = filters.providerPaymentId;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Detection Date Range
+  |--------------------------------------------------------------------------
+  */
+
+  if (filters.from || filters.to) {
+    filter["reconciliation.detectedAt"] = {};
+
+    if (filters.from) {
+      filter["reconciliation.detectedAt"].$gte = filters.from;
+    }
+
+    if (filters.to) {
+      filter["reconciliation.detectedAt"].$lte = filters.to;
+    }
+  }
+
+  return filter;
+};
+
+/*
+|--------------------------------------------------------------------------
+| List Admin Payment Reconciliations
+|--------------------------------------------------------------------------
+|
+| Returns durable reconciliation outcomes:
+|
+| manual-review
+| recovered
+|
+| Normal PaymentTransactions with reconciliation.status = none are never
+| included.
+|--------------------------------------------------------------------------
+*/
+
+export const listAdminPaymentReconciliations = async (filters = {}) => {
+  const {
+    page = 1,
+
+    limit = 20,
+
+    sortDirection = "desc",
+  } = filters;
+
+  const skip = (page - 1) * limit;
+
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  const filter = buildAdminPaymentReconciliationFilter(filters);
+
+  const [paymentTransactions, totalItems] = await Promise.all([
+    PaymentTransaction.find(filter)
+      .sort({
+        "reconciliation.detectedAt": direction,
+
+        _id: direction,
+      })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+
+    PaymentTransaction.countDocuments(filter),
+  ]);
+
+  const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limit);
+
+  return {
+    paymentTransactions,
+
+    pagination: {
+      page,
+
+      limit,
+
+      totalItems,
+
+      totalPages,
+
+      hasPreviousPage: page > 1,
+
+      hasNextPage: page < totalPages,
+    },
+  };
+};

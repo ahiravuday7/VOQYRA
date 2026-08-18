@@ -7172,6 +7172,10 @@ recovered     ✅
 
 instead of becoming another generic PaymentTransaction listing endpoint.
 |--------------------------------------------------------------------------
+Part 206.10.2 — Admin Reconciliation Repository Query
+We’ll add a dedicated repository query for:
+
+GET /api/v1/admin/payment-reconciliations
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
