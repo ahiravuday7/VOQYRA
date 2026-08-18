@@ -7180,7 +7180,12 @@ GET /api/v1/admin/payment-reconciliations
 Part 206.10.3 — Admin Reconciliation Service + Safe Mapper
 
 We’ll now convert raw PaymentTransaction documents into a clean admin-operational response.
+src/modules/payments/payment-reconciliation.admin.mapper.js
+src/modules/payments/payment-reconciliation.admin.service.js
 |--------------------------------------------------------------------------
+Part 206.10.4 — Admin Payment Reconciliation Controller
+src/modules/payments/payment-reconciliation.admin.controller.js
+GET /api/v1/admin/payment-reconciliations?status=manual-review
 |--------------------------------------------------------------------------
 
 info:
