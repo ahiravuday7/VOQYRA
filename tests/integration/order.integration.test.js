@@ -37623,4 +37623,338 @@ describe("Paid Payment reconciliation recovery", () => {
       ),
     ).toBe(false);
   });
+
+  it("allows webhook processing and reconciliation to race without double-finalizing the same paid Order", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Paid Payment But Leave Order Unfinalized
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Verify Race Starting State
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBefore = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBefore.status).toBe("paid");
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Queue Captured Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const eventId = "evt_part207_webhook_reconciliation_race";
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Race Webhook Against Reconciliation
+  |--------------------------------------------------------------------------
+  |
+  | We deliberately do NOT assume which one wins.
+  |--------------------------------------------------------------------------
+  */
+
+    const [webhookResult, reconciliationResult] = await Promise.all([
+      processNextPaymentWebhookEvent(),
+
+      reconcilePaidPaymentTransaction(fixture.payment.id),
+    ]);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Event Must Be Consumed
+  |--------------------------------------------------------------------------
+  */
+
+    expect(webhookResult.action).toBe("processed");
+
+    expect(webhookResult.result.orderFinalization).toBeTruthy();
+
+    const webhookFinalizationAction =
+      webhookResult.result.orderFinalization.action;
+
+    expect(["finalize", "reuse"]).toContain(webhookFinalizationAction);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Must Also Resolve Safely
+  |--------------------------------------------------------------------------
+  */
+
+    expect([
+      PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+
+      PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+    ]).toContain(reconciliationResult.action);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Path Actually Finalized
+  |--------------------------------------------------------------------------
+  |
+  | Reconciliation action:
+  |
+  | recovered
+  |   =
+  | its atomic finalizer returned "finalize"
+  |
+  | already-finalized
+  |   =
+  | webhook or another path won first
+  |--------------------------------------------------------------------------
+  */
+
+    const actualFinalizationCount = [
+      webhookFinalizationAction === "finalize",
+
+      reconciliationResult.action === PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+    ].filter(Boolean).length;
+
+    expect(actualFinalizationCount).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Path Reused Finalized State
+  |--------------------------------------------------------------------------
+  */
+
+    const reuseCount = [
+      webhookFinalizationAction === "reuse",
+
+      reconciliationResult.action ===
+        PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+    ].filter(Boolean).length;
+
+    expect(reuseCount).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Order State
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("confirmed");
+
+    expect(finalOrder.payment.status).toBe("paid");
+
+    expect(finalOrder.payment.transactionId).toBe(fixture.providerPaymentId);
+
+    expect(finalOrder.inventoryStatus).toBe("committed");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Confirmed Transition
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Commit Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(
+      variantBefore.inventory.stock - quantity,
+    );
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgers = await ProductInventoryLedger.find({
+      referenceId: finalOrder.orderNumber,
+
+      operation: "commit",
+    }).lean();
+
+    expect(commitLedgers).toHaveLength(1);
+
+    expect(commitLedgers[0].quantity).toBe(quantity);
+
+    expect(commitLedgers[0].stockDelta).toBe(-quantity);
+
+    expect(commitLedgers[0].reservedStockDelta).toBe(-quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Release Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Remains Paid
+  |--------------------------------------------------------------------------
+  */
+
+    const finalPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(finalPayment.status).toBe("paid");
+
+    expect(finalPayment.paidAt).toBeInstanceOf(Date);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Audit Depends On Who Won
+  |--------------------------------------------------------------------------
+  |
+  | If reconciliation finalized first:
+  |   reconciliation.status = recovered
+  |
+  | If webhook finalized first:
+  |   reconciliation may remain none
+  |
+  | Neither is a manual-review incident.
+  |--------------------------------------------------------------------------
+  */
+
+    expect([
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.NONE,
+
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+    ]).toContain(finalPayment.reconciliation.status);
+
+    expect(finalPayment.reconciliation.status).not.toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Must Be Processed Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inbox Must Be Empty
+  |--------------------------------------------------------------------------
+  */
+
+    const nextWebhookResult = await processNextPaymentWebhookEvent();
+
+    expect(nextWebhookResult.action).toBe("idle");
+  });
 });

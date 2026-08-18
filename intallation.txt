@@ -7720,6 +7720,23 @@ reconciliation runs
 Order confirmed
 inventory committed exactly once ✅
 |--------------------------------------------------------------------------
+Part 207.11 — Webhook vs Reconciliation Concurrency Race
+
+Now we test two independent recovery paths hitting the same paid but not-yet-finalized Order simultaneously:
+
+                 PaymentTransaction = paid
+                          │
+                Order = pending/reserved
+                          │
+             ┌────────────┴────────────┐
+             ▼                         ▼
+      captured webhook          reconciliation worker
+             │                         │
+             └────────────┬────────────┘
+                          ▼
+                atomic finalizer
+                          ↓
+              exactly ONE wins
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
