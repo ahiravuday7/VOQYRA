@@ -7520,6 +7520,35 @@ Payment already failed
         ↓
 reuse-failed ✅
 |--------------------------------------------------------------------------
+Part 207.7 — Late Failure From Attempt #1 Must Not Damage Successful Attempt #2
+
+This tests the multi-payment-attempt scenario:
+
+Payment attempt #1
+        ↓
+failed
+
+
+Customer retries
+        ↓
+Payment attempt #2
+        ↓
+captured + Order confirmed ✅
+
+
+Late payment.failed event for attempt #1
+        ↓
+must affect attempt #1 only
+
+
+Attempt #2 stays paid ✅
+Order stays confirmed ✅
+Inventory stays committed once ✅
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
