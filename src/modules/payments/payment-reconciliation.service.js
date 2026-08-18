@@ -7,7 +7,11 @@ import {
 
 import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
 
-import { findPaymentTransactionById } from "./payment.repository.js";
+import {
+  findPaymentTransactionById,
+  recordPaymentReconciliationManualReview,
+  recordPaymentReconciliationRecovered,
+} from "./payment.repository.js";
 
 import { findOrderById } from "../orders/order.repository.js";
 
@@ -415,6 +419,8 @@ export const reconcilePaidPaymentTransaction = async (paymentTransactionId) => {
     throw new Error("Payment transaction ID is required for reconciliation");
   }
 
+  const attemptedAt = new Date();
+
   /*
   |--------------------------------------------------------------------------
   | Load Fresh PaymentTransaction
@@ -477,16 +483,29 @@ export const reconcilePaidPaymentTransaction = async (paymentTransactionId) => {
   */
 
   if (!order) {
+    const classification = {
+      state: PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW,
+
+      reason: PAYMENT_RECONCILIATION_REASONS.ORDER_NOT_FOUND,
+    };
+
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        paymentTransaction._id,
+
+        {
+          reason: classification.reason,
+
+          attemptedAt,
+        },
+      );
+
     return {
       action: PAYMENT_RECONCILIATION_ACTIONS.MANUAL_REVIEW,
 
-      classification: {
-        state: PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW,
+      classification,
 
-        reason: PAYMENT_RECONCILIATION_REASONS.ORDER_NOT_FOUND,
-      },
-
-      paymentTransaction,
+      paymentTransaction: auditedPaymentTransaction ?? paymentTransaction,
 
       order: null,
     };
@@ -540,12 +559,23 @@ export const reconcilePaidPaymentTransaction = async (paymentTransactionId) => {
   */
 
   if (classification.state === PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW) {
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        paymentTransaction._id,
+
+        {
+          reason: classification.reason,
+
+          attemptedAt,
+        },
+      );
+
     return {
       action: PAYMENT_RECONCILIATION_ACTIONS.MANUAL_REVIEW,
 
       classification,
 
-      paymentTransaction,
+      paymentTransaction: auditedPaymentTransaction ?? paymentTransaction,
 
       order,
     };
@@ -625,12 +655,27 @@ export const reconcilePaidPaymentTransaction = async (paymentTransactionId) => {
     };
   }
 
+  const recoveredAt = new Date();
+
+  const auditedPaymentTransaction = await recordPaymentReconciliationRecovered(
+    paymentTransaction._id,
+
+    {
+      reason: classification.reason,
+
+      attemptedAt,
+
+      recoveredAt,
+    },
+  );
+
   return {
     action: PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
 
     classification,
 
-    paymentTransaction: finalization.paymentTransaction,
+    paymentTransaction:
+      auditedPaymentTransaction ?? finalization.paymentTransaction,
 
     order: finalization.order,
   };

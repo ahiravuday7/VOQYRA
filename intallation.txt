@@ -7051,6 +7051,7 @@ Part 206.9.1 — Persist Payment Reconciliation Observability
 |--------------------------------------------------------------------------
 Part 206.9.2 — Atomic Reconciliation Audit Repository Writes
 |--------------------------------------------------------------------------
+Part 206.9.3 — Persist Reconciliation Outcomes
 |--------------------------------------------------------------------------
 
 info:

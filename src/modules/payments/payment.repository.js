@@ -1383,6 +1383,7 @@ export const recordPaymentReconciliationRecovered = (
 
     {
       new: true,
+      updatePipeline: true,
     },
   ).lean();
 
@@ -1461,6 +1462,7 @@ export const recordPaymentReconciliationManualReview = (
 
     {
       new: true,
+      updatePipeline: true,
     },
   ).lean();
 
