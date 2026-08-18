@@ -28,7 +28,9 @@ import OrderReturnReplacement from "../../src/modules/orders/order-return-replac
 
 import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
 
-import PaymentTransaction from "../../src/modules/payments/payment.model.js";
+import PaymentTransaction, {
+  PAYMENT_RECONCILIATION_RECORD_STATUSES,
+} from "../../src/modules/payments/payment.model.js";
 
 import {
   createTestRazorpaySignature,
@@ -33538,6 +33540,30 @@ describe("Paid Payment reconciliation recovery", () => {
     expect(paymentAfterFirst.status).toBe("paid");
 
     /*
+|--------------------------------------------------------------------------
+| Reconciliation Audit Was Persisted
+|--------------------------------------------------------------------------
+*/
+
+    expect(paymentAfterFirst.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+    );
+
+    expect(paymentAfterFirst.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.ORDER_REQUIRES_FINALIZATION,
+    );
+
+    expect(paymentAfterFirst.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentAfterFirst.reconciliation.detectedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterFirst.reconciliation.lastAttemptedAt).toBeInstanceOf(
+      Date,
+    );
+
+    expect(paymentAfterFirst.reconciliation.recoveredAt).toBeInstanceOf(Date);
+
+    /*
     |--------------------------------------------------------------------------
     | Second Reconciliation
     |--------------------------------------------------------------------------
@@ -33563,6 +33589,26 @@ describe("Paid Payment reconciliation recovery", () => {
 
     expect(second.classification.reason).toBe(
       PAYMENT_RECONCILIATION_REASONS.ORDER_ALREADY_FINALIZED,
+    );
+
+    /*
+|--------------------------------------------------------------------------
+| Idempotent Retry Must Not Record Another Recovery Attempt
+|--------------------------------------------------------------------------
+*/
+
+    const paymentAfterSecond = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterSecond.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+    );
+
+    expect(paymentAfterSecond.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentAfterSecond.reconciliation.recoveredAt).toEqual(
+      paymentAfterFirst.reconciliation.recoveredAt,
     );
 
     /*
@@ -33752,5 +33798,198 @@ describe("Paid Payment reconciliation recovery", () => {
     expect(orderAfter.inventoryReservationVersion).toBe(
       (orderBefore.inventoryReservationVersion ?? 0) + 1,
     );
+  });
+
+  it("persists an unsafe paid Payment as manual-review and removes it from future reconciliation scans", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Trusted Paid + Pending/Reserved Order
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Introduce An Unsafe Amount Mismatch
+  |--------------------------------------------------------------------------
+  |
+  | Candidate discovery intentionally does not compare amounts.
+  |
+  | The strict reconciliation classifier must catch this before any
+  | inventory or Order mutation occurs.
+  |--------------------------------------------------------------------------
+  */
+
+    await PaymentTransaction.updateOne(
+      {
+        _id: fixture.payment.id,
+      },
+
+      {
+        $set: {
+          amount: orderBefore.totals.grandTotal + 1,
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | It Is Initially Discoverable
+  |--------------------------------------------------------------------------
+  */
+
+    const candidatesBefore =
+      await findRecoverablePaymentReconciliationCandidates({
+        limit: 50,
+      });
+
+    expect(
+      candidatesBefore.some(
+        (candidate) => String(candidate._id) === String(fixture.payment.id),
+      ),
+    ).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Must Refuse Automatic Mutation
+  |--------------------------------------------------------------------------
+  */
+
+    const result = await reconcilePaidPaymentTransaction(fixture.payment.id);
+
+    expect(result.action).toBe(PAYMENT_RECONCILIATION_ACTIONS.MANUAL_REVIEW);
+
+    expect(result.classification).toEqual({
+      state: PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW,
+
+      reason: PAYMENT_RECONCILIATION_REASONS.PAYMENT_AMOUNT_MISMATCH,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Durable Manual-Review Audit
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfter = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfter.status).toBe("paid");
+
+    expect(paymentAfter.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(paymentAfter.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.PAYMENT_AMOUNT_MISMATCH,
+    );
+
+    expect(paymentAfter.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentAfter.reconciliation.detectedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfter.reconciliation.lastAttemptedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfter.reconciliation.recoveredAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Must Remain Untouched
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfter = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfter.status).toBe(orderBefore.status);
+
+    expect(orderAfter.payment.status).toBe(orderBefore.payment.status);
+
+    expect(orderAfter.inventoryStatus).toBe(orderBefore.inventoryStatus);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Product Inventory Must Remain Untouched
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgerCount = await ProductInventoryLedger.countDocuments({
+      referenceId: orderAfter.orderNumber,
+
+      operation: "commit",
+    });
+
+    expect(commitLedgerCount).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Manual Review Must Not Be Rediscovered Every Worker Cycle
+  |--------------------------------------------------------------------------
+  */
+
+    const candidatesAfter =
+      await findRecoverablePaymentReconciliationCandidates({
+        limit: 50,
+      });
+
+    expect(
+      candidatesAfter.some(
+        (candidate) => String(candidate._id) === String(fixture.payment.id),
+      ),
+    ).toBe(false);
   });
 });

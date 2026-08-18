@@ -7087,6 +7087,48 @@ future candidate scan
     ↓
 excluded ✅
 |--------------------------------------------------------------------------
+Part 206.9.5 — Verify Durable Reconciliation Audit Metadata
+
+Now we prove two things:
+
+Successful recovery persists reconciliation.status = recovered.
+Unsafe mismatches persist manual-review and disappear from future worker scans.
+
+Why this test is important
+
+We now protect this scenario:
+
+Razorpay payment = paid ✅
+        ↓
+Order still pending/reserved
+        ↓
+reconciliation discovers it
+        ↓
+amount mismatch ⚠️
+        ↓
+DO NOT finalize
+DO NOT commit stock
+        ↓
+PaymentTransaction
+reconciliation.status = manual-review
+        ↓
+future worker scans
+        ↓
+excluded ✅
+
+The important distinction is:
+
+PaymentTransaction.status = paid
+
+remains unchanged because the customer genuinely paid.
+
+We only add:
+
+reconciliation.status = manual-review
+
+to tell operations:
+
+The payment succeeded, but automatic Order recovery was unsafe.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
