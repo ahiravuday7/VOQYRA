@@ -6910,6 +6910,29 @@ reservedStock        decreases once
 commit ledger        exactly 1
 reservation version  increments once
 |--------------------------------------------------------------------------
+Part 206.7 — Payment Reconciliation Batch Processor
+
+Important behavior
+
+Suppose the finder returns three payments:
+
+Payment A → recoverable
+Payment B → throws error
+Payment C → recoverable
+
+The batch behaves as:
+
+A → recovered ✅
+
+
+B → failed ⚠️
+    logged
+    batch continues
+
+
+C → recovered ✅
+
+It does not stop at Payment B.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
