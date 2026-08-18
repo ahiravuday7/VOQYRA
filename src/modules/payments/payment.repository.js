@@ -883,6 +883,140 @@ export const recordVerifiedPaymentProviderConfirmation = (
 
 /*
 |--------------------------------------------------------------------------
+| Record Cancelled Payment Provider Confirmation
+|--------------------------------------------------------------------------
+|
+| Exceptional Part 207 browser-return path.
+|
+| A PaymentTransaction may have been cancelled locally because its Order
+| reservation expired before the customer's browser returned from Razorpay.
+|
+| This operation records only cryptographically verified Razorpay identity:
+|
+| - provider Payment ID
+| - signature
+| - verifiedAt
+|
+| It deliberately DOES NOT:
+|
+| - change cancelled → paid
+| - reopen the Order
+| - reserve inventory
+| - commit inventory
+| - confirm the Order
+|--------------------------------------------------------------------------
+*/
+
+export const recordCancelledPaymentProviderConfirmation = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    signature,
+
+    verifiedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exceptional State Only
+        |--------------------------------------------------------------------------
+        */
+
+      status: PAYMENT_TRANSACTION_STATUSES.CANCELLED,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exact Trusted Provider Order
+        |--------------------------------------------------------------------------
+        */
+
+      "providerReference.orderId": providerOrderId,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Do Not Overwrite An Existing Browser Verification
+        |--------------------------------------------------------------------------
+        */
+
+      verifiedAt: null,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Payment ID May Be Empty Or Already Match
+        |--------------------------------------------------------------------------
+        |
+        | A webhook/provider lookup may have populated paymentId before the
+        | browser returned.
+        |--------------------------------------------------------------------------
+        */
+
+      $or: [
+        {
+          "providerReference.paymentId": null,
+        },
+
+        {
+          "providerReference.paymentId": {
+            $exists: false,
+          },
+        },
+
+        {
+          "providerReference.paymentId": providerPaymentId,
+        },
+      ],
+    },
+
+    {
+      $set: {
+        "providerReference.paymentId": providerPaymentId,
+
+        "providerReference.signature": signature,
+
+        verifiedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Mark Verified Payment Transaction Authorized
 |--------------------------------------------------------------------------
 |

@@ -7739,7 +7739,7 @@ Now we test two independent recovery paths hitting the same paid but not-yet-fin
               exactly ONE wins
 |--------------------------------------------------------------------------
 Part 207.12 — Three-Way Race: Webhook vs Reconciliation vs Expiry
-
+ 
 This is the strongest combined race test so far:
 
                  Payment already captured
@@ -7755,6 +7755,43 @@ This is the strongest combined race test so far:
                 ONE settlement only
 
 |--------------------------------------------------------------------------
+Part 207.13.1 — Allow Secure Signature Recording for an Expired/Cancelled Payment
+
+I checked your current confirmation flow. A normal browser confirmation deliberately accepts only pending, or authorized/paid when provider verification already won the race; a cancelled transaction is rejected. Your repository verification update also only permits pending, authorized, and paid.
+
+That is correct for the normal lifecycle, so do not loosen those existing rules globally.
+
+Instead, add a dedicated exceptional repository operation for:
+
+Order reservation expired
+        ↓
+PaymentTransaction = cancelled
+        ↓
+browser returns with valid Razorpay signature
+        ↓
+record the verified payment identity only
+        ↓
+DO NOT change Payment status yet
+DO NOT touch Order
+DO NOT touch inventory
+
+so confirmCustomerRazorpayPayment() can recognize this specific cancelled-payment browser-return case:
+
+cancelled Payment
+        ↓
+validate stored Razorpay order ID
+        ↓
+validate payment-ID consistency
+        ↓
+verify Razorpay signature
+        ↓
+recordCancelledPaymentProviderConfirmation()
+        ↓
+fetch CURRENT Razorpay state
+        ↓
+captured?
+   ├─ YES → cancelled → paid + manual-review
+   └─ NO  → remain cancelled
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
