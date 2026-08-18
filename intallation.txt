@@ -6878,6 +6878,37 @@ action = already-finalized ✅
 
 This is an important guarantee: payment recovery can be retried safely without selling the same inventory twice.
 |--------------------------------------------------------------------------
+Part 206.6 — Concurrent Reconciliation Protection
+
+Now we prove that two reconciliation attempts hitting the same paid Payment at nearly the same time cannot commit inventory twice.
+What this test protects against
+
+Without race protection, this would be disastrous:
+
+reconciliation A ──┐
+                   ├── stock -= 2 ❌
+reconciliation B ──┘   stock -= 2 ❌
+
+Your existing reservation CAS/transaction guard should instead produce:
+
+                same reservation version
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+       reconciliation A        reconciliation B
+             │                       │
+         claims version          loses/reloads
+             │                       │
+        commits inventory       sees finalized
+             │                       │
+        recovered ✅        already-finalized ✅
+
+And finally:
+
+stock                decreases once
+reservedStock        decreases once
+commit ledger        exactly 1
+reservation version  increments once
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

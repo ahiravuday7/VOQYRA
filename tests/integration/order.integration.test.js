@@ -33602,4 +33602,155 @@ describe("Paid Payment reconciliation recovery", () => {
 
     expect(commitLedgerCountAfterSecond).toBe(1);
   });
+
+  it("allows only one concurrent reconciliation to commit inventory", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Recoverable Paid-Payment State
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Two Recovery Attempts At The Same Time
+  |--------------------------------------------------------------------------
+  */
+
+    const results = await Promise.all([
+      reconcilePaidPaymentTransaction(fixture.payment.id),
+
+      reconcilePaidPaymentTransaction(fixture.payment.id),
+    ]);
+
+    const actions = results.map((result) => result.action);
+
+    /*
+  |--------------------------------------------------------------------------
+  | One Commits, One Reuses
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      actions.filter(
+        (action) => action === PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+      ),
+    ).toHaveLength(1);
+
+    expect(
+      actions.filter(
+        (action) => action === PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+      ),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Order State
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfter = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfter.status).toBe("confirmed");
+
+    expect(orderAfter.payment.status).toBe("paid");
+
+    expect(orderAfter.inventoryStatus).toBe("committed");
+
+    expect(orderAfter.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Physical Inventory Changed Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(
+      variantBefore.inventory.stock - quantity,
+    );
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Commit Ledger Entry
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgerEntries = await ProductInventoryLedger.find({
+      referenceId: orderAfter.orderNumber,
+
+      operation: "commit",
+    }).lean();
+
+    expect(commitLedgerEntries).toHaveLength(1);
+
+    expect(commitLedgerEntries[0].quantity).toBe(quantity);
+
+    expect(commitLedgerEntries[0].stockDelta).toBe(-quantity);
+
+    expect(commitLedgerEntries[0].reservedStockDelta).toBe(-quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reservation Settlement Version Changes Once
+  |--------------------------------------------------------------------------
+  */
+
+    expect(orderAfter.inventoryReservationVersion).toBe(
+      (orderBefore.inventoryReservationVersion ?? 0) + 1,
+    );
+  });
 });
