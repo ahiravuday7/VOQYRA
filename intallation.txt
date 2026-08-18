@@ -7431,6 +7431,34 @@ Update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 207.3 — Duplicate Webhook + Late Browser Confirmation
+
+Now we test all idempotency paths together:
+
+captured webhook
+      ↓
+duplicate webhook
+      ↓
+webhook worker finalizes Order
+      ↓
+late browser confirmation
+      ↓
+same webhook delivered again
+      ↓
+
+
+ONE PaymentTransaction
+ONE inventory commit
+ONE confirmed history transition
+ONE webhook inbox record ✅
+
+Update only:
+
+tests/integration/order.integration.test.js
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

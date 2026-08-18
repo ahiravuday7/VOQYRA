@@ -32385,6 +32385,348 @@ describe("Razorpay Payment webhook processing", () => {
       }),
     ).toBe(1);
   });
+
+  it("converges duplicate captured webhooks and late browser confirmation into one Order finalization", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Prepare Payment
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    const eventId = "evt_part207_duplicate_webhook_late_browser";
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Webhook Delivery
+  |--------------------------------------------------------------------------
+  */
+
+    const firstWebhook = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(firstWebhook.status).toBe(200);
+
+    expect(firstWebhook.body.data.action).toBe("store");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Duplicate Delivery Before Processing
+  |--------------------------------------------------------------------------
+  */
+
+    const duplicateWebhook = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(duplicateWebhook.status).toBe(200);
+
+    expect(duplicateWebhook.body.data.action).toBe("reuse");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Only One Durable Inbox Record
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentWebhookEvent.countDocuments({
+        providerEventId: eventId,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Worker Processes The Single Inbox Event
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResult = await processNextPaymentWebhookEvent();
+
+    expect(webhookResult.action).toBe("processed");
+
+    expect(webhookResult.result.orderFinalization.action).toBe("finalize");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture State After Webhook Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterWebhook = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterWebhook.status).toBe("confirmed");
+
+    expect(orderAfterWebhook.payment.status).toBe("paid");
+
+    expect(orderAfterWebhook.inventoryStatus).toBe("committed");
+
+    const productAfterWebhook = await Product.findById(product._id).lean();
+
+    const variantAfterWebhook = findProductVariant(
+      productAfterWebhook,
+
+      variant._id,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgerAfterWebhook = await ProductInventoryLedger.find({
+      referenceId: orderAfterWebhook.orderNumber,
+
+      operation: "commit",
+    }).lean();
+
+    expect(commitLedgerAfterWebhook).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Confirmed Status-History Transition
+  |--------------------------------------------------------------------------
+  */
+
+    const confirmedHistoryAfterWebhook = orderAfterWebhook.statusHistory.filter(
+      (entry) =>
+        entry.status === "confirmed" &&
+        entry.note === "Order confirmed after captured online payment",
+    );
+
+    expect(confirmedHistoryAfterWebhook).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Confirmation Arrives Late
+  |--------------------------------------------------------------------------
+  */
+
+    const browserResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+     * Browser signature itself had never been recorded.
+     */
+    expect(browserResponse.body.data.action).toBe("verify");
+
+    /*
+     * Provider Payment was already synchronized by webhook.
+     */
+    expect(browserResponse.body.data.providerState.action).toBe("reuse");
+
+    /*
+     * Order was already finalized by webhook.
+     */
+    expect(browserResponse.body.data.orderFinalization.action).toBe("reuse");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Same Webhook Is Delivered AGAIN After Processing
+  |--------------------------------------------------------------------------
+  */
+
+    const lateDuplicateWebhook = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(lateDuplicateWebhook.status).toBe(200);
+
+    expect(lateDuplicateWebhook.body.data.action).toBe("reuse");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Duplicate Must Not Create Another Worker Job
+  |--------------------------------------------------------------------------
+  */
+
+    const nextWorkerResult = await processNextPaymentWebhookEvent();
+
+    expect(nextWorkerResult.action).toBe("idle");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Order Must Still Be Exactly Once Finalized
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("confirmed");
+
+    expect(finalOrder.payment.status).toBe("paid");
+
+    expect(finalOrder.inventoryStatus).toBe("committed");
+
+    const finalConfirmedHistory = finalOrder.statusHistory.filter(
+      (entry) =>
+        entry.status === "confirmed" &&
+        entry.note === "Order confirmed after captured online payment",
+    );
+
+    expect(finalConfirmedHistory).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Still Match First Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(
+      finalProduct,
+
+      variant._id,
+    );
+
+    expect(finalVariant.inventory.stock).toBe(
+      variantAfterWebhook.inventory.stock,
+    );
+
+    expect(finalVariant.inventory.reservedStock).toBe(
+      variantAfterWebhook.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Webhook Inbox Record
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentWebhookEvent.countDocuments({
+        providerEventId: eventId,
+      }),
+    ).toBe(1);
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    /*
+     * Duplicate HTTP deliveries did not mean duplicate processing.
+     */
+    expect(storedWebhook.processingAttempts).toBe(1);
+  });
+
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook
