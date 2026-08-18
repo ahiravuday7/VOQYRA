@@ -7588,6 +7588,9 @@ manual-review    finalize normally
 NO Order change
 NO inventory change
 |--------------------------------------------------------------------------
+Part 207.8.3 — Integration Test: Older Failed Attempt Captures After Attempt #2 Succeeds
+
+Now we prove the production safeguard from 207.8.2 end-to-end.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
