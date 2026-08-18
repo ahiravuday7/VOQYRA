@@ -32727,6 +32727,312 @@ describe("Razorpay Payment webhook processing", () => {
     expect(storedWebhook.processingAttempts).toBe(1);
   });
 
+  it("does not downgrade a successful Payment or finalized Order when a stale failed webhook arrives", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Prepare Browser Payment Confirmation
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | CURRENT Razorpay Truth = Captured
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Finalizes The Payment First
+  |--------------------------------------------------------------------------
+  */
+
+    const browserResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(browserResponse.body.data.orderFinalization.action).toBe("finalize");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture Successful State
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBeforeWebhook = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBeforeWebhook.status).toBe("paid");
+
+    expect(paymentBeforeWebhook.paidAt).toBeInstanceOf(Date);
+
+    expect(paymentBeforeWebhook.failure.failedAt).toBeNull();
+
+    const orderBeforeWebhook = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBeforeWebhook.status).toBe("confirmed");
+
+    expect(orderBeforeWebhook.payment.status).toBe("paid");
+
+    expect(orderBeforeWebhook.inventoryStatus).toBe("committed");
+
+    const productBeforeWebhook = await Product.findById(product._id).lean();
+
+    const variantBeforeWebhook = findProductVariant(
+      productBeforeWebhook,
+
+      variant._id,
+    );
+
+    const commitLedgerCountBefore = await ProductInventoryLedger.countDocuments(
+      {
+        referenceId: orderBeforeWebhook.orderNumber,
+
+        operation: "commit",
+      },
+    );
+
+    expect(commitLedgerCountBefore).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | STALE payment.failed Webhook Arrives
+  |--------------------------------------------------------------------------
+  |
+  | Important:
+  |
+  | The webhook snapshot says:
+  |
+  | status   = failed
+  | captured = false
+  |
+  | But setTestRazorpayPaymentDetails() still represents CURRENT provider
+  | truth:
+  |
+  | status   = captured
+  | captured = true
+  |--------------------------------------------------------------------------
+  */
+
+    const eventId = "evt_part207_stale_failed_after_success";
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.failed",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Process Stale Event
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResult = await processNextPaymentWebhookEvent();
+
+    expect(webhookResult.action).toBe("processed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Fresh Provider Truth Wins
+  |--------------------------------------------------------------------------
+  |
+  | Current Razorpay state is captured, therefore this must follow the
+  | successful synchronization/finalization path rather than the failure path.
+  |--------------------------------------------------------------------------
+  */
+
+    expect(webhookResult.result.providerPayment.status).toBe("captured");
+
+    expect(webhookResult.result.providerPayment.captured).toBe(true);
+
+    expect(webhookResult.result.orderFinalization.action).toBe("reuse");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Must Remain Paid
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterWebhook = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterWebhook.status).toBe("paid");
+
+    expect(paymentAfterWebhook.failure.code).toBeNull();
+
+    expect(paymentAfterWebhook.failure.message).toBeNull();
+
+    expect(paymentAfterWebhook.failure.reason).toBeNull();
+
+    expect(paymentAfterWebhook.failure.failedAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Original Paid Timestamp Must Remain Stable
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfterWebhook.paidAt).toEqual(paymentBeforeWebhook.paidAt);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Provider Payment Identity Must Remain Stable
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfterWebhook.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Must Remain Confirmed
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterWebhook = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterWebhook.status).toBe("confirmed");
+
+    expect(orderAfterWebhook.payment.status).toBe("paid");
+
+    expect(orderAfterWebhook.inventoryStatus).toBe("committed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Duplicate Confirmed Transition
+  |--------------------------------------------------------------------------
+  */
+
+    const confirmedEntries = orderAfterWebhook.statusHistory.filter(
+      (entry) => entry.status === "confirmed",
+    );
+
+    expect(confirmedEntries).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Not Move Again
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterWebhook = await Product.findById(product._id).lean();
+
+    const variantAfterWebhook = findProductVariant(
+      productAfterWebhook,
+
+      variant._id,
+    );
+
+    expect(variantAfterWebhook.inventory.stock).toBe(
+      variantBeforeWebhook.inventory.stock,
+    );
+
+    expect(variantAfterWebhook.inventory.reservedStock).toBe(
+      variantBeforeWebhook.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterWebhook.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Stale Webhook Is Consumed Successfully
+  |--------------------------------------------------------------------------
+  |
+  | We do not retry it forever merely because its snapshot was stale.
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+  });
+
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook

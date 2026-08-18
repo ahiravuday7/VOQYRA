@@ -7456,6 +7456,31 @@ Update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 207.4 — Stale payment.failed Webhook Must Never Downgrade a Successful Payment
+
+This is an important production edge case.
+
+We want to prove:
+
+Browser confirms Payment ✅
+        ↓
+Razorpay = captured
+        ↓
+PaymentTransaction = paid
+Order = confirmed
+Inventory = committed
+        ↓
+OLD payment.failed webhook arrives
+        ↓
+backend fetches CURRENT Razorpay truth
+        ↓
+Razorpay still says captured
+        ↓
+KEEP success state ✅
+
+For this step, update only:
+
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
