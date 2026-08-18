@@ -7199,6 +7199,13 @@ GET /api/v1/admin/payment-reconciliations?status=recovered
 GET /api/v1/admin/payment-reconciliations?reason=payment-amount-mismatch
 GET /api/v1/admin/payment-reconciliations?page=1&limit=20&sortDirection=desc
 |--------------------------------------------------------------------------
+Part 206.10.6 — Admin Reconciliation Endpoint Integration Tests
+
+Create:
+
+tests/integration/payment-reconciliation-admin.integration.test.js
+
+This keeps the reconciliation-admin tests separate from the very large order.integration.test.js.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
