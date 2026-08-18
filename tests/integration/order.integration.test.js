@@ -32118,6 +32118,273 @@ describe("Razorpay Payment webhook processing", () => {
 
     expect(storedWebhook.processingAttempts).toBe(1);
   });
+
+  it("safely processes a late browser confirmation after the webhook already finalized the Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Prepare Browser Confirmation Data
+  |--------------------------------------------------------------------------
+  |
+  | The browser has not called /confirm yet.
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Razorpay Truth = Captured
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Arrives Before Browser
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId: "evt_part207_webhook_before_browser",
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Process Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResult = await processNextPaymentWebhookEvent();
+
+    expect(webhookResult.action).toBe("processed");
+
+    expect(webhookResult.result.orderFinalization.action).toBe("finalize");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Finalized Everything
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterWebhook = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterWebhook.status).toBe("paid");
+
+    /*
+     * Browser has not returned yet.
+     */
+    expect(paymentAfterWebhook.verifiedAt).toBeNull();
+
+    /*
+     * Webhook/provider verification is trusted.
+     */
+    expect(paymentAfterWebhook.providerVerifiedAt).toBeInstanceOf(Date);
+
+    const orderAfterWebhook = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterWebhook.status).toBe("confirmed");
+
+    expect(orderAfterWebhook.payment.status).toBe("paid");
+
+    expect(orderAfterWebhook.inventoryStatus).toBe("committed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture Inventory State After Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterWebhook = await Product.findById(product._id).lean();
+
+    const variantAfterWebhook = findProductVariant(
+      productAfterWebhook,
+
+      variant._id,
+    );
+
+    const commitLedgerCountAfterWebhook =
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterWebhook.orderNumber,
+
+        operation: "commit",
+      });
+
+    expect(commitLedgerCountAfterWebhook).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Confirmation Arrives Late
+  |--------------------------------------------------------------------------
+  |
+  | Important:
+  |
+  | confirmCustomerRazorpayPayment() explicitly allows PAID when the
+  | Payment already has providerVerifiedAt.
+  |--------------------------------------------------------------------------
+  */
+
+    const browserResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Signature Is Recorded
+  |--------------------------------------------------------------------------
+  |
+  | It is the first browser confirmation, so confirmationAction = verify.
+  |--------------------------------------------------------------------------
+  */
+
+    expect(browserResponse.body.data.action).toBe("verify");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Provider State Already Known
+  |--------------------------------------------------------------------------
+  */
+
+    expect(browserResponse.body.data.providerState.action).toBe("reuse");
+
+    expect(browserResponse.body.data.providerState.status).toBe("captured");
+
+    expect(browserResponse.body.data.providerState.captured).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Finalization Must Reuse
+  |--------------------------------------------------------------------------
+  */
+
+    expect(browserResponse.body.data.orderFinalization.action).toBe("reuse");
+
+    expect(browserResponse.body.data.orderFinalization.finalized).toBe(true);
+
+    expect(browserResponse.body.data.order.status).toBe("confirmed");
+
+    expect(browserResponse.body.data.order.payment.status).toBe("paid");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Verification Is Now Also Stored
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterBrowser = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterBrowser.status).toBe("paid");
+
+    expect(paymentAfterBrowser.verifiedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterBrowser.providerVerifiedAt).toBeInstanceOf(Date);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Not Move Again
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterBrowser = await Product.findById(product._id).lean();
+
+    const variantAfterBrowser = findProductVariant(
+      productAfterBrowser,
+
+      variant._id,
+    );
+
+    expect(variantAfterBrowser.inventory.stock).toBe(
+      variantAfterWebhook.inventory.stock,
+    );
+
+    expect(variantAfterBrowser.inventory.reservedStock).toBe(
+      variantAfterWebhook.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgerCountAfterBrowser =
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterWebhook.orderNumber,
+
+        operation: "commit",
+      });
+
+    expect(commitLedgerCountAfterBrowser).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+  });
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook

@@ -7407,6 +7407,29 @@ For this step, change only the test file.
 Update
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 207.2 — Late Browser Confirmation After Webhook Already Finalized the Order
+
+This is the reverse of Part 207.1.
+
+We need to prove:
+
+Razorpay captured webhook
+        ↓
+Payment = paid
+Order = confirmed
+Inventory = committed
+        ↓
+browser confirmation arrives late
+        ↓
+signature is still accepted
+Payment synchronization = reuse
+Order finalization = reuse
+        ↓
+NO second inventory commit ✅
+
+Update only:
+
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
