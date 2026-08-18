@@ -37957,4 +37957,390 @@ describe("Paid Payment reconciliation recovery", () => {
 
     expect(nextWebhookResult.action).toBe("idle");
   });
+
+  it("lets a paid Payment win a three-way webhook, reconciliation and expiry race without releasing inventory", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Paid Payment But Unfinalized Order
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Starting State
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBefore = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBefore.status).toBe("paid");
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force Reservation To Be Expired
+  |--------------------------------------------------------------------------
+  */
+
+    const now = new Date();
+
+    await Order.updateOne(
+      {
+        _id: fixture.order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(now.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Queue Captured Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const eventId = "evt_part207_three_way_payment_race";
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | THREE-WAY RACE
+  |--------------------------------------------------------------------------
+  |
+  | We intentionally make no assumption about execution order.
+  |--------------------------------------------------------------------------
+  */
+
+    const [webhookResult, reconciliationResult, expiryResult] =
+      await Promise.all([
+        processNextPaymentWebhookEvent(),
+
+        reconcilePaidPaymentTransaction(fixture.payment.id),
+
+        expireOnlineOrderInventoryReservation(
+          fixture.order.id,
+
+          {
+            now,
+          },
+        ),
+      ]);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Must Resolve Safely
+  |--------------------------------------------------------------------------
+  */
+
+    expect(webhookResult.action).toBe("processed");
+
+    expect(webhookResult.result.orderFinalization).toBeTruthy();
+
+    const webhookFinalizationAction =
+      webhookResult.result.orderFinalization.action;
+
+    expect(["finalize", "reuse"]).toContain(webhookFinalizationAction);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Must Resolve Safely
+  |--------------------------------------------------------------------------
+  */
+
+    expect([
+      PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+
+      PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+    ]).toContain(reconciliationResult.action);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly ONE Payment Finalizer Wins
+  |--------------------------------------------------------------------------
+  */
+
+    const finalizerCount = [
+      webhookFinalizationAction === "finalize",
+
+      reconciliationResult.action === PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+    ].filter(Boolean).length;
+
+    expect(finalizerCount).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry Must NEVER Settle The Reservation
+  |--------------------------------------------------------------------------
+  |
+  | Two valid skip outcomes are possible:
+  |
+  | payment-state-blocks-expiry
+  |   =
+  | expiry saw the paid Payment before finalization completed
+  |
+  | order-not-expirable
+  |   =
+  | webhook/reconciliation finalized before expiry inspected the Order
+  |--------------------------------------------------------------------------
+  */
+
+    expect(expiryResult.action).toBe("skip");
+
+    expect(["payment-state-blocks-expiry", "order-not-expirable"]).toContain(
+      expiryResult.reason,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Order Must Be Confirmed
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("confirmed");
+
+    expect(finalOrder.payment.status).toBe("paid");
+
+    expect(finalOrder.payment.transactionId).toBe(fixture.providerPaymentId);
+
+    expect(finalOrder.inventoryStatus).toBe("committed");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Confirmed Transition
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry Must NOT Add Cancellation History
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryCancellationEntries = finalOrder.statusHistory.filter(
+      (entry) =>
+        entry.status === "cancelled" &&
+        entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+        entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    expect(expiryCancellationEntries).toHaveLength(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Commit Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(
+      variantBefore.inventory.stock - quantity,
+    );
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    const commitLedgers = await ProductInventoryLedger.find({
+      referenceId: finalOrder.orderNumber,
+
+      operation: "commit",
+    }).lean();
+
+    expect(commitLedgers).toHaveLength(1);
+
+    expect(commitLedgers[0].quantity).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Absolutely No Release Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Remains Paid
+  |--------------------------------------------------------------------------
+  */
+
+    const finalPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(finalPayment.status).toBe("paid");
+
+    expect(finalPayment.paidAt).toBeInstanceOf(Date);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Never Manual Review For This Valid Race
+  |--------------------------------------------------------------------------
+  */
+
+    expect(finalPayment.reconciliation.status).not.toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Processed Once
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Subsequent Expiry Attempt Must Also Be Harmless
+  |--------------------------------------------------------------------------
+  */
+
+    const laterExpiry = await expireOnlineOrderInventoryReservation(
+      fixture.order.id,
+
+      {
+        now: new Date(now.getTime() + 120_000),
+      },
+    );
+
+    expect(laterExpiry.action).toBe("skip");
+
+    expect(laterExpiry.reason).toBe("order-not-expirable");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Settlement Still Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+  });
 });

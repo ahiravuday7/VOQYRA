@@ -7738,6 +7738,28 @@ Now we test two independent recovery paths hitting the same paid but not-yet-fin
                           ↓
               exactly ONE wins
 |--------------------------------------------------------------------------
+Part 207.12 — Three-Way Race: Webhook vs Reconciliation vs Expiry
+
+This is the strongest combined race test so far:
+
+                 Payment already captured
+                         │
+              Order still pending/reserved
+                         │
+       ┌─────────────────┼─────────────────┐
+       ▼                 ▼                 ▼
+   webhook          reconciliation       expiry
+       │                 │                 │
+       └─────────────────┴─────────────────┘
+                         ↓
+                ONE settlement only
+
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
