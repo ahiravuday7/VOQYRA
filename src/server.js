@@ -12,6 +12,11 @@ import {
 } from "./modules/payments/payment-webhook-worker.service.js";
 
 import {
+  startPaymentReconciliationWorker,
+  stopPaymentReconciliationWorker,
+} from "./modules/payments/payment-reconciliation-worker.service.js";
+
+import {
   startOrderReservationExpiryWorker,
   stopOrderReservationExpiryWorker,
 } from "./modules/orders/order-reservation-expiry-worker.service.js";
@@ -65,15 +70,17 @@ const startServer = async () => {
     );
 
     /*
-    |--------------------------------------------------------------------------
-    | Background Workers
-    |--------------------------------------------------------------------------
-    |
-    | Start only after MongoDB is connected and HTTP server exists.
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Background Workers
+|--------------------------------------------------------------------------
+|
+| Start only after MongoDB is connected and HTTP server exists.
+|--------------------------------------------------------------------------
+*/
 
     startPaymentWebhookWorker();
+
+    startPaymentReconciliationWorker();
 
     startOrderReservationExpiryWorker();
   } catch (error) {
@@ -151,6 +158,8 @@ const shutdown = async (signal) => {
 
     await Promise.all([
       stopPaymentWebhookWorker(),
+
+      stopPaymentReconciliationWorker(),
 
       stopOrderReservationExpiryWorker(),
     ]);

@@ -7039,6 +7039,13 @@ Exactly what we want. ✅
 |--------------------------------------------------------------------------
 Part 206.8.3 — Test Worker Lifecycle + Overlap Protection
 |--------------------------------------------------------------------------
+Part 206.8.4 — Connect Reconciliation Worker to Application Startup ✅
+
+Update only:
+
+src/server.js
+
+Your current server already manages the payment webhook worker and reservation-expiry worker. We’ll add reconciliation to the same lifecycle.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
