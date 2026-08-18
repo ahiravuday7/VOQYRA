@@ -210,31 +210,61 @@ export const findRecoverablePaymentReconciliationCandidates = ({
           $ne: null,
         },
 
-        $or: [
-          {
-            verifiedAt: {
-              $ne: null,
-            },
-          },
-
-          {
-            providerVerifiedAt: {
-              $ne: null,
-            },
-          },
-        ],
-
         "providerReference.orderId": {
           $type: "string",
-
           $ne: "",
         },
 
         "providerReference.paymentId": {
           $type: "string",
-
           $ne: "",
         },
+
+        /*
+    |--------------------------------------------------------------------------
+    | Candidate Must Be Trusted AND Not Already Reconciled
+    |--------------------------------------------------------------------------
+    |
+    | $and is required because we have two independent $or conditions:
+    |
+    | 1. Either verification path is acceptable.
+    | 2. Reconciliation must either be new/default or from an older
+    |    Payment document that predates reconciliation metadata.
+    |--------------------------------------------------------------------------
+    */
+
+        $and: [
+          {
+            $or: [
+              {
+                verifiedAt: {
+                  $ne: null,
+                },
+              },
+
+              {
+                providerVerifiedAt: {
+                  $ne: null,
+                },
+              },
+            ],
+          },
+
+          {
+            $or: [
+              {
+                "reconciliation.status": {
+                  $exists: false,
+                },
+              },
+
+              {
+                "reconciliation.status":
+                  PAYMENT_RECONCILIATION_RECORD_STATUSES.NONE,
+              },
+            ],
+          },
+        ],
       },
     },
 

@@ -7053,6 +7053,45 @@ Part 206.9.2 — Atomic Reconciliation Audit Repository Writes
 |--------------------------------------------------------------------------
 Part 206.9.3 — Persist Reconciliation Outcomes
 |--------------------------------------------------------------------------
+Part 206.9.4 — Stop Manual-Review Payments From Repeating Forever
+
+Before:
+
+paid payment
+    +
+pending/reserved Order
+    ↓
+reconciliation
+    ↓
+manual-review
+    ↓
+30 seconds later
+    ↓
+candidate AGAIN ❌
+    ↓
+manual-review AGAIN
+    ↓
+attemptCount = 2, 3, 4, 5...
+
+After:
+
+paid payment
+    +
+pending/reserved Order
+    ↓
+manual-review detected
+    ↓
+reconciliation.status = manual-review
+    ↓
+future candidate scan
+    ↓
+excluded ✅
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
 info:
 The easiest way to remember is:
