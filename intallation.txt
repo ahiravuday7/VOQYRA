@@ -6835,6 +6835,48 @@ finalizeCapturedCustomerOnlineOrder()
         ▼
 action = recovered ✅
 |--------------------------------------------------------------------------
+Part 206.5 — Integration Test: Recover Once, Never Commit Twice
+
+What we're proving
+
+Before reconciliation:
+
+PaymentTransaction = paid ✅
+
+
+Order
+├─ status = pending
+├─ payment.status = pending
+└─ inventoryStatus = reserved
+
+First reconciliation:
+
+reconcilePaidPaymentTransaction()
+        ↓
+classification = recoverable
+        ↓
+existing atomic finalizer
+        ↓
+Order = confirmed
+payment = paid
+inventory = committed
+commit ledger = 1
+        ↓
+action = recovered ✅
+
+Second reconciliation:
+
+same PaymentTransaction
+        ↓
+Order already finalized
+        ↓
+NO stock change
+NO reservedStock change
+NO new ledger
+        ↓
+action = already-finalized ✅
+
+This is an important guarantee: payment recovery can be retried safely without selling the same inventory twice.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

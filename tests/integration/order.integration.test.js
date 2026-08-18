@@ -63,6 +63,13 @@ import {
   findRecoverablePaymentReconciliationCandidates,
 } from "../../src/modules/payments/payment.repository.js";
 
+import {
+  reconcilePaidPaymentTransaction,
+  PAYMENT_RECONCILIATION_ACTIONS,
+  PAYMENT_RECONCILIATION_REASONS,
+  PAYMENT_RECONCILIATION_STATES,
+} from "../../src/modules/payments/payment-reconciliation.service.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -33312,5 +33319,287 @@ describe("Payment reconciliation candidate discovery", () => {
         (item) => String(item._id) === String(cancelledFixture.payment.id),
       ),
     ).toBe(false);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 206 — Paid Payment Reconciliation Recovery
+|--------------------------------------------------------------------------
+*/
+
+describe("Paid Payment reconciliation recovery", () => {
+  it("recovers a paid pending Order exactly once and remains idempotent on retry", async () => {
+    const {
+      agent: customerAgent,
+
+      user: customer,
+    } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create The Broken/Reconciliation State
+    |--------------------------------------------------------------------------
+    |
+    | This helper intentionally stops after:
+    |
+    | PaymentTransaction = paid
+    |
+    | while Order remains:
+    |
+    | status          = pending
+    | payment.status  = pending
+    | inventoryStatus = reserved
+    |--------------------------------------------------------------------------
+    */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Starting State
+    |--------------------------------------------------------------------------
+    */
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    const paymentBefore = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBefore.status).toBe("paid");
+
+    expect(paymentBefore.paidAt).toBeInstanceOf(Date);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Inventory Before Recovery
+    |--------------------------------------------------------------------------
+    */
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Commit Ledger Yet
+    |--------------------------------------------------------------------------
+    */
+
+    const commitLedgerCountBefore = await ProductInventoryLedger.countDocuments(
+      {
+        referenceId: orderBefore.orderNumber,
+
+        operation: "commit",
+      },
+    );
+
+    expect(commitLedgerCountBefore).toBe(0);
+
+    /*
+    |--------------------------------------------------------------------------
+    | First Reconciliation
+    |--------------------------------------------------------------------------
+    */
+
+    const first = await reconcilePaidPaymentTransaction(fixture.payment.id);
+
+    expect(first.action).toBe(PAYMENT_RECONCILIATION_ACTIONS.RECOVERED);
+
+    expect(first.classification).toEqual({
+      state: PAYMENT_RECONCILIATION_STATES.RECOVERABLE,
+
+      reason: PAYMENT_RECONCILIATION_REASONS.ORDER_REQUIRES_FINALIZATION,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order Was Recovered
+    |--------------------------------------------------------------------------
+    */
+
+    const orderAfterFirst = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterFirst.status).toBe("confirmed");
+
+    expect(orderAfterFirst.payment.method).toBe("online");
+
+    expect(orderAfterFirst.payment.status).toBe("paid");
+
+    expect(orderAfterFirst.payment.provider).toBe("razorpay");
+
+    expect(orderAfterFirst.payment.transactionId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(orderAfterFirst.payment.paidAt).toBeInstanceOf(Date);
+
+    expect(orderAfterFirst.inventoryStatus).toBe("committed");
+
+    expect(orderAfterFirst.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order Item Was Committed
+    |--------------------------------------------------------------------------
+    */
+
+    expect(orderAfterFirst.items[0].inventory.status).toBe("committed");
+
+    expect(orderAfterFirst.items[0].inventory.reservedQuantity).toBe(0);
+
+    expect(orderAfterFirst.items[0].inventory.committedQuantity).toBe(quantity);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Physical Inventory Was Committed Exactly Once
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterFirst = await Product.findById(product._id).lean();
+
+    const variantAfterFirst = findProductVariant(
+      productAfterFirst,
+
+      variant._id,
+    );
+
+    expect(variantAfterFirst.inventory.stock).toBe(
+      variantBefore.inventory.stock - quantity,
+    );
+
+    expect(variantAfterFirst.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - quantity,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exactly One Commit Ledger Entry
+    |--------------------------------------------------------------------------
+    */
+
+    const commitLedgerAfterFirst = await ProductInventoryLedger.find({
+      referenceId: orderAfterFirst.orderNumber,
+
+      operation: "commit",
+    }).lean();
+
+    expect(commitLedgerAfterFirst).toHaveLength(1);
+
+    expect(commitLedgerAfterFirst[0].quantity).toBe(quantity);
+
+    expect(commitLedgerAfterFirst[0].stockDelta).toBe(-quantity);
+
+    expect(commitLedgerAfterFirst[0].reservedStockDelta).toBe(-quantity);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Payment Must Remain Paid
+    |--------------------------------------------------------------------------
+    */
+
+    const paymentAfterFirst = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterFirst.status).toBe("paid");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Second Reconciliation
+    |--------------------------------------------------------------------------
+    |
+    | This simulates:
+    |
+    | worker retry
+    | duplicate reconciliation cycle
+    | delayed webhook
+    | repeated operational recovery
+    |--------------------------------------------------------------------------
+    */
+
+    const second = await reconcilePaidPaymentTransaction(fixture.payment.id);
+
+    expect(second.action).toBe(
+      PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+    );
+
+    expect(second.classification.state).toBe(
+      PAYMENT_RECONCILIATION_STATES.ALREADY_FINALIZED,
+    );
+
+    expect(second.classification.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.ORDER_ALREADY_FINALIZED,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inventory Must Not Move Again
+    |--------------------------------------------------------------------------
+    */
+
+    const productAfterSecond = await Product.findById(product._id).lean();
+
+    const variantAfterSecond = findProductVariant(
+      productAfterSecond,
+
+      variant._id,
+    );
+
+    expect(variantAfterSecond.inventory.stock).toBe(
+      variantAfterFirst.inventory.stock,
+    );
+
+    expect(variantAfterSecond.inventory.reservedStock).toBe(
+      variantAfterFirst.inventory.reservedStock,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | No Duplicate Commit Ledger
+    |--------------------------------------------------------------------------
+    */
+
+    const commitLedgerCountAfterSecond =
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterFirst.orderNumber,
+
+        operation: "commit",
+      });
+
+    expect(commitLedgerCountAfterSecond).toBe(1);
   });
 });
