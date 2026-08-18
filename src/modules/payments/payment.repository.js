@@ -1218,6 +1218,140 @@ export const markFailedPaymentTransactionLateCaptured = (
 
 /*
 |--------------------------------------------------------------------------
+| Mark Cancelled Payment Transaction As Late Captured
+|--------------------------------------------------------------------------
+|
+| Exceptional Part 207 transition:
+|
+| local PaymentTransaction = cancelled
+|
+| because:
+|
+| Order reservation expired / payment attempt was cancelled locally
+|
+| but CURRENT trusted provider truth later reports:
+|
+| status   = captured
+| captured = true
+|
+| Financial truth must win:
+|
+| cancelled → paid
+|
+| IMPORTANT:
+|
+| This function ONLY updates PaymentTransaction.
+|
+| It does NOT:
+|
+| - reopen the Order
+| - reserve inventory again
+| - commit inventory
+| - confirm the Order
+| - replace Order.payment.transactionId
+|--------------------------------------------------------------------------
+*/
+
+export const markCancelledPaymentTransactionLateCaptured = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    paidAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exceptional Transition Only From Cancelled
+        |--------------------------------------------------------------------------
+        */
+
+      status: PAYMENT_TRANSACTION_STATUSES.CANCELLED,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Trusted Verification Required
+        |--------------------------------------------------------------------------
+        */
+
+      $or: [
+        {
+          verifiedAt: {
+            $ne: null,
+          },
+        },
+
+        {
+          providerVerifiedAt: {
+            $ne: null,
+          },
+        },
+      ],
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exact Provider Identity
+        |--------------------------------------------------------------------------
+        */
+
+      "providerReference.orderId": providerOrderId,
+
+      "providerReference.paymentId": providerPaymentId,
+    },
+
+    {
+      $set: {
+        /*
+          |--------------------------------------------------------------------------
+          | Financial Provider Truth
+          |--------------------------------------------------------------------------
+          */
+
+        status: PAYMENT_TRANSACTION_STATUSES.PAID,
+
+        paidAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Payment Transaction By Provider Order
 |--------------------------------------------------------------------------
 |

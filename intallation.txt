@@ -7592,6 +7592,53 @@ Part 207.8.3 — Integration Test: Older Failed Attempt Captures After Attempt #
 
 Now we prove the production safeguard from 207.8.2 end-to-end.
 |--------------------------------------------------------------------------
+Part 207.9.1 — Record a Late Capture After Reservation Expiry
+
+I found the next real edge-case gap.
+
+When Part 202 expires an unpaid Order, it does two things:
+
+Order
+status = cancelled
+inventoryStatus = released
+
+
+PaymentTransaction
+pending → cancelled
+
+But Razorpay could still report that same payment as captured later.
+
+In that situation, we need to represent the financial truth:
+
+PaymentTransaction
+cancelled → paid
+
+while not touching the already expired Order yet.
+
+We'll wire this into the webhook processor:
+
+PaymentTransaction = cancelled
+CURRENT Razorpay = captured
+        ↓
+mark PaymentTransaction = paid
+        ↓
+inspect Order
+        ↓
+Order was automatically expired/released
+        ↓
+reconciliation.status = manual-review
+reason = late-capture-after-reservation-expired
+        ↓
+NO Order resurrection
+NO inventory re-reservation
+NO inventory commit
+NO second ledger settlement
+
+That is the critical protection for money arriving after inventory has already been released.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
