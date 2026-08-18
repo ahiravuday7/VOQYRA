@@ -1,8 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { processPaymentReconciliationBatch } from "../../src/modules/payments/payment-reconciliation-worker.service.js";
+import {
+  processPaymentReconciliationBatch,
+  runPaymentReconciliationWorkerCycle,
+  startPaymentReconciliationWorker,
+  stopPaymentReconciliationWorker,
+} from "../../src/modules/payments/payment-reconciliation-worker.service.js";
 
 import { PAYMENT_RECONCILIATION_ACTIONS } from "../../src/modules/payments/payment-reconciliation.service.js";
+
+afterEach(async () => {
+  /*
+   * Ensure one lifecycle test cannot leave the singleton worker running
+   * for the next test.
+   */
+  await stopPaymentReconciliationWorker();
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -343,5 +356,329 @@ describe("Payment reconciliation worker", () => {
     expect(finder).toHaveBeenCalledWith({
       limit: 25,
     });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| 8. No Overlapping Reconciliation Cycles
+|--------------------------------------------------------------------------
+*/
+
+  it("shares the active reconciliation cycle instead of starting an overlapping cycle", async () => {
+    let releaseProcessor;
+
+    const processorGate = new Promise((resolve) => {
+      releaseProcessor = resolve;
+    });
+
+    const candidate = {
+      _id: "66aa00000000000000000901",
+
+      paymentNumber: "PAY-OVERLAP-001",
+
+      order: "66aa00000000000000000902",
+
+      orderNumber: "ORD-OVERLAP-001",
+    };
+
+    const finder = vi.fn().mockResolvedValue([candidate]);
+
+    const processor = vi.fn().mockImplementation(async () => {
+      await processorGate;
+
+      return {
+        action: PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+      };
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Cycle Starts And Remains Active
+  |--------------------------------------------------------------------------
+  */
+
+    const firstCyclePromise = runPaymentReconciliationWorkerCycle({
+      maxPayments: 1,
+
+      finder,
+
+      processor,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Second Cycle Arrives While First Is Still Active
+  |--------------------------------------------------------------------------
+  */
+
+    const secondCyclePromise = runPaymentReconciliationWorkerCycle({
+      maxPayments: 1,
+
+      finder,
+
+      processor,
+    });
+
+    /*
+     * The reconciliation worker deliberately returns the same in-flight
+     * Promise instead of launching another database batch.
+     */
+    expect(secondCyclePromise).toBe(firstCyclePromise);
+
+    /*
+     * Allow the first cycle to actually reach the processor.
+     */
+    await vi.waitFor(() => {
+      expect(processor).toHaveBeenCalledTimes(1);
+    });
+
+    expect(finder).toHaveBeenCalledTimes(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Release Active Cycle
+  |--------------------------------------------------------------------------
+  */
+
+    releaseProcessor();
+
+    const [firstResult, secondResult] = await Promise.all([
+      firstCyclePromise,
+      secondCyclePromise,
+    ]);
+
+    expect(firstResult).toEqual(secondResult);
+
+    expect(firstResult).toMatchObject({
+      candidates: 1,
+
+      recovered: 1,
+
+      failed: 0,
+    });
+
+    /*
+     * Most important assertion:
+     *
+     * two cycle requests
+     * ≠
+     * two reconciliation attempts
+     */
+    expect(processor).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| 9. Cycle Lock Is Released After Failure
+|--------------------------------------------------------------------------
+*/
+
+  it("allows a later reconciliation cycle after the previous cycle fails", async () => {
+    const failingFinder = vi
+      .fn()
+      .mockRejectedValue(new Error("Temporary reconciliation query failure"));
+
+    await expect(
+      runPaymentReconciliationWorkerCycle({
+        finder: failingFinder,
+      }),
+    ).rejects.toThrow("Temporary reconciliation query failure");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Next Cycle Must Still Be Allowed
+  |--------------------------------------------------------------------------
+  */
+
+    const healthyFinder = vi.fn().mockResolvedValue([]);
+
+    const result = await runPaymentReconciliationWorkerCycle({
+      finder: healthyFinder,
+    });
+
+    expect(healthyFinder).toHaveBeenCalledTimes(1);
+
+    expect(result).toEqual({
+      candidates: 0,
+
+      recovered: 0,
+
+      alreadyFinalized: 0,
+
+      manualReview: 0,
+
+      skipped: 0,
+
+      failed: 0,
+
+      idle: true,
+
+      limitReached: false,
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| 10. Start / Stop Are Idempotent
+|--------------------------------------------------------------------------
+*/
+
+  it("starts and stops the reconciliation worker idempotently", async () => {
+    const firstStart = startPaymentReconciliationWorker({
+      intervalMs: 60_000,
+
+      batchSize: 1,
+    });
+
+    expect(firstStart).toEqual({
+      started: true,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Duplicate Startup Must Not Create Another Scheduler
+  |--------------------------------------------------------------------------
+  */
+
+    const secondStart = startPaymentReconciliationWorker({
+      intervalMs: 60_000,
+
+      batchSize: 1,
+    });
+
+    expect(secondStart).toEqual({
+      started: false,
+
+      reason: "already-started",
+    });
+
+    /*
+     * stop() also waits for the immediate startup reconciliation cycle,
+     * if that cycle is still running.
+     */
+    const firstStop = await stopPaymentReconciliationWorker();
+
+    expect(firstStop).toEqual({
+      stopped: true,
+    });
+
+    const secondStop = await stopPaymentReconciliationWorker();
+
+    expect(secondStop).toEqual({
+      stopped: false,
+
+      reason: "not-started",
+    });
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| 11. Graceful Shutdown Waits For Active Reconciliation
+|--------------------------------------------------------------------------
+*/
+
+  it("waits for an active reconciliation cycle before stopping", async () => {
+    /*
+  |--------------------------------------------------------------------------
+  | Start Worker
+  |--------------------------------------------------------------------------
+  */
+
+    startPaymentReconciliationWorker({
+      intervalMs: 60_000,
+
+      batchSize: 1,
+    });
+
+    /*
+     * Wait for any immediate startup cycle to finish first.
+     *
+     * Calling run...() here either joins that startup cycle or runs one
+     * empty cycle itself.
+     */
+    await runPaymentReconciliationWorkerCycle();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Start Controlled Slow Cycle
+  |--------------------------------------------------------------------------
+  */
+
+    let releaseProcessor;
+
+    const processorGate = new Promise((resolve) => {
+      releaseProcessor = resolve;
+    });
+
+    const finder = vi.fn().mockResolvedValue([
+      {
+        _id: "66aa00000000000000000911",
+
+        paymentNumber: "PAY-SHUTDOWN-001",
+
+        order: "66aa00000000000000000912",
+
+        orderNumber: "ORD-SHUTDOWN-001",
+      },
+    ]);
+
+    const processor = vi.fn().mockImplementation(async () => {
+      await processorGate;
+
+      return {
+        action: PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+      };
+    });
+
+    const activeCycle = runPaymentReconciliationWorkerCycle({
+      maxPayments: 1,
+
+      finder,
+
+      processor,
+    });
+
+    await vi.waitFor(() => {
+      expect(processor).toHaveBeenCalledTimes(1);
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Begin Shutdown While Recovery Is Still Running
+  |--------------------------------------------------------------------------
+  */
+
+    let stopResolved = false;
+
+    const stopPromise = stopPaymentReconciliationWorker().then((result) => {
+      stopResolved = true;
+
+      return result;
+    });
+
+    /*
+     * Give stop() a chance to reach its await activeCyclePromise.
+     */
+    await Promise.resolve();
+
+    expect(stopResolved).toBe(false);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Finish Recovery
+  |--------------------------------------------------------------------------
+  */
+
+    releaseProcessor();
+
+    await activeCycle;
+
+    const stopResult = await stopPromise;
+
+    expect(stopResult).toEqual({
+      stopped: true,
+    });
+
+    expect(stopResolved).toBe(true);
   });
 });
