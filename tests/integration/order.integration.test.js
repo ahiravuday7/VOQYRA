@@ -4970,6 +4970,215 @@ describe("GET /api/v1/admin/orders", () => {
       ]),
     );
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Reservation Expiry Observability
+|--------------------------------------------------------------------------
+*/
+
+  it("filters only Orders automatically expired by the reservation-expiry worker", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "EXPIRY-OBSERVABILITY-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 30,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Automatically Expired Online Order
+  |--------------------------------------------------------------------------
+  */
+
+    const expiredOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Normal Customer-Cancelled Order
+  |--------------------------------------------------------------------------
+  */
+
+    const customerCancelledOrder = await createCustomerOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Active Online Order
+  |--------------------------------------------------------------------------
+  */
+
+    const activeOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Customer Cancellation
+  |--------------------------------------------------------------------------
+  */
+
+    await customerAgent
+      .post(`/api/v1/orders/${customerCancelledOrder.id}/cancel`)
+      .send({
+        reason: "Customer cancelled Order for observability test.",
+      })
+      .expect(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force First Online Order to Expire
+  |--------------------------------------------------------------------------
+  */
+
+    const expiredAt = new Date();
+
+    await Order.updateOne(
+      {
+        _id: expiredOrder.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiredAt.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Run Expiry Processor
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(
+      expiredOrder.id,
+
+      {
+        now: expiredAt,
+      },
+    );
+
+    expect(expiryResult.action).toBe("expire");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Admin Observability Filter
+  |--------------------------------------------------------------------------
+  */
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      reservationExpiryStatus: "expired",
+    });
+
+    expect(response.status).toBe(200);
+
+    expect(response.body.data.orders).toHaveLength(1);
+
+    expect(response.body.data.pagination.totalItems).toBe(1);
+
+    const returnedOrderIds = response.body.data.orders.map((order) => {
+      return order.id;
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Automatically Expired Order Included
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrderIds).toContain(expiredOrder.id);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Normal Cancellation Must NOT Be Included
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrderIds).not.toContain(customerCancelledOrder.id);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Active Order Must NOT Be Included
+  |--------------------------------------------------------------------------
+  */
+
+    expect(returnedOrderIds).not.toContain(activeOrder.id);
+
+    expect(response.body.data.orders[0].status).toBe("cancelled");
+
+    expect(response.body.data.orders[0].inventoryStatus).toBe("released");
+  });
+
+  it("rejects an invalid reservation expiry observability filter", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const response = await adminAgent.get("/api/v1/admin/orders").query({
+      reservationExpiryStatus: "automatic",
+    });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "query",
+        }),
+      ]),
+    );
+  });
 });
 
 /*
