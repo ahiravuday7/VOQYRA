@@ -7187,7 +7187,22 @@ Part 206.10.4 — Admin Payment Reconciliation Controller
 src/modules/payments/payment-reconciliation.admin.controller.js
 GET /api/v1/admin/payment-reconciliations?status=manual-review
 |--------------------------------------------------------------------------
+Part 206.10.5 — Protected Admin Reconciliation Route
+Endpoint is now
+GET /api/v1/admin/payment-reconciliations
 
+Examples:
+
+GET /api/v1/admin/payment-reconciliations
+GET /api/v1/admin/payment-reconciliations?status=manual-review
+GET /api/v1/admin/payment-reconciliations?status=recovered
+GET /api/v1/admin/payment-reconciliations?reason=payment-amount-mismatch
+GET /api/v1/admin/payment-reconciliations?page=1&limit=20&sortDirection=desc
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

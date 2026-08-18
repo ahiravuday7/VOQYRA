@@ -29,6 +29,8 @@ import paymentWebhookRoutes from "./modules/payments/payment-webhook.routes.js";
 
 import paymentWebhookAdminRoutes from "./modules/payments/payment-webhook.admin.routes.js";
 
+import paymentReconciliationAdminRoutes from "./modules/payments/payment-reconciliation.admin.routes.js";
+
 /*
 |--------------------------------------------------------------------------
 | Payment Provider Initialization
@@ -165,6 +167,11 @@ app.use(
   "/api/v1/admin/payment-webhooks",
 
   paymentWebhookAdminRoutes,
+);
+app.use(
+  "/api/v1/admin/payment-reconciliations",
+
+  paymentReconciliationAdminRoutes,
 );
 
 /*
