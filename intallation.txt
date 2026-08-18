@@ -7369,6 +7369,43 @@ recoveredAt = null
 ✅ Payment-vs-expiry race protection remains green.
 ✅ Entire backend regression suite passes.
 |--------------------------------------------------------------------------
+Part 207.1 — Late Webhook After Browser Already Finalized Payment
+
+I checked the existing payment tests. A lot of Part 207 is already covered:
+
+✅ duplicate browser confirmation
+✅ concurrent duplicate browser confirmation
+✅ duplicate webhook delivery
+✅ webhook without browser confirmation
+✅ out-of-order webhook uses fresh Razorpay truth
+✅ webhook retry when local PaymentTransaction is missing
+✅ authorized-but-not-captured protection
+✅ duplicate finalization doesn't double-commit inventory
+✅ payment-vs-expiry race
+✅ cancelled PaymentTransaction cannot be resurrected by late capture
+✅ webhook dead-letter/retry behavior
+✅ reconciliation recovery/concurrency from Part 206
+
+One important gap is:
+
+Browser confirmation succeeds
+        ↓
+Payment = paid
+Order = confirmed
+Inventory = committed
+        ↓
+Razorpay captured webhook arrives LATE
+        ↓
+must be safely processed
+        ↓
+NO second inventory commit
+NO duplicate ledger
+NO duplicate PaymentTransaction
+
+For this step, change only the test file.
+
+Update
+tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
