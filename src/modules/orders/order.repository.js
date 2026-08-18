@@ -8,6 +8,11 @@ import {
   ORDER_STATUSES,
 } from "../../shared/constants/order.constants.js";
 
+import {
+  AUDIT_ACTOR_TYPES,
+  SYSTEM_AUDIT_ACTORS,
+} from "../../shared/constants/audit.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Create Order Document
@@ -189,6 +194,24 @@ const buildAdminOrderFilter = (filters) => {
 
   if (filters.inventoryStatus) {
     filter.inventoryStatus = filters.inventoryStatus;
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Reservation Expiry Observability
+|--------------------------------------------------------------------------
+*/
+
+  if (filters.reservationExpiryStatus === "expired") {
+    filter.statusHistory = {
+      $elemMatch: {
+        status: ORDER_STATUSES.CANCELLED,
+
+        changedByType: AUDIT_ACTOR_TYPES.SYSTEM,
+
+        systemActor: SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+      },
+    };
   }
 
   /*
