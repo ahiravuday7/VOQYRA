@@ -7207,6 +7207,167 @@ tests/integration/payment-reconciliation-admin.integration.test.js
 
 This keeps the reconciliation-admin tests separate from the very large order.integration.test.js.
 |--------------------------------------------------------------------------
+Part 206.11 — Final Payment Recovery / Reconciliation Regression ✅
+
+At this point, no new production code should be added. This step is about proving that everything from Part 206 works together before we move into Part 207.
+
+1. Run the reconciliation classifier tests
+npx vitest run tests/unit/payment-reconciliation.test.js --reporter=verbose
+
+Expected:
+
+14 passed
+
+This verifies:
+
+paid + pending/reserved     → recoverable
+paid + already finalized    → already-finalized
+unpaid                      → not-applicable
+unsafe mismatch             → manual-review
+2. Run reconciliation worker tests
+npx vitest run tests/unit/payment-reconciliation-worker.test.js --reporter=verbose
+
+Expected:
+
+11 passed
+
+This verifies:
+
+empty batch
+bounded batch
+failure isolation
+manual-review counting
+no overlapping cycles
+cycle lock release
+idempotent start/stop
+graceful shutdown
+3. Run admin reconciliation observability tests
+npx vitest run tests/integration/payment-reconciliation-admin.integration.test.js --reporter=verbose
+
+Expected:
+
+10 passed
+
+This verifies:
+
+401 unauthenticated
+403 customer
+200 admin
+
+
+manual-review filtering
+recovered filtering
+reason filtering
+provider payment filtering
+pagination
+sorting
+safe response
+status=none rejected
+4. Run all reconciliation-related Order tests
+npx vitest run tests/integration/order.integration.test.js -t "reconciliation" --reporter=verbose
+
+Make sure these important tests are green:
+
+✓ returns only trusted paid Payments whose Orders still require finalization
+
+
+✓ recovers a paid pending Order exactly once and remains idempotent on retry
+
+
+✓ allows only one concurrent reconciliation to commit inventory
+
+
+✓ persists an unsafe paid Payment as manual-review and removes it from future reconciliation scans
+5. Recheck the payment-vs-expiry race
+
+Part 206 relies heavily on the Part 204 race guard, so run:
+
+npx vitest run tests/integration/order.integration.test.js -t "expiry" --reporter=verbose
+
+We need to preserve this invariant:
+
+                    same reserved inventory
+                           │
+               ┌───────────┴────────────┐
+               ▼                        ▼
+        payment recovery          expiry processor
+               │                        │
+               └───────────┬────────────┘
+                           ▼
+
+
+              ONLY ONE CAN SETTLE IT
+
+Never:
+
+payment commits stock
++
+expiry releases same reservation
+6. Run payment/webhook regression tests
+
+Because reconciliation reuses existing payment finalization:
+
+npx vitest run tests/integration/payment-state.integration.test.js --reporter=verbose
+
+Also run your webhook tests if they are separate:
+
+npx vitest run tests/integration/payment-webhook*.test.js --reporter=verbose
+
+If PowerShell doesn't expand that glob correctly, just run:
+
+npm test
+7. Final full backend regression
+
+Now run:
+
+npm test
+
+This is the important one.
+
+We want every test file and every test passing, including all tests added since the earlier 504/504.
+
+Part 206 completion checklist
+
+Part 206 is complete only if all of these are true:
+
+✅ Trusted paid Payment + pending/reserved Order is discovered.
+✅ Candidate query is bounded.
+✅ Already-finalized Payments aren't continuously scanned.
+✅ Strict amount validation occurs before recovery.
+✅ Strict currency validation occurs before recovery.
+✅ Customer mismatch is rejected.
+✅ Order mismatch is rejected.
+✅ Untrusted paid Payment goes to manual review.
+✅ Cancelled/released Order is never resurrected.
+✅ Existing atomic finalizer is reused.
+✅ Inventory stock is committed exactly once.
+✅ reservedStock is reduced exactly once.
+✅ Only one commit inventory-ledger record is created.
+✅ Concurrent reconciliation cannot double-commit.
+✅ Reconciliation is idempotent.
+✅ Worker processes bounded batches.
+✅ One failed candidate doesn't stop other candidates.
+✅ Worker cycles cannot overlap.
+✅ Worker starts automatically.
+✅ Worker participates in graceful shutdown.
+✅ Successful recovery stores:
+reconciliation.status = recovered
+reason = order-requires-finalization
+attemptCount = 1
+detectedAt
+lastAttemptedAt
+recoveredAt
+✅ Unsafe cases store:
+reconciliation.status = manual-review
+reason = <specific reason>
+recoveredAt = null
+✅ Manual-review records aren't retried every 30 seconds.
+✅ Admin can query manual-review records.
+✅ Admin can query recovered records.
+✅ Customers cannot access reconciliation administration.
+✅ Normal payments aren't exposed in the reconciliation incident API.
+✅ Payment-vs-expiry race protection remains green.
+✅ Entire backend regression suite passes.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
