@@ -111,6 +111,43 @@ const environmentSchema = z.object({
     .max(100)
     .default(25),
 
+  /*
+|--------------------------------------------------------------------------
+| Payment Reconciliation Worker
+|--------------------------------------------------------------------------
+|
+| This worker is a recovery safety net.
+|
+| Normal payment completion should still happen through:
+|
+| - browser confirmation
+| - Razorpay webhook processing
+|
+| Reconciliation exists for cases where PaymentTransaction reached "paid"
+| but Order finalization did not complete.
+|--------------------------------------------------------------------------
+*/
+
+  PAYMENT_RECONCILIATION_WORKER_INTERVAL_MS: z.coerce
+    .number()
+    .int("PAYMENT_RECONCILIATION_WORKER_INTERVAL_MS must be a whole number")
+    .min(
+      5_000,
+      "PAYMENT_RECONCILIATION_WORKER_INTERVAL_MS must be at least 5000ms",
+    )
+    .max(
+      300_000,
+      "PAYMENT_RECONCILIATION_WORKER_INTERVAL_MS cannot exceed 300000ms",
+    )
+    .default(30_000),
+
+  PAYMENT_RECONCILIATION_WORKER_BATCH_SIZE: z.coerce
+    .number()
+    .int("PAYMENT_RECONCILIATION_WORKER_BATCH_SIZE must be a whole number")
+    .min(1, "PAYMENT_RECONCILIATION_WORKER_BATCH_SIZE must be at least 1")
+    .max(100, "PAYMENT_RECONCILIATION_WORKER_BATCH_SIZE cannot exceed 100")
+    .default(25),
+
   AUTH_COOKIE_SAME_SITE: z.enum(["lax", "strict", "none"]).default("lax"),
 });
 

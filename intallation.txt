@@ -6936,6 +6936,52 @@ It does not stop at Payment B.
 |--------------------------------------------------------------------------
 Part 206.7.1 — Unit Tests for Payment Reconciliation Batch Processor
 |--------------------------------------------------------------------------
+Part 206.8.1 — Reconciliation Worker Configuration
+
+Before starting the automatic worker, add its configuration to the existing validated environment setup.
+
+Why reconciliation runs every 30 seconds
+
+This worker should not compete aggressively with your primary payment flows.
+
+Normal flow:
+
+Razorpay
+   ↓
+webhook/browser confirmation
+   ↓
+finalization immediately
+
+Reconciliation is the fallback:
+
+Payment = paid
+   ↓
+something interrupted finalization
+   ↓
+wait briefly
+   ↓
+reconciliation discovers mismatch
+   ↓
+recover
+
+So:
+
+Webhook worker             → frequent
+Reservation expiry worker  → 10 sec
+Reconciliation worker      → 30 sec
+
+is a sensible starting point.
+
+Important
+
+You do not need to manually add these variables to .env unless you want different values.
+
+Because Zod has defaults:
+
+.default(30_000)
+.default(25)
+
+the application works even when your current .env doesn't contain them.
 |--------------------------------------------------------------------------
 Part 206.1 — Define Recoverable Payment/Order States
 
