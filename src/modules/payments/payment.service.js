@@ -33,6 +33,9 @@ import {
   recordPaymentReconciliationManualReview,
   markVerifiedPaymentTransactionAuthorized,
   markVerifiedPaymentTransactionPaid,
+  recordFailedPaymentProviderConfirmation,
+  markFailedPaymentTransactionLateCaptured,
+  findOtherSuccessfulPaymentTransactionForOrder,
 } from "./payment.repository.js";
 
 import {
@@ -80,6 +83,8 @@ const LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON =
   "late-capture-after-reservation-expired";
 
 const ORDER_STATE_CONFLICT_RECONCILIATION_REASON = "order-state-conflict";
+
+const LATE_CAPTURE_AFTER_ORDER_PAID_REASON = "late-capture-after-order-paid";
 
 /*
 |--------------------------------------------------------------------------
@@ -1682,6 +1687,27 @@ export const confirmCustomerRazorpayPayment = async ({
 
     paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED ||
     /*
+|--------------------------------------------------------------------------
+| Provider-Verified Failed Attempt Returning Through Browser
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| We do NOT allow every FAILED Payment.
+|
+| It must already have:
+|
+| - trusted provider verification
+| - the exact same provider Payment ID
+|
+| This keeps the existing generic FAILED-state rejection intact.
+|--------------------------------------------------------------------------
+*/
+
+    (paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.FAILED &&
+      Boolean(paymentTransaction.providerVerifiedAt) &&
+      paymentTransaction.providerReference?.paymentId === razorpayPaymentId) ||
+    /*
   |--------------------------------------------------------------------------
   | Already Recorded Expiry Late-Capture
   |--------------------------------------------------------------------------
@@ -1761,10 +1787,15 @@ export const confirmCustomerRazorpayPayment = async ({
 |--------------------------------------------------------------------------
 */
 
-  const recordConfirmation =
-    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED
-      ? recordCancelledPaymentProviderConfirmation
-      : recordVerifiedPaymentProviderConfirmation;
+  let recordConfirmation = recordVerifiedPaymentProviderConfirmation;
+
+  if (paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED) {
+    recordConfirmation = recordCancelledPaymentProviderConfirmation;
+  }
+
+  if (paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.FAILED) {
+    recordConfirmation = recordFailedPaymentProviderConfirmation;
+  }
 
   const updatedPaymentTransaction = await recordConfirmation(
     paymentTransaction._id,
@@ -1928,6 +1959,87 @@ export const confirmCustomerRazorpayPayment = async ({
         razorpayPaymentId;
 
     if (browserVerificationNowExists) {
+      return {
+        action: "reuse",
+
+        paymentTransaction: currentPaymentTransaction,
+      };
+    }
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Webhook Won Failed → Paid Late-Capture Race
+|--------------------------------------------------------------------------
+|
+| Browser originally loaded:
+|
+| failed
+|
+| but webhook may have changed:
+|
+| failed → paid
+|
+| while browser signature verification was running.
+|--------------------------------------------------------------------------
+*/
+
+  const webhookResolvedSameFailedLateCapture =
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.FAILED &&
+    sameProviderPayment &&
+    currentPaymentTransaction?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+    Boolean(currentPaymentTransaction?.providerVerifiedAt);
+
+  if (webhookResolvedSameFailedLateCapture) {
+    const browserVerifiedAfterWebhook =
+      await recordVerifiedPaymentProviderConfirmation(
+        currentPaymentTransaction._id,
+
+        {
+          orderId,
+
+          customerId,
+
+          provider: currentPaymentTransaction.provider,
+
+          providerOrderId: storedProviderOrderId,
+
+          providerPaymentId: razorpayPaymentId,
+
+          signature: razorpaySignature,
+
+          verifiedAt,
+        },
+      );
+
+    if (browserVerifiedAfterWebhook) {
+      return {
+        action: "verify",
+
+        paymentTransaction: browserVerifiedAfterWebhook,
+      };
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Another Browser May Have Stored Verification First
+  |--------------------------------------------------------------------------
+  */
+
+    currentPaymentTransaction =
+      await findCustomerPaymentTransactionForConfirmation(
+        paymentTransactionId,
+
+        orderId,
+
+        customerId,
+      );
+
+    if (
+      currentPaymentTransaction?.verifiedAt &&
+      currentPaymentTransaction?.providerReference?.paymentId ===
+        razorpayPaymentId
+    ) {
       return {
         action: "reuse",
 
@@ -2653,6 +2765,306 @@ const processCancelledPaymentBrowserReturn = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Process Failed Payment Browser Return
+|--------------------------------------------------------------------------
+|
+| A Payment previously failed according to the provider.
+|
+| The browser may arrive later while provider CURRENT truth has changed.
+|--------------------------------------------------------------------------
+*/
+
+const processFailedPaymentBrowserReturn = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+
+  confirmation,
+}) => {
+  const paymentTransaction = confirmation.paymentTransaction;
+
+  const providerOrderId = paymentTransaction.providerReference?.orderId;
+
+  const providerPaymentId = paymentTransaction.providerReference?.paymentId;
+
+  if (!providerOrderId) {
+    throw createPaymentProviderOrderMissingError();
+  }
+
+  if (!providerPaymentId) {
+    throw createPaymentProviderPaymentMissingError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Fetch CURRENT Provider Truth
+    |--------------------------------------------------------------------------
+    */
+
+  const providerPayment = await fetchAndVerifyPaymentProviderDetails({
+    provider: paymentTransaction.provider,
+
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount: paymentTransaction.amount,
+
+    currency: paymentTransaction.currency,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Still Not Captured
+    |--------------------------------------------------------------------------
+    |
+    | Valid browser signature alone does NOT change financial truth.
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    providerPayment.status !== "captured" ||
+    providerPayment.captured !== true
+  ) {
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "preserve-failed",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction,
+
+      order: null,
+    };
+  }
+
+  const observedAt = new Date();
+
+  /*
+    |--------------------------------------------------------------------------
+    | Financial Truth Changed
+    |--------------------------------------------------------------------------
+    |
+    | failed → paid
+    |--------------------------------------------------------------------------
+    */
+
+  let lateCapturedPayment = await markFailedPaymentTransactionLateCaptured(
+    paymentTransaction._id,
+
+    {
+      orderId,
+
+      customerId,
+
+      provider: paymentTransaction.provider,
+
+      providerOrderId,
+
+      providerPaymentId,
+
+      paidAt: observedAt,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Webhook Resolution
+    |--------------------------------------------------------------------------
+    */
+
+  if (!lateCapturedPayment) {
+    const currentPaymentTransaction =
+      await findCustomerPaymentTransactionForConfirmation(
+        paymentTransactionId,
+
+        orderId,
+
+        customerId,
+      );
+
+    const alreadyLateCaptured =
+      currentPaymentTransaction?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+      currentPaymentTransaction?.providerReference?.paymentId ===
+        providerPaymentId;
+
+    if (!alreadyLateCaptured) {
+      throw createPaymentProviderSynchronizationConflictError();
+    }
+
+    lateCapturedPayment = currentPaymentTransaction;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Is Another Payment Already Successful?
+    |--------------------------------------------------------------------------
+    |
+    | Example:
+    |
+    | Attempt #1 failed, captures late
+    | Attempt #2 already paid
+    |--------------------------------------------------------------------------
+    */
+
+  const competingSuccessfulPayment =
+    await findOtherSuccessfulPaymentTransactionForOrder(
+      lateCapturedPayment.order,
+
+      lateCapturedPayment._id,
+    );
+
+  if (competingSuccessfulPayment) {
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        lateCapturedPayment._id,
+
+        {
+          reason: LATE_CAPTURE_AFTER_ORDER_PAID_REASON,
+
+          attemptedAt: observedAt,
+        },
+      );
+
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "late-capture-manual-review",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+      order: null,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Inspect Order Fulfillment State
+    |--------------------------------------------------------------------------
+    */
+
+  const order = await findCustomerOrderById(
+    orderId,
+
+    customerId,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Reservation Already Expired
+    |--------------------------------------------------------------------------
+    */
+
+  if (wasOrderAutomaticallyExpired(order)) {
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        lateCapturedPayment._id,
+
+        {
+          reason: LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON,
+
+          attemptedAt: observedAt,
+        },
+      );
+
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "late-capture-manual-review",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+      order: null,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Only Finalize A Still-Valid Pending Reservation
+    |--------------------------------------------------------------------------
+    */
+
+  const orderCanStillFinalize =
+    order?.status === ORDER_STATUSES.PENDING &&
+    order?.payment?.status === ORDER_PAYMENT_STATUSES.PENDING &&
+    order?.payment?.method === ORDER_PAYMENT_METHODS.ONLINE &&
+    order?.inventoryStatus === ORDER_INVENTORY_STATUSES.RESERVED;
+
+  if (!orderCanStillFinalize) {
+    const auditedPaymentTransaction =
+      await recordPaymentReconciliationManualReview(
+        lateCapturedPayment._id,
+
+        {
+          reason: ORDER_STATE_CONFLICT_RECONCILIATION_REASON,
+
+          attemptedAt: observedAt,
+        },
+      );
+
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "late-capture-manual-review",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+      order: null,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Safe Recovery
+    |--------------------------------------------------------------------------
+    |
+    | No other successful Payment exists and the original reservation is
+    | still usable, so the existing atomic finalizer may recover the Order.
+    |--------------------------------------------------------------------------
+    */
+
+  const finalization = await finalizeCapturedCustomerOnlineOrder({
+    orderId,
+
+    paymentTransactionId,
+
+    customerId,
+  });
+
+  return {
+    confirmationAction: confirmation.action,
+
+    synchronizationAction: "late-capture-pay",
+
+    finalizationAction: finalization.action,
+
+    providerPayment,
+
+    paymentTransaction: finalization.paymentTransaction ?? lateCapturedPayment,
+
+    order: finalization.order ?? null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Process Customer Razorpay Payment Confirmation
 |--------------------------------------------------------------------------
 |
@@ -2781,6 +3193,78 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
 
   /*
 |--------------------------------------------------------------------------
+| Paid Payment With Another Successful Attempt
+|--------------------------------------------------------------------------
+|
+| Never let an older late-captured Payment replace the Payment that already
+| settled the Order.
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    confirmation.paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PAID
+  ) {
+    const paymentTransaction = confirmation.paymentTransaction;
+
+    const competingSuccessfulPayment =
+      await findOtherSuccessfulPaymentTransactionForOrder(
+        paymentTransaction.order,
+
+        paymentTransaction._id,
+      );
+
+    if (competingSuccessfulPayment) {
+      const providerPayment = await fetchAndVerifyPaymentProviderDetails({
+        provider: paymentTransaction.provider,
+
+        providerPaymentId: paymentTransaction.providerReference.paymentId,
+
+        providerOrderId: paymentTransaction.providerReference.orderId,
+
+        amount: paymentTransaction.amount,
+
+        currency: paymentTransaction.currency,
+      });
+
+      const alreadyAudited =
+        paymentTransaction.reconciliation?.status ===
+          PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW &&
+        paymentTransaction.reconciliation?.reason ===
+          LATE_CAPTURE_AFTER_ORDER_PAID_REASON;
+
+      let auditedPaymentTransaction = paymentTransaction;
+
+      if (!alreadyAudited) {
+        auditedPaymentTransaction =
+          (await recordPaymentReconciliationManualReview(
+            paymentTransaction._id,
+
+            {
+              reason: LATE_CAPTURE_AFTER_ORDER_PAID_REASON,
+
+              attemptedAt: new Date(),
+            },
+          )) ?? paymentTransaction;
+      }
+
+      return {
+        confirmationAction: confirmation.action,
+
+        synchronizationAction: "late-capture-manual-review",
+
+        finalizationAction: null,
+
+        providerPayment,
+
+        paymentTransaction: auditedPaymentTransaction,
+
+        order: null,
+      };
+    }
+  }
+
+  /*
+|--------------------------------------------------------------------------
 | Cancelled Payment Browser Return
 |--------------------------------------------------------------------------
 */
@@ -2790,6 +3274,27 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
     PAYMENT_TRANSACTION_STATUSES.CANCELLED
   ) {
     return processCancelledPaymentBrowserReturn({
+      orderId,
+
+      paymentTransactionId,
+
+      customerId,
+
+      confirmation,
+    });
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Failed Payment Browser Return
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    confirmation.paymentTransaction.status ===
+    PAYMENT_TRANSACTION_STATUSES.FAILED
+  ) {
+    return processFailedPaymentBrowserReturn({
       orderId,
 
       paymentTransactionId,

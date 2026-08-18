@@ -8133,6 +8133,55 @@ Inventory commit stays exactly 1
 
 But first we need to let the backend safely record the valid browser signature for that specific failed transaction.
 |--------------------------------------------------------------------------
+Part 207.15.2 — Handle Failed Payment Browser Return Safely
+
+I checked your latest payment.service.js. The current browser state gate still accepts pending, cancelled, and trusted authorized/paid, but not failed, so this is exactly the place to add the narrow exception.
+
+Resulting behavior
+Provider still says failed
+Payment #1 = failed
+browser returns
+provider current state = failed
+
+
+→ valid signature can be recorded
+→ Payment remains failed
+→ no Order change
+Old attempt captures after attempt #2 succeeds
+Attempt #1 = failed
+Attempt #2 = paid
+Order = confirmed
+
+
+Attempt #1 browser returns
+provider says captured
+        ↓
+Attempt #1 → paid
+        ↓
+manual-review
+reason =
+late-capture-after-order-paid
+
+
+Order.transactionId stays Attempt #2
+inventory unchanged
+Failed attempt captures but no retry succeeded
+Attempt #1 = failed
+Order still pending/reserved
+
+
+provider changes to captured
+browser returns
+        ↓
+Attempt #1 → paid
+        ↓
+no competing successful Payment
+        ↓
+existing atomic finalizer
+        ↓
+Order confirmed ✅
+
+And your existing generic FAILED confirmation rejection remains intact because a failed Payment needs trusted providerVerifiedAt and the already-attached same provider Payment ID before the exception activates.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
