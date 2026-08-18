@@ -175,6 +175,14 @@ const SORT_DIRECTION_VALUES = Object.freeze(["asc", "desc"]);
 
 /*
 |--------------------------------------------------------------------------
+| Admin Order Reservation Expiry Values
+|--------------------------------------------------------------------------
+*/
+
+const ADMIN_ORDER_RESERVATION_EXPIRY_STATUS_VALUES = Object.freeze(["expired"]);
+
+/*
+|--------------------------------------------------------------------------
 | ObjectId Schema
 |--------------------------------------------------------------------------
 */
@@ -369,6 +377,12 @@ const adminOrderListQuerySchema = z
     inventoryStatus: z
       .enum(ORDER_INVENTORY_STATUS_VALUES, {
         error: "Invalid Order inventory status",
+      })
+      .optional(),
+
+    reservationExpiryStatus: z
+      .enum(ADMIN_ORDER_RESERVATION_EXPIRY_STATUS_VALUES, {
+        error: "Invalid Order reservation expiry status",
       })
       .optional(),
 

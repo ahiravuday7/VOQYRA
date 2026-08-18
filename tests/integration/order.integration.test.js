@@ -2,7 +2,7 @@ import env from "../../src/config/environment.js";
 
 import mongoose from "mongoose";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import request from "supertest";
 
@@ -2266,7 +2266,7 @@ const findProductVariant = (product, variantId) => {
   });
 };
 
-beforeEach(async () => {
+/* beforeEach(async () => {
   await Promise.all([
     Order.deleteMany({}),
 
@@ -2280,7 +2280,7 @@ beforeEach(async () => {
 
     Product.deleteMany({}),
   ]);
-});
+}); */
 
 describe("POST /api/v1/orders", () => {
   /*
