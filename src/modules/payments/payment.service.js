@@ -28,11 +28,17 @@ import {
   findPaymentTransactionById,
   findCustomerPaymentTransactionForConfirmation,
   recordVerifiedPaymentProviderConfirmation,
+  recordCancelledPaymentProviderConfirmation,
+  markCancelledPaymentTransactionLateCaptured,
+  recordPaymentReconciliationManualReview,
   markVerifiedPaymentTransactionAuthorized,
   markVerifiedPaymentTransactionPaid,
 } from "./payment.repository.js";
 
-import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
+import {
+  PAYMENT_TRANSACTION_STATUSES,
+  PAYMENT_RECONCILIATION_RECORD_STATUSES,
+} from "./payment.model.js";
 
 import {
   createPaymentProviderSession,
@@ -40,6 +46,11 @@ import {
   verifyPaymentProviderConfirmation,
   fetchAndVerifyPaymentProviderDetails,
 } from "./providers/payment-provider.service.js";
+
+import {
+  AUDIT_ACTOR_TYPES,
+  SYSTEM_AUDIT_ACTORS,
+} from "../../shared/constants/audit.constants.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -50,6 +61,41 @@ import {
 const PAYMENT_NUMBER_RANDOM_BYTES = 6;
 
 const MAX_PAYMENT_NUMBER_CREATE_ATTEMPTS = 5;
+
+/*
+|--------------------------------------------------------------------------
+| Exceptional Payment Reconciliation Reasons
+|--------------------------------------------------------------------------
+|
+| Keep these local for now.
+|
+| Do NOT import payment-reconciliation.service.js here because that service
+| already depends on payment.service.js for Order finalization.
+|
+| Importing it back here would create a circular service dependency.
+|--------------------------------------------------------------------------
+*/
+
+const LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON =
+  "late-capture-after-reservation-expired";
+
+const ORDER_STATE_CONFLICT_RECONCILIATION_REASON = "order-state-conflict";
+
+/*
+|--------------------------------------------------------------------------
+| Late Capture After Reservation Expiry Manual Review
+|--------------------------------------------------------------------------
+*/
+
+const isReservationExpiryLateCaptureManualReview = (paymentTransaction) => {
+  return (
+    paymentTransaction?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+    paymentTransaction?.reconciliation?.status ===
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW &&
+    paymentTransaction?.reconciliation?.reason ===
+      LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -99,6 +145,33 @@ const isDuplicateOrderAttemptError = (error) => {
     (Object.hasOwn(keyValue, "order") &&
       Object.hasOwn(keyValue, "attemptNumber"))
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Was Order Automatically Expired?
+|--------------------------------------------------------------------------
+*/
+
+const wasOrderAutomaticallyExpired = (order) => {
+  if (!order) {
+    return false;
+  }
+
+  if (
+    order.status !== ORDER_STATUSES.CANCELLED ||
+    order.inventoryStatus !== ORDER_INVENTORY_STATUSES.RELEASED
+  ) {
+    return false;
+  }
+
+  return (order.statusHistory ?? []).some((entry) => {
+    return (
+      entry.status === ORDER_STATUSES.CANCELLED &&
+      entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+      entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY
+    );
+  });
 };
 
 /*
@@ -1585,6 +1658,25 @@ export const confirmCustomerRazorpayPayment = async ({
 
   const browserConfirmationStateIsValid =
     paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.PENDING ||
+    /*
+  |--------------------------------------------------------------------------
+  | Expired Reservation Browser Return
+  |--------------------------------------------------------------------------
+  |
+  | We allow signature verification for CANCELLED, but use a dedicated
+  | persistence function below.
+  |
+  | This does NOT mean cancelled Payments can use the normal state machine.
+  |--------------------------------------------------------------------------
+  */
+
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED ||
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Won The Race
+  |--------------------------------------------------------------------------
+  */
+
     (paymentTransaction.providerVerifiedAt &&
       [
         PAYMENT_TRANSACTION_STATUSES.AUTHORIZED,
@@ -1633,26 +1725,36 @@ export const confirmCustomerRazorpayPayment = async ({
 
   const verifiedAt = new Date();
 
-  const updatedPaymentTransaction =
-    await recordVerifiedPaymentProviderConfirmation(
-      paymentTransaction._id,
+  /*
+|--------------------------------------------------------------------------
+| Choose Safe Confirmation Persistence
+|--------------------------------------------------------------------------
+*/
 
-      {
-        orderId,
+  const recordConfirmation =
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED
+      ? recordCancelledPaymentProviderConfirmation
+      : recordVerifiedPaymentProviderConfirmation;
 
-        customerId,
+  const updatedPaymentTransaction = await recordConfirmation(
+    paymentTransaction._id,
 
-        provider: paymentTransaction.provider,
+    {
+      orderId,
 
-        providerOrderId: storedProviderOrderId,
+      customerId,
 
-        providerPaymentId: razorpayPaymentId,
+      provider: paymentTransaction.provider,
 
-        signature: razorpaySignature,
+      providerOrderId: storedProviderOrderId,
 
-        verifiedAt,
-      },
-    );
+      providerPaymentId: razorpayPaymentId,
+
+      signature: razorpaySignature,
+
+      verifiedAt,
+    },
+  );
 
   if (updatedPaymentTransaction) {
     return {
@@ -2178,6 +2280,228 @@ export const finalizeCapturedCustomerOnlineOrder = async ({
 
 /*
 |--------------------------------------------------------------------------
+| Process Cancelled Payment Browser Return
+|--------------------------------------------------------------------------
+|
+| The Payment was cancelled locally because the Order reservation was no
+| longer usable.
+|
+| The browser may still return after Razorpay processing completes.
+|--------------------------------------------------------------------------
+*/
+
+const processCancelledPaymentBrowserReturn = async ({
+  orderId,
+
+  paymentTransactionId,
+
+  customerId,
+
+  confirmation,
+}) => {
+  const paymentTransaction = confirmation.paymentTransaction;
+
+  const providerOrderId = paymentTransaction.providerReference?.orderId;
+
+  const providerPaymentId = paymentTransaction.providerReference?.paymentId;
+
+  if (!providerOrderId) {
+    throw createPaymentProviderOrderMissingError();
+  }
+
+  if (!providerPaymentId) {
+    throw createPaymentProviderPaymentMissingError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Fetch CURRENT Provider Truth
+    |--------------------------------------------------------------------------
+    |
+    | Browser signature proves identity.
+    |
+    | Razorpay's current API state proves whether money was actually captured.
+    |--------------------------------------------------------------------------
+    */
+
+  const providerPayment = await fetchAndVerifyPaymentProviderDetails({
+    provider: paymentTransaction.provider,
+
+    providerPaymentId,
+
+    providerOrderId,
+
+    amount: paymentTransaction.amount,
+
+    currency: paymentTransaction.currency,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | Not Captured
+    |--------------------------------------------------------------------------
+    |
+    | Keep the local cancellation.
+    |
+    | Never resurrect inventory for:
+    |
+    | created
+    | authorized
+    | failed
+    |
+    | after the reservation has already expired.
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    providerPayment.status !== "captured" ||
+    providerPayment.captured !== true
+  ) {
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "preserve-cancelled",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction,
+
+      order: null,
+    };
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Provider Says Money Was Captured
+    |--------------------------------------------------------------------------
+    */
+
+  const observedAt = new Date();
+
+  let lateCapturedPayment = await markCancelledPaymentTransactionLateCaptured(
+    paymentTransaction._id,
+
+    {
+      orderId,
+
+      customerId,
+
+      provider: paymentTransaction.provider,
+
+      providerOrderId,
+
+      providerPaymentId,
+
+      paidAt: observedAt,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Concurrent Webhook Resolution
+    |--------------------------------------------------------------------------
+    |
+    | A webhook may have converted:
+    |
+    | cancelled → paid
+    |
+    | between our read and update.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!lateCapturedPayment) {
+    const currentPaymentTransaction =
+      await findCustomerPaymentTransactionForConfirmation(
+        paymentTransactionId,
+
+        orderId,
+
+        customerId,
+      );
+
+    const alreadyLateCaptured =
+      currentPaymentTransaction?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+      currentPaymentTransaction?.providerReference?.paymentId ===
+        providerPaymentId;
+
+    if (!alreadyLateCaptured) {
+      throw createPaymentProviderSynchronizationConflictError();
+    }
+
+    lateCapturedPayment = currentPaymentTransaction;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Determine Why The Order Was Cancelled
+    |--------------------------------------------------------------------------
+    */
+
+  const order = await findCustomerOrderById(
+    orderId,
+
+    customerId,
+  );
+
+  const reconciliationReason = wasOrderAutomaticallyExpired(order)
+    ? LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON
+    : ORDER_STATE_CONFLICT_RECONCILIATION_REASON;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Durable Manual Review
+    |--------------------------------------------------------------------------
+    |
+    | Payment truth = PAID.
+    |
+    | Order fulfillment truth = reservation is no longer safely available.
+    |--------------------------------------------------------------------------
+    */
+
+  const auditedPaymentTransaction =
+    await recordPaymentReconciliationManualReview(
+      lateCapturedPayment._id,
+
+      {
+        reason: reconciliationReason,
+
+        attemptedAt: observedAt,
+      },
+    );
+
+  /*
+    |--------------------------------------------------------------------------
+    | CRITICAL
+    |--------------------------------------------------------------------------
+    |
+    | Do NOT call finalizeCapturedCustomerOnlineOrder().
+    |
+    | Returning order: null is also intentional:
+    |
+    | the controller uses a non-null Order to indicate successful Order
+    | finalization.
+    |--------------------------------------------------------------------------
+    */
+
+  return {
+    confirmationAction: confirmation.action,
+
+    synchronizationAction: "late-capture-manual-review",
+
+    finalizationAction: null,
+
+    providerPayment,
+
+    paymentTransaction: auditedPaymentTransaction ?? lateCapturedPayment,
+
+    order: null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Process Customer Razorpay Payment Confirmation
 |--------------------------------------------------------------------------
 |
@@ -2229,6 +2553,72 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
 
     razorpaySignature,
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Already Known Expiry Late Capture
+|--------------------------------------------------------------------------
+|
+| A previous webhook/browser callback may already have recorded:
+|
+| paid + manual-review + late-capture-after-reservation-expired
+|
+| Never feed that Payment back into normal Order finalization.
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    isReservationExpiryLateCaptureManualReview(confirmation.paymentTransaction)
+  ) {
+    const paymentTransaction = confirmation.paymentTransaction;
+
+    const providerPayment = await fetchAndVerifyPaymentProviderDetails({
+      provider: paymentTransaction.provider,
+
+      providerPaymentId: paymentTransaction.providerReference.paymentId,
+
+      providerOrderId: paymentTransaction.providerReference.orderId,
+
+      amount: paymentTransaction.amount,
+
+      currency: paymentTransaction.currency,
+    });
+
+    return {
+      confirmationAction: confirmation.action,
+
+      synchronizationAction: "late-capture-manual-review",
+
+      finalizationAction: null,
+
+      providerPayment,
+
+      paymentTransaction,
+
+      order: null,
+    };
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Cancelled Payment Browser Return
+|--------------------------------------------------------------------------
+*/
+
+  if (
+    confirmation.paymentTransaction.status ===
+    PAYMENT_TRANSACTION_STATUSES.CANCELLED
+  ) {
+    return processCancelledPaymentBrowserReturn({
+      orderId,
+
+      paymentTransactionId,
+
+      customerId,
+
+      confirmation,
+    });
+  }
 
   /*
     |--------------------------------------------------------------------------

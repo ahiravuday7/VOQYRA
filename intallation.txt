@@ -7793,6 +7793,115 @@ captured?
    ├─ YES → cancelled → paid + manual-review
    └─ NO  → remain cancelled
 |--------------------------------------------------------------------------
+Part 207.13.2 — Handle Browser Confirmation After Reservation Expiry
+
+Now we protect the browser-return path.
+
+Your existing confirmation fixture already gives us the exact pieces we need—a real online Order, Razorpay provider Order ID, provider Payment ID, and valid deterministic signature—so we can keep using the normal confirmation endpoint rather than building a separate recovery API.
+
+The required flow is:
+
+Order expired
+PaymentTransaction = cancelled
+inventory = released
+
+
+        ↓ browser returns
+
+
+verify Razorpay signature
+        ↓
+fetch CURRENT Razorpay state
+        ↓
+captured?
+   │
+   ├── NO
+   │    keep Payment cancelled
+   │    keep Order cancelled
+   │
+   └── YES
+        Payment cancelled → paid
+        reconciliation = manual-review
+        Order stays cancelled
+        inventory stays released
+
+The resulting architecture
+Normal successful payment
+pending
+  ↓
+browser signature
+  ↓
+provider captured
+  ↓
+paid
+  ↓
+Order confirmed
+  ↓
+inventory committed
+Expired Order + browser returns late
+Order cancelled
+inventory released
+Payment cancelled
+       ↓
+valid browser signature
+       ↓
+verify identity
+       ↓
+fetch Razorpay CURRENT state
+       ↓
+captured
+       ↓
+Payment = paid
+manual-review
+       ↓
+STOP
+
+There is no path from this branch to:
+
+finalizeCapturedCustomerOnlineOrder()
+
+That is the key safety property.
+
+What if Razorpay is not captured?
+
+For example:
+
+Payment locally = cancelled
+Razorpay = authorized
+
+we return:
+
+synchronizationAction =
+  preserve-cancelled
+
+and keep:
+
+PaymentTransaction = cancelled
+Order = cancelled
+inventory = released
+
+We don't reserve stock again just because the provider still has an authorization.
+
+What if the customer refreshes the success page?
+
+First request:
+
+confirmationAction = verify
+provider = captured
+Payment = paid
+manual-review
+
+Second request:
+
+confirmationAction = reuse
+Payment already =
+  paid + manual-review
+       ↓
+special guard
+       ↓
+NO Order finalizer
+
+So browser retries remain safe. ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
