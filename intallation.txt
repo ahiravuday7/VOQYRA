@@ -6934,6 +6934,7 @@ C → recovered ✅
 
 It does not stop at Payment B.
 |--------------------------------------------------------------------------
+Part 206.7.1 — Unit Tests for Payment Reconciliation Batch Processor
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 Part 206.1 — Define Recoverable Payment/Order States
