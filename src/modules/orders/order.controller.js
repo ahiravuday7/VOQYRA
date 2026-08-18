@@ -227,6 +227,8 @@ export const getAdminOrdersController = async (request, response) => {
         paymentMethod: filters.paymentMethod ?? null,
 
         inventoryStatus: filters.inventoryStatus ?? null,
+
+        reservationExpiryStatus: filters.reservationExpiryStatus ?? null,
       },
     },
     "Admin Orders retrieved",
@@ -254,6 +256,8 @@ export const getAdminOrdersController = async (request, response) => {
         paymentMethod: filters.paymentMethod ?? null,
 
         inventoryStatus: filters.inventoryStatus ?? null,
+
+        reservationExpiryStatus: filters.reservationExpiryStatus ?? null,
 
         dateFrom: filters.dateFrom ?? null,
 

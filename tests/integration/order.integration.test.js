@@ -5123,6 +5123,8 @@ describe("GET /api/v1/admin/orders", () => {
 
     expect(response.status).toBe(200);
 
+    expect(response.body.data.filters.reservationExpiryStatus).toBe("expired");
+
     expect(response.body.data.orders).toHaveLength(1);
 
     expect(response.body.data.pagination.totalItems).toBe(1);
