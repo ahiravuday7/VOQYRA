@@ -7696,6 +7696,29 @@ reservedStock = remains released
 
 That is exactly what we want. The backend acknowledges the customer was charged, while refusing to silently sell inventory that is no longer reserved.
 |--------------------------------------------------------------------------
+Part 207.10 — Paid Payment Must Block Expiry Until Reconciliation Finalizes the Order
+
+This connects Part 204 + Part 206 + Part 207.
+
+We test this exact timing:
+
+Payment captured ✅
+PaymentTransaction = paid
+
+
+BUT Order finalization has not happened yet
+        ↓
+reservation time expires
+        ↓
+expiry processor runs
+        ↓
+must NOT release inventory
+must NOT cancel Order
+        ↓
+reconciliation runs
+        ↓
+Order confirmed
+inventory committed exactly once ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

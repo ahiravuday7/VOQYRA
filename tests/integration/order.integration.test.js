@@ -36378,6 +36378,350 @@ describe("Online Payment and reservation-expiry race protection", () => {
 
     expect(storedPayment.status).toBe("cancelled");
   });
+
+  it("blocks reservation expiry when Payment is already paid and later allows reconciliation to finalize the Order", async () => {
+    const { agent: customerAgent, user: customer } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Is Captured But Order Is Not Yet Finalized
+  |--------------------------------------------------------------------------
+  |
+  | createCapturedOnlinePaymentFixture stops at:
+  |
+  | PaymentTransaction = paid
+  |
+  | Order:
+  |   status          = pending
+  |   payment.status  = pending
+  |   inventoryStatus = reserved
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createCapturedOnlinePaymentFixture({
+      customerAgent,
+
+      customerId: customer._id,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Verify Pre-Race State
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBefore = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBefore.status).toBe("paid");
+
+    expect(paymentBefore.paidAt).toBeInstanceOf(Date);
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reservation Time Passes Before Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    const now = new Date();
+
+    await Order.updateOne(
+      {
+        _id: fixture.order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(now.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry Processor Runs
+  |--------------------------------------------------------------------------
+  |
+  | PaymentTransaction = paid must block expiry BEFORE the reservation
+  | settlement version can be claimed.
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(
+      fixture.order.id,
+
+      {
+        now,
+      },
+    );
+
+    expect(expiryResult.action).toBe("skip");
+
+    expect(expiryResult.reason).toBe("payment-state-blocks-expiry");
+
+    expect(expiryResult.paymentStatus).toBe("paid");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry Must Not Cancel Or Release Anything
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterExpiryAttempt = await Order.findById(
+      fixture.order.id,
+    ).lean();
+
+    expect(orderAfterExpiryAttempt.status).toBe("pending");
+
+    expect(orderAfterExpiryAttempt.payment.status).toBe("pending");
+
+    expect(orderAfterExpiryAttempt.inventoryStatus).toBe("reserved");
+
+    /*
+     * Payment blocking happens before the expiry CAS claim.
+     */
+    expect(orderAfterExpiryAttempt.inventoryReservationVersion).toBe(
+      orderBefore.inventoryReservationVersion,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Still Be Reserved
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterExpiryAttempt = await Product.findById(
+      product._id,
+    ).lean();
+
+    const variantAfterExpiryAttempt = findProductVariant(
+      productAfterExpiryAttempt,
+
+      variant._id,
+    );
+
+    expect(variantAfterExpiryAttempt.inventory.stock).toBe(
+      variantBefore.inventory.stock,
+    );
+
+    expect(variantAfterExpiryAttempt.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Expiry Release Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiryAttempt.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Commit Yet Either
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiryAttempt.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Catches Up
+  |--------------------------------------------------------------------------
+  */
+
+    const reconciliationResult = await reconcilePaidPaymentTransaction(
+      fixture.payment.id,
+    );
+
+    expect(reconciliationResult.action).toBe(
+      PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+    );
+
+    expect(reconciliationResult.classification.state).toBe(
+      PAYMENT_RECONCILIATION_STATES.RECOVERABLE,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Is Now Correctly Finalized
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("confirmed");
+
+    expect(finalOrder.payment.status).toBe("paid");
+
+    expect(finalOrder.payment.transactionId).toBe(fixture.providerPaymentId);
+
+    expect(finalOrder.inventoryStatus).toBe("committed");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Confirmed Transition
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Was Committed Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const productFinal = await Product.findById(product._id).lean();
+
+    const variantFinal = findProductVariant(
+      productFinal,
+
+      variant._id,
+    );
+
+    expect(variantFinal.inventory.stock).toBe(
+      variantBefore.inventory.stock - quantity,
+    );
+
+    expect(variantFinal.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Release + Exactly One Commit
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Reconciliation Audit
+  |--------------------------------------------------------------------------
+  */
+
+    const finalPayment = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(finalPayment.status).toBe("paid");
+
+    expect(finalPayment.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+    );
+
+    expect(finalPayment.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.ORDER_REQUIRES_FINALIZATION,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry Must Remain Idempotently Blocked After Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    const secondExpiryResult = await expireOnlineOrderInventoryReservation(
+      fixture.order.id,
+
+      {
+        now: new Date(now.getTime() + 60_000),
+      },
+    );
+
+    expect(secondExpiryResult.action).toBe("skip");
+
+    expect(secondExpiryResult.reason).toBe("order-not-expirable");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Settlement Counts Must Still Be Stable
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+  });
 });
 
 /*
