@@ -33368,6 +33368,367 @@ describe("Razorpay Payment webhook processing", () => {
     expect(storedWebhook.processingAttempts).toBe(1);
   });
 
+  it("reuses an already failed Payment when another failed webhook arrives without changing the Order reservation", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Online Order
+  |--------------------------------------------------------------------------
+  */
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Start Payment Attempt
+  |--------------------------------------------------------------------------
+  */
+
+    const initiation = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiation.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_part207_failed_${new mongoose.Types.ObjectId()}`;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Current Razorpay Truth = Failed
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture Reservation Before Failure Processing
+  |--------------------------------------------------------------------------
+  */
+
+    const orderBefore = await Order.findById(order.id).lean();
+
+    expect(orderBefore.status).toBe("pending");
+
+    expect(orderBefore.payment.status).toBe("pending");
+
+    expect(orderBefore.inventoryStatus).toBe("reserved");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(variantBefore.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Failed Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const firstEventId = "evt_part207_failed_first";
+
+    const firstWebhook = await sendPaymentWebhookFixture({
+      eventId: firstEventId,
+
+      eventType: "payment.failed",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    expect(firstWebhook.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Failure Processing
+  |--------------------------------------------------------------------------
+  */
+
+    const firstResult = await processNextPaymentWebhookEvent();
+
+    expect(firstResult.action).toBe("processed");
+
+    expect(firstResult.result.action).toBe("fail");
+
+    expect(firstResult.result.orderFinalization).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Is Now Failed
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterFirst = await PaymentTransaction.findById(
+      payment.id,
+    ).lean();
+
+    expect(paymentAfterFirst.status).toBe("failed");
+
+    expect(paymentAfterFirst.failure.code).toBe("PROVIDER_PAYMENT_FAILED");
+
+    expect(paymentAfterFirst.failure.reason).toBe("provider-reported-failed");
+
+    expect(paymentAfterFirst.failure.failedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterFirst.providerVerifiedAt).toBeInstanceOf(Date);
+
+    const originalFailedAt = paymentAfterFirst.failure.failedAt;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Reservation Must Remain Available
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterFirst = await Order.findById(order.id).lean();
+
+    expect(orderAfterFirst.status).toBe("pending");
+
+    expect(orderAfterFirst.payment.status).toBe("pending");
+
+    expect(orderAfterFirst.inventoryStatus).toBe("reserved");
+
+    expect(orderAfterFirst.inventoryReservationExpiresAt).toBeInstanceOf(Date);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Second Distinct Failed Webhook Arrives Later
+  |--------------------------------------------------------------------------
+  |
+  | IMPORTANT:
+  |
+  | Different event ID intentionally bypasses webhook-inbox deduplication
+  | so we exercise PaymentTransaction-level idempotency.
+  |--------------------------------------------------------------------------
+  */
+
+    const secondEventId = "evt_part207_failed_second";
+
+    const secondWebhook = await sendPaymentWebhookFixture({
+      eventId: secondEventId,
+
+      eventType: "payment.failed",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    expect(secondWebhook.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Second Processing Must Reuse Failed State
+  |--------------------------------------------------------------------------
+  */
+
+    const secondResult = await processNextPaymentWebhookEvent();
+
+    expect(secondResult.action).toBe("processed");
+
+    expect(secondResult.result.action).toBe("reuse-failed");
+
+    expect(secondResult.result.orderFinalization).toBeNull();
+
+    expect(secondResult.result.providerPayment.status).toBe("failed");
+
+    expect(secondResult.result.providerPayment.captured).toBe(false);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Failure Audit Must Not Be Rewritten
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterSecond = await PaymentTransaction.findById(
+      payment.id,
+    ).lean();
+
+    expect(paymentAfterSecond.status).toBe("failed");
+
+    expect(paymentAfterSecond.failure.failedAt).toEqual(originalFailedAt);
+
+    expect(paymentAfterSecond.failure.code).toBe("PROVIDER_PAYMENT_FAILED");
+
+    expect(paymentAfterSecond.failure.reason).toBe("provider-reported-failed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Still Pending + Reserved
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterSecond = await Order.findById(order.id).lean();
+
+    expect(orderAfterSecond.status).toBe("pending");
+
+    expect(orderAfterSecond.payment.status).toBe("pending");
+
+    expect(orderAfterSecond.inventoryStatus).toBe("reserved");
+
+    expect(orderAfterSecond.inventoryReservationExpiresAt).toEqual(
+      orderAfterFirst.inventoryReservationExpiresAt,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Not Change
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterSecond = await Product.findById(product._id).lean();
+
+    const variantAfterSecond = findProductVariant(
+      productAfterSecond,
+
+      variant._id,
+    );
+
+    expect(variantAfterSecond.inventory.stock).toBe(
+      variantBefore.inventory.stock,
+    );
+
+    expect(variantAfterSecond.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Commit Or Release Settlement
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterSecond.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterSecond.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still One Local Payment Attempt
+  |--------------------------------------------------------------------------
+  |
+  | Receiving repeated failure notifications must not create another
+  | PaymentTransaction automatically.
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Both Distinct Webhook Events Are Consumed Once
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhooks = await PaymentWebhookEvent.find({
+      providerEventId: {
+        $in: [firstEventId, secondEventId],
+      },
+    })
+      .sort({
+        providerEventId: 1,
+      })
+      .lean();
+
+    expect(storedWebhooks).toHaveLength(2);
+
+    for (const storedWebhook of storedWebhooks) {
+      expect(storedWebhook.processingStatus).toBe("processed");
+
+      expect(storedWebhook.processingAttempts).toBe(1);
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Nothing Else Waiting
+  |--------------------------------------------------------------------------
+  */
+
+    const nextWorkerResult = await processNextPaymentWebhookEvent();
+
+    expect(nextWorkerResult.action).toBe("idle");
+  });
+
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook

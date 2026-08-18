@@ -7503,6 +7503,22 @@ local successful payment must NOT be downgraded
         ↓
 action = reuse-success ✅
 |--------------------------------------------------------------------------
+Part 207.6 — Repeated payment.failed Events Must Be Idempotent
+
+Now we protect this flow:
+
+payment.failed event A
+        ↓
+PaymentTransaction → failed
+Order stays pending
+Inventory stays reserved
+        ↓
+different payment.failed event B arrives later
+for the SAME provider payment
+        ↓
+Payment already failed
+        ↓
+reuse-failed ✅
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
