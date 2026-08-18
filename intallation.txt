@@ -7999,6 +7999,54 @@ attemptCount stays 1
 NO Order resurrection
 NO second inventory operation
 |--------------------------------------------------------------------------
+Part 207.14.1 — Fix Browser/Webhook Concurrency After Expiry
+
+Before adding the Part 207.14 integration test, we need one small production fix.
+
+Your normal confirmation tests already establish this concurrency pattern:
+
+two browser confirmations
+        ↓
+one = verify
+one = reuse
+
+rather than treating the loser as an error.
+
+We need the same principle when the competitors are:
+
+browser confirmation
+        +
+captured webhook
+
+after the Order has expired.
+
+Update only:
+
+src/modules/payments/payment.service.js
+The race we're fixing
+
+Starting state:
+
+Order = cancelled
+inventory = released
+Payment = cancelled
+
+Then:
+
+Browser                         Webhook
+   │                               │
+   ├─ verifies signature           ├─ verifies provider
+   │                               │
+   │                         cancelled → paid
+   │                         manual-review
+   │                               │
+   ├─ tries cancelled update       │
+   │        ↓                      │
+   │      loses                    │
+   │                               │
+   └─ must safely recognize webhook already won
+
+Without this protection, the browser can incorrectly return a 409 even though both channels describe the same legitimate Razorpay payment.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:

@@ -97,6 +97,16 @@ const isReservationExpiryLateCaptureManualReview = (paymentTransaction) => {
   );
 };
 
+const isPaidAfterLocalCancellation = (paymentTransaction) => {
+  return (
+    paymentTransaction?.status === PAYMENT_TRANSACTION_STATUSES.PAID &&
+    Boolean(paymentTransaction?.cancelledAt) &&
+    Boolean(
+      paymentTransaction?.verifiedAt || paymentTransaction?.providerVerifiedAt,
+    ) &&
+    Boolean(paymentTransaction?.providerReference?.paymentId)
+  );
+};
 /*
 |--------------------------------------------------------------------------
 | Mongo Duplicate Key
@@ -1785,12 +1795,21 @@ export const confirmCustomerRazorpayPayment = async ({
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Concurrent Retry Resolution
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Concurrent Confirmation Resolution
+|--------------------------------------------------------------------------
+|
+| Possible races:
+|
+| 1. Browser confirmation vs browser confirmation
+| 2. Browser confirmation vs captured webhook
+|
+| Both must converge safely when they refer to the exact same
+| Razorpay Payment.
+|--------------------------------------------------------------------------
+*/
 
-  const currentPaymentTransaction =
+  let currentPaymentTransaction =
     await findCustomerPaymentTransactionForConfirmation(
       paymentTransactionId,
 
@@ -1799,17 +1818,129 @@ export const confirmCustomerRazorpayPayment = async ({
       customerId,
     );
 
-  if (
-    currentPaymentTransaction?.verifiedAt &&
+  const sameProviderPayment =
     currentPaymentTransaction?.providerReference?.paymentId ===
-      razorpayPaymentId
-  ) {
+    razorpayPaymentId;
+
+  /*
+|--------------------------------------------------------------------------
+| Another Browser Already Verified It
+|--------------------------------------------------------------------------
+*/
+
+  if (currentPaymentTransaction?.verifiedAt && sameProviderPayment) {
     return {
       action: "reuse",
 
       paymentTransaction: currentPaymentTransaction,
     };
   }
+
+  /*
+|--------------------------------------------------------------------------
+| Webhook Won Expired-Payment Race
+|--------------------------------------------------------------------------
+|
+| Example:
+|
+| browser originally read:
+|
+| status = cancelled
+|
+| webhook then changed:
+|
+| cancelled → paid
+|
+| and recorded:
+|
+| providerVerifiedAt
+| reconciliation = manual-review
+|
+| Therefore the browser's conditional cancelled-state update loses.
+|--------------------------------------------------------------------------
+*/
+
+  const webhookResolvedSameLateCapture =
+    paymentTransaction.status === PAYMENT_TRANSACTION_STATUSES.CANCELLED &&
+    sameProviderPayment &&
+    currentPaymentTransaction?.providerVerifiedAt &&
+    isPaidAfterLocalCancellation(currentPaymentTransaction);
+
+  if (webhookResolvedSameLateCapture) {
+    /*
+  |--------------------------------------------------------------------------
+  | Persist Browser Verification Evidence
+  |--------------------------------------------------------------------------
+  |
+  | The browser signature has already been cryptographically verified above.
+  |
+  | The webhook has independently verified the same provider Payment.
+  |--------------------------------------------------------------------------
+  */
+
+    const browserVerifiedAfterWebhook =
+      await recordVerifiedPaymentProviderConfirmation(
+        currentPaymentTransaction._id,
+
+        {
+          orderId,
+
+          customerId,
+
+          provider: currentPaymentTransaction.provider,
+
+          providerOrderId: storedProviderOrderId,
+
+          providerPaymentId: razorpayPaymentId,
+
+          signature: razorpaySignature,
+
+          verifiedAt,
+        },
+      );
+
+    if (browserVerifiedAfterWebhook) {
+      return {
+        action: "verify",
+
+        paymentTransaction: browserVerifiedAfterWebhook,
+      };
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Another Browser May Have Won Meanwhile
+  |--------------------------------------------------------------------------
+  */
+
+    currentPaymentTransaction =
+      await findCustomerPaymentTransactionForConfirmation(
+        paymentTransactionId,
+
+        orderId,
+
+        customerId,
+      );
+
+    const browserVerificationNowExists =
+      currentPaymentTransaction?.verifiedAt &&
+      currentPaymentTransaction?.providerReference?.paymentId ===
+        razorpayPaymentId;
+
+    if (browserVerificationNowExists) {
+      return {
+        action: "reuse",
+
+        paymentTransaction: currentPaymentTransaction,
+      };
+    }
+  }
+
+  /*
+|--------------------------------------------------------------------------
+| Genuine Confirmation Conflict
+|--------------------------------------------------------------------------
+*/
 
   throw createPaymentConfirmationConflictError();
 };
@@ -2576,20 +2707,19 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
 
   /*
 |--------------------------------------------------------------------------
-| Already Known Expiry Late Capture
+| Paid After Local Cancellation
 |--------------------------------------------------------------------------
 |
-| A previous webhook/browser callback may already have recorded:
+| Covers both:
 |
-| paid + manual-review + late-capture-after-reservation-expired
+| 1. fully recorded late-capture manual review
+| 2. webhook changed cancelled → paid but manual-review write is still racing
 |
-| Never feed that Payment back into normal Order finalization.
+| NEVER send this state into normal Order finalization.
 |--------------------------------------------------------------------------
 */
 
-  if (
-    isReservationExpiryLateCaptureManualReview(confirmation.paymentTransaction)
-  ) {
+  if (isPaidAfterLocalCancellation(confirmation.paymentTransaction)) {
     const paymentTransaction = confirmation.paymentTransaction;
 
     const providerPayment = await fetchAndVerifyPaymentProviderDetails({
@@ -2604,6 +2734,36 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
       currency: paymentTransaction.currency,
     });
 
+    const order = await findCustomerOrderById(
+      orderId,
+
+      customerId,
+    );
+
+    const reconciliationReason = wasOrderAutomaticallyExpired(order)
+      ? LATE_CAPTURE_AFTER_RESERVATION_EXPIRED_REASON
+      : ORDER_STATE_CONFLICT_RECONCILIATION_REASON;
+
+    const alreadyAudited =
+      paymentTransaction.reconciliation?.status ===
+        PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW &&
+      paymentTransaction.reconciliation?.reason === reconciliationReason;
+
+    let auditedPaymentTransaction = paymentTransaction;
+
+    if (!alreadyAudited) {
+      auditedPaymentTransaction =
+        (await recordPaymentReconciliationManualReview(
+          paymentTransaction._id,
+
+          {
+            reason: reconciliationReason,
+
+            attemptedAt: new Date(),
+          },
+        )) ?? paymentTransaction;
+    }
+
     return {
       confirmationAction: confirmation.action,
 
@@ -2613,7 +2773,7 @@ export const processCustomerRazorpayPaymentConfirmation = async ({
 
       providerPayment,
 
-      paymentTransaction,
+      paymentTransaction: auditedPaymentTransaction,
 
       order: null,
     };
