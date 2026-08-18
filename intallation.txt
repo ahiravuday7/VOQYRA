@@ -8093,6 +8093,45 @@ Ledger
 ├─ release = 1
 └─ commit = 0
 |--------------------------------------------------------------------------
+Part 207.15.1 — Safely Record Browser Verification for a Previously Failed Payment
+
+Your latest payment.service.js still correctly excludes a normal FAILED transaction from browser confirmation, while your existing integration test explicitly checks that a generic failed Payment returns PAYMENT_CONFIRMATION_STATE_INVALID. We should preserve that protection.
+
+The new exceptional scenario is:
+
+Attempt #1
+provider previously reported failed
+        ↓
+PaymentTransaction = failed
+        ↓
+customer retries
+
+
+Attempt #2
+        ↓
+paid
+        ↓
+Order confirmed
+
+
+LATER...
+
+
+browser callback for Attempt #1 arrives
+        ↓
+same Razorpay Payment
+current Razorpay truth = captured
+
+We eventually want:
+
+Attempt #1 = paid + manual-review
+Attempt #2 = paid
+
+
+Order stays attached to Attempt #2
+Inventory commit stays exactly 1
+
+But first we need to let the backend safely record the valid browser signature for that specific failed transaction.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

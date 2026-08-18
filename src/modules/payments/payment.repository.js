@@ -1017,6 +1017,138 @@ export const recordCancelledPaymentProviderConfirmation = (
 
 /*
 |--------------------------------------------------------------------------
+| Record Failed Payment Provider Confirmation
+|--------------------------------------------------------------------------
+|
+| Exceptional Part 207 browser-return path.
+|
+| A provider Payment may originally have been reported as failed and later
+| be reported as captured.
+|
+| This operation records only cryptographically verified browser evidence:
+|
+| - provider Payment ID
+| - Razorpay signature
+| - verifiedAt
+|
+| IMPORTANT:
+|
+| It does NOT:
+|
+| - change failed → paid
+| - finalize the Order
+| - change Order.payment
+| - reserve inventory
+| - commit inventory
+|--------------------------------------------------------------------------
+*/
+
+export const recordFailedPaymentProviderConfirmation = (
+  paymentTransactionId,
+
+  {
+    orderId,
+
+    customerId,
+
+    provider,
+
+    providerOrderId,
+
+    providerPaymentId,
+
+    signature,
+
+    verifiedAt,
+  },
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      order: orderId,
+
+      customer: customerId,
+
+      provider,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exceptional State Only
+        |--------------------------------------------------------------------------
+        */
+
+      status: PAYMENT_TRANSACTION_STATUSES.FAILED,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Exact Stored Provider Order
+        |--------------------------------------------------------------------------
+        */
+
+      "providerReference.orderId": providerOrderId,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Do Not Overwrite Existing Browser Verification
+        |--------------------------------------------------------------------------
+        */
+
+      verifiedAt: null,
+
+      /*
+        |--------------------------------------------------------------------------
+        | Provider Payment May Already Have Been Attached By Failure Webhook
+        |--------------------------------------------------------------------------
+        */
+
+      $or: [
+        {
+          "providerReference.paymentId": null,
+        },
+
+        {
+          "providerReference.paymentId": {
+            $exists: false,
+          },
+        },
+
+        {
+          "providerReference.paymentId": providerPaymentId,
+        },
+      ],
+    },
+
+    {
+      $set: {
+        "providerReference.paymentId": providerPaymentId,
+
+        "providerReference.signature": signature,
+
+        verifiedAt,
+      },
+    },
+
+    {
+      new: true,
+
+      runValidators: true,
+    },
+  )
+    .select("+providerReference.signature")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Mark Verified Payment Transaction Authorized
 |--------------------------------------------------------------------------
 |
