@@ -8185,6 +8185,7 @@ And your existing generic FAILED confirmation rejection remains intact because a
 |--------------------------------------------------------------------------
 Part 207.15.3 — Integration Test: Old Failed Attempt Returns Through Browser After Attempt #2 Succeeds
 |--------------------------------------------------------------------------
+Part 207.15.4 — Retry / Refresh Must Stay Idempotent
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

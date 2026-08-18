@@ -36771,6 +36771,194 @@ describe("Razorpay Payment webhook processing", () => {
     expect(payments[0].reconciliation.status).toBe(
       PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
     );
+
+    /*
+|--------------------------------------------------------------------------
+| Capture First Manual-Review Audit State
+|--------------------------------------------------------------------------
+*/
+
+    const firstLateCapturePayment =
+      await PaymentTransaction.findById(firstPaymentId).lean();
+
+    expect(firstLateCapturePayment.reconciliation.attemptCount).toBe(1);
+
+    const originalDetectedAt =
+      firstLateCapturePayment.reconciliation.detectedAt;
+
+    const originalLastAttemptedAt =
+      firstLateCapturePayment.reconciliation.lastAttemptedAt;
+
+    const originalPaidAt = firstLateCapturePayment.paidAt;
+
+    const originalVerifiedAt = firstLateCapturePayment.verifiedAt;
+
+    /*
+|--------------------------------------------------------------------------
+| Browser Refreshes The Same Old Payment Confirmation
+|--------------------------------------------------------------------------
+|
+| Same:
+|
+| - PaymentTransaction
+| - Razorpay Order ID
+| - Razorpay Payment ID
+| - signature
+|
+| This must be completely idempotent.
+|--------------------------------------------------------------------------
+*/
+
+    const retryResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+|--------------------------------------------------------------------------
+| Signature Confirmation Must Be Reused
+|--------------------------------------------------------------------------
+*/
+
+    expect(retryResponse.body.success).toBe(true);
+
+    expect(retryResponse.body.data.action).toBe("reuse");
+
+    expect(retryResponse.body.data.verified).toBe(true);
+
+    /*
+|--------------------------------------------------------------------------
+| Still Manual Review
+|--------------------------------------------------------------------------
+*/
+
+    expect(retryResponse.body.data.providerState.action).toBe(
+      "late-capture-manual-review",
+    );
+
+    expect(retryResponse.body.data.providerState.status).toBe("captured");
+
+    expect(retryResponse.body.data.providerState.captured).toBe(true);
+
+    /*
+|--------------------------------------------------------------------------
+| Absolutely No Second Finalization
+|--------------------------------------------------------------------------
+*/
+
+    expect(retryResponse.body.data.orderFinalization.action).toBeNull();
+
+    expect(retryResponse.body.data.orderFinalization.finalized).toBe(false);
+
+    expect(retryResponse.body.data.order).toBeNull();
+
+    /*
+|--------------------------------------------------------------------------
+| Reload Old Attempt
+|--------------------------------------------------------------------------
+*/
+
+    const firstPaymentAfterRetry =
+      await PaymentTransaction.findById(firstPaymentId).lean();
+
+    expect(firstPaymentAfterRetry.status).toBe("paid");
+
+    expect(firstPaymentAfterRetry.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(firstPaymentAfterRetry.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_ORDER_PAID,
+    );
+
+    /*
+|--------------------------------------------------------------------------
+| Manual-Review Audit Must NOT Increment
+|--------------------------------------------------------------------------
+|
+| Refreshing the browser is not a new financial incident.
+|--------------------------------------------------------------------------
+*/
+
+    expect(firstPaymentAfterRetry.reconciliation.attemptCount).toBe(1);
+
+    expect(firstPaymentAfterRetry.reconciliation.detectedAt).toEqual(
+      originalDetectedAt,
+    );
+
+    expect(firstPaymentAfterRetry.reconciliation.lastAttemptedAt).toEqual(
+      originalLastAttemptedAt,
+    );
+
+    expect(firstPaymentAfterRetry.paidAt).toEqual(originalPaidAt);
+
+    expect(firstPaymentAfterRetry.verifiedAt).toEqual(originalVerifiedAt);
+
+    /*
+|--------------------------------------------------------------------------
+| Order Must Still Belong To Attempt #2
+|--------------------------------------------------------------------------
+*/
+
+    const orderAfterRetry = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterRetry.status).toBe("confirmed");
+
+    expect(orderAfterRetry.payment.status).toBe("paid");
+
+    expect(orderAfterRetry.payment.transactionId).toBe(secondProviderPaymentId);
+
+    expect(orderAfterRetry.payment.transactionId).not.toBe(
+      firstProviderPaymentId,
+    );
+
+    expect(orderAfterRetry.inventoryStatus).toBe("committed");
+
+    /*
+|--------------------------------------------------------------------------
+| Still Exactly One Confirmed Transition
+|--------------------------------------------------------------------------
+*/
+
+    expect(
+      orderAfterRetry.statusHistory.filter(
+        (entry) => entry.status === "confirmed",
+      ),
+    ).toHaveLength(1);
+
+    /*
+|--------------------------------------------------------------------------
+| Inventory Must Still Be Settled Exactly Once
+|--------------------------------------------------------------------------
+*/
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterRetry.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterRetry.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(0);
+
+    /*
+|--------------------------------------------------------------------------
+| Still Exactly Two Payment Attempts
+|--------------------------------------------------------------------------
+*/
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(2);
   });
 
   /*
