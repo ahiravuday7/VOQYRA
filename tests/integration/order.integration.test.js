@@ -33032,6 +33032,341 @@ describe("Razorpay Payment webhook processing", () => {
 
     expect(storedWebhook.processingAttempts).toBe(1);
   });
+  it("preserves an already successful Payment when current provider lookup unexpectedly reports failed", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Prepare Browser Confirmation
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Provider Truth = Captured
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Successfully Finalizes The Order
+  |--------------------------------------------------------------------------
+  */
+
+    const confirmationResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(confirmationResponse.body.data.orderFinalization.action).toBe(
+      "finalize",
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture Successful State
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBefore = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBefore.status).toBe("paid");
+
+    expect(paymentBefore.paidAt).toBeInstanceOf(Date);
+
+    expect(paymentBefore.failure.failedAt).toBeNull();
+
+    const orderBefore = await Order.findById(fixture.order.id).lean();
+
+    expect(orderBefore.status).toBe("confirmed");
+
+    expect(orderBefore.payment.status).toBe("paid");
+
+    expect(orderBefore.inventoryStatus).toBe("committed");
+
+    const productBefore = await Product.findById(product._id).lean();
+
+    const variantBefore = findProductVariant(
+      productBefore,
+
+      variant._id,
+    );
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderBefore.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Provider Now Unexpectedly Reports Failed
+  |--------------------------------------------------------------------------
+  |
+  | This deliberately simulates contradictory provider state.
+  |
+  | Local trusted Payment history already says the customer successfully paid.
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Failed Webhook Arrives
+  |--------------------------------------------------------------------------
+  */
+
+    const eventId = "evt_part207_provider_failed_after_local_success";
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.failed",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "failed",
+
+      captured: false,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Process Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResult = await processNextPaymentWebhookEvent();
+
+    expect(webhookResult.action).toBe("processed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Critical Defensive Branch
+  |--------------------------------------------------------------------------
+  */
+
+    expect(webhookResult.result.action).toBe("reuse-success");
+
+    /*
+     * This time provider truth really does say failed.
+     *
+     * Unlike Part 207.4, we are specifically testing protection based on
+     * trusted local successful state.
+     */
+    expect(webhookResult.result.providerPayment.status).toBe("failed");
+
+    expect(webhookResult.result.providerPayment.captured).toBe(false);
+
+    /*
+     * No Order finalization should be attempted because the Order was
+     * already successfully finalized.
+     */
+    expect(webhookResult.result.orderFinalization).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Local Payment Must Stay Paid
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfter = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfter.status).toBe("paid");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Failure Metadata Must NOT Be Written
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfter.failure.code).toBeNull();
+
+    expect(paymentAfter.failure.message).toBeNull();
+
+    expect(paymentAfter.failure.reason).toBeNull();
+
+    expect(paymentAfter.failure.failedAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Original Paid Timestamp Must Remain Unchanged
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfter.paidAt).toEqual(paymentBefore.paidAt);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Provider Identity Must Remain Attached
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfter.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Provider Verification Is Durable
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfter.providerVerifiedAt).toBeInstanceOf(Date);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Must Stay Confirmed
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfter = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfter.status).toBe("confirmed");
+
+    expect(orderAfter.payment.status).toBe("paid");
+
+    expect(orderAfter.inventoryStatus).toBe("committed");
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Duplicate Order Transition
+  |--------------------------------------------------------------------------
+  */
+
+    const confirmedHistory = orderAfter.statusHistory.filter(
+      (entry) => entry.status === "confirmed",
+    );
+
+    expect(confirmedHistory).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Remain Untouched
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfter = await Product.findById(product._id).lean();
+
+    const variantAfter = findProductVariant(
+      productAfter,
+
+      variant._id,
+    );
+
+    expect(variantAfter.inventory.stock).toBe(variantBefore.inventory.stock);
+
+    expect(variantAfter.inventory.reservedStock).toBe(
+      variantBefore.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Commit Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfter.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Is Consumed, Not Retried Forever
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+  });
 
   /*
     |--------------------------------------------------------------------------

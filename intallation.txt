@@ -7482,6 +7482,26 @@ For this step, update only:
 
 tests/integration/order.integration.test.js
 |--------------------------------------------------------------------------
+Part 207.5 — Contradictory Provider Failure Must Not Downgrade Local Success
+
+This is different from Part 207.4.
+
+In 207.4, the webhook snapshot was stale but the current Razorpay API still returned captured.
+
+Now we test the stronger defensive case:
+
+Local PaymentTransaction = paid ✅
+Order = confirmed ✅
+Inventory = committed ✅
+
+
+BUT current provider lookup unexpectedly returns:
+status = failed
+captured = false
+        ↓
+local successful payment must NOT be downgraded
+        ↓
+action = reuse-success ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
