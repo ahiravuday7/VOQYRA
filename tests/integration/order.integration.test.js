@@ -5181,6 +5181,286 @@ describe("GET /api/v1/admin/orders", () => {
       ]),
     );
   });
+
+  it("composes reservation expiry observability with existing admin filters, sorting and pagination", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "EXPIRY-COMPOSITION-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 50,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 3,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Three Orders That Will Expire
+  |--------------------------------------------------------------------------
+  */
+
+    const firstExpiredOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      customerNote: "Expiry composition first",
+    });
+
+    const secondExpiredOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      customerNote: "Expiry composition second",
+    });
+
+    const thirdExpiredOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      customerNote: "Expiry composition third",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create An Active Online Order
+  |--------------------------------------------------------------------------
+  */
+
+    const activeOnlineOrder = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      customerNote: "Expiry composition active",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create A Normal Customer-Cancelled Order
+  |--------------------------------------------------------------------------
+  */
+
+    const customerCancelledOrder = await createCustomerOrderFixture({
+      customerAgent,
+
+      product,
+
+      customerNote: "Expiry composition customer cancellation",
+    });
+
+    await customerAgent
+      .post(`/api/v1/orders/${customerCancelledOrder.id}/cancel`)
+      .send({
+        reason: "Customer cancellation must not appear as automatic expiry.",
+      })
+      .expect(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expire The Three Online Orders
+  |--------------------------------------------------------------------------
+  */
+
+    const now = new Date();
+
+    const expiredReservationDate = new Date(now.getTime() - 60_000);
+
+    const expiredOrders = [
+      firstExpiredOrder,
+      secondExpiredOrder,
+      thirdExpiredOrder,
+    ];
+
+    for (const order of expiredOrders) {
+      await Order.updateOne(
+        {
+          _id: order.id,
+        },
+        {
+          $set: {
+            inventoryReservationExpiresAt: expiredReservationDate,
+          },
+        },
+      );
+
+      const result = await expireOnlineOrderInventoryReservation(order.id, {
+        now,
+      });
+
+      expect(result.action).toBe("expire");
+    }
+
+    /*
+  |--------------------------------------------------------------------------
+  | Determine Expected Order-Number Sorting
+  |--------------------------------------------------------------------------
+  */
+
+    const expectedExpiredOrders = [...expiredOrders].sort((left, right) => {
+      return left.orderNumber.localeCompare(right.orderNumber);
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Page 1
+  |--------------------------------------------------------------------------
+  */
+
+    const firstPage = await adminAgent.get("/api/v1/admin/orders").query({
+      reservationExpiryStatus: "expired",
+
+      status: "cancelled",
+
+      paymentStatus: "pending",
+
+      paymentMethod: "online",
+
+      inventoryStatus: "released",
+
+      sortBy: "orderNumber",
+
+      sortDirection: "asc",
+
+      page: 1,
+
+      limit: 2,
+    });
+
+    expect(firstPage.status).toBe(200);
+
+    expect(firstPage.body.data.filters.reservationExpiryStatus).toBe("expired");
+
+    expect(firstPage.body.data.filters.status).toBe("cancelled");
+
+    expect(firstPage.body.data.filters.paymentStatus).toBe("pending");
+
+    expect(firstPage.body.data.filters.paymentMethod).toBe("online");
+
+    expect(firstPage.body.data.filters.inventoryStatus).toBe("released");
+
+    expect(firstPage.body.data.orders).toHaveLength(2);
+
+    expect(firstPage.body.data.pagination).toEqual({
+      page: 1,
+
+      limit: 2,
+
+      totalItems: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: false,
+
+      hasNextPage: true,
+    });
+
+    expect(firstPage.body.data.orders.map((order) => order.id)).toEqual([
+      expectedExpiredOrders[0].id,
+      expectedExpiredOrders[1].id,
+    ]);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Page 2
+  |--------------------------------------------------------------------------
+  */
+
+    const secondPage = await adminAgent.get("/api/v1/admin/orders").query({
+      reservationExpiryStatus: "expired",
+
+      status: "cancelled",
+
+      paymentStatus: "pending",
+
+      paymentMethod: "online",
+
+      inventoryStatus: "released",
+
+      sortBy: "orderNumber",
+
+      sortDirection: "asc",
+
+      page: 2,
+
+      limit: 2,
+    });
+
+    expect(secondPage.status).toBe(200);
+
+    expect(secondPage.body.data.orders).toHaveLength(1);
+
+    expect(secondPage.body.data.orders[0].id).toBe(expectedExpiredOrders[2].id);
+
+    expect(secondPage.body.data.pagination).toEqual({
+      page: 2,
+
+      limit: 2,
+
+      totalItems: 3,
+
+      totalPages: 2,
+
+      hasPreviousPage: true,
+
+      hasNextPage: false,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Non-Expired Orders Must Never Leak Into Results
+  |--------------------------------------------------------------------------
+  */
+
+    const returnedOrderIds = [
+      ...firstPage.body.data.orders,
+      ...secondPage.body.data.orders,
+    ].map((order) => order.id);
+
+    expect(returnedOrderIds).not.toContain(activeOnlineOrder.id);
+
+    expect(returnedOrderIds).not.toContain(customerCancelledOrder.id);
+  });
 });
 
 /*
