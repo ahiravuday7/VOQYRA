@@ -6771,6 +6771,9 @@ must never automatically become confirmed.
 
 That could oversell inventory or resurrect a cancelled Order.
 |--------------------------------------------------------------------------
+Part 206.3 — Find Recoverable Payment Reconciliation Candidates
+
+Now we add the bounded MongoDB query that finds paid transactions whose Orders still need finalization.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -2,6 +2,15 @@ import PaymentTransaction, {
   PAYMENT_TRANSACTION_STATUSES,
 } from "./payment.model.js";
 
+import Order from "../orders/order.model.js";
+
+import {
+  ORDER_INVENTORY_STATUSES,
+  ORDER_PAYMENT_METHODS,
+  ORDER_PAYMENT_STATUSES,
+  ORDER_STATUSES,
+} from "../../shared/constants/order.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Active Payment Attempt Statuses
@@ -136,6 +145,210 @@ export const findSuccessfulPaymentTransactionForOrder = (
   }
 
   return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Recoverable Payment Reconciliation Candidates
+|--------------------------------------------------------------------------
+|
+| Finds the narrow Part 206 recovery condition:
+|
+| PaymentTransaction
+|   status = paid
+|   trusted verification exists
+|   provider references exist
+|
+| Order
+|   status = pending
+|   payment.method = online
+|   payment.status = pending
+|   inventoryStatus = reserved
+|
+| IMPORTANT:
+|
+| This function only identifies candidates.
+|
+| It does NOT:
+|
+| - finalize the Order
+| - commit inventory
+| - update PaymentTransaction
+| - change Order state
+|
+| Every candidate must still be revalidated immediately before recovery.
+|--------------------------------------------------------------------------
+*/
+
+export const findRecoverablePaymentReconciliationCandidates = ({
+  limit = 50,
+} = {}) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Bounded Query
+  |--------------------------------------------------------------------------
+  */
+
+  const safeLimit = Math.min(
+    Math.max(Number.isSafeInteger(limit) ? limit : 50, 1),
+    100,
+  );
+
+  return PaymentTransaction.aggregate([
+    /*
+    |--------------------------------------------------------------------------
+    | Trusted Paid Transactions
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $match: {
+        status: PAYMENT_TRANSACTION_STATUSES.PAID,
+
+        paidAt: {
+          $ne: null,
+        },
+
+        $or: [
+          {
+            verifiedAt: {
+              $ne: null,
+            },
+          },
+
+          {
+            providerVerifiedAt: {
+              $ne: null,
+            },
+          },
+        ],
+
+        "providerReference.orderId": {
+          $type: "string",
+
+          $ne: "",
+        },
+
+        "providerReference.paymentId": {
+          $type: "string",
+
+          $ne: "",
+        },
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Oldest Paid Candidate First
+    |--------------------------------------------------------------------------
+    |
+    | Existing payment_status_history index starts with status + createdAt.
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $sort: {
+        createdAt: 1,
+
+        _id: 1,
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Join The Related Order
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $lookup: {
+        from: Order.collection.name,
+
+        localField: "order",
+
+        foreignField: "_id",
+
+        as: "orderDocument",
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Payment Must Reference A Real Order
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $unwind: "$orderDocument",
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Order Still Requires Online-Payment Finalization
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $match: {
+        "orderDocument.status": ORDER_STATUSES.PENDING,
+
+        "orderDocument.payment.method": ORDER_PAYMENT_METHODS.ONLINE,
+
+        "orderDocument.payment.status": ORDER_PAYMENT_STATUSES.PENDING,
+
+        "orderDocument.inventoryStatus": ORDER_INVENTORY_STATUSES.RESERVED,
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Bound Every Worker Cycle
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $limit: safeLimit,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Candidate Metadata Only
+    |--------------------------------------------------------------------------
+    |
+    | The recovery service will load fresh documents again before mutation.
+    |--------------------------------------------------------------------------
+    */
+
+    {
+      $project: {
+        _id: 1,
+
+        paymentNumber: 1,
+
+        order: 1,
+
+        orderNumber: 1,
+
+        customer: 1,
+
+        provider: 1,
+
+        amount: 1,
+
+        currency: 1,
+
+        paidAt: 1,
+
+        createdAt: 1,
+
+        providerReference: {
+          orderId: "$providerReference.orderId",
+
+          paymentId: "$providerReference.paymentId",
+        },
+      },
+    },
+  ]);
 };
 
 /*
