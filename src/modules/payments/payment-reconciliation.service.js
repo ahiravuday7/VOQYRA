@@ -7,6 +7,12 @@ import {
 
 import { PAYMENT_TRANSACTION_STATUSES } from "./payment.model.js";
 
+import { findPaymentTransactionById } from "./payment.repository.js";
+
+import { findOrderById } from "../orders/order.repository.js";
+
+import { finalizeCapturedCustomerOnlineOrder } from "./payment.service.js";
+
 /*
 |--------------------------------------------------------------------------
 | Payment Reconciliation States
@@ -39,11 +45,31 @@ export const PAYMENT_RECONCILIATION_STATES = Object.freeze({
 
 /*
 |--------------------------------------------------------------------------
+| Payment Reconciliation Actions
+|--------------------------------------------------------------------------
+*/
+
+export const PAYMENT_RECONCILIATION_ACTIONS = Object.freeze({
+  RECOVERED: "recovered",
+
+  ALREADY_FINALIZED: "already-finalized",
+
+  MANUAL_REVIEW: "manual-review",
+
+  SKIPPED: "skipped",
+});
+
+/*
+|--------------------------------------------------------------------------
 | Payment Reconciliation Reasons
 |--------------------------------------------------------------------------
 */
 
 export const PAYMENT_RECONCILIATION_REASONS = Object.freeze({
+  PAYMENT_TRANSACTION_NOT_FOUND: "payment-transaction-not-found",
+
+  ORDER_NOT_FOUND: "order-not-found",
+
   PAYMENT_NOT_PAID: "payment-not-paid",
 
   PAYMENT_NOT_TRUSTED: "payment-not-trusted",
@@ -362,5 +388,250 @@ export const classifyPaymentOrderReconciliationState = ({
     state: PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW,
 
     reason: PAYMENT_RECONCILIATION_REASONS.ORDER_STATE_CONFLICT,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Reconcile Paid Payment Transaction
+|--------------------------------------------------------------------------
+|
+| Reconciles ONE local PaymentTransaction.
+|
+| Important:
+|
+| Candidate discovery is only an optimization.
+|
+| This service loads PaymentTransaction + Order again before making any
+| decision because their state may have changed after candidate discovery.
+|
+| Actual Order / inventory mutation is delegated to the existing atomic
+| online-payment finalizer.
+|--------------------------------------------------------------------------
+*/
+
+export const reconcilePaidPaymentTransaction = async (paymentTransactionId) => {
+  if (!paymentTransactionId) {
+    throw new Error("Payment transaction ID is required for reconciliation");
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Load Fresh PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+  const paymentTransaction =
+    await findPaymentTransactionById(paymentTransactionId);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Candidate May Have Disappeared
+  |--------------------------------------------------------------------------
+  |
+  | A worker should not crash merely because a stale candidate was deleted.
+  |--------------------------------------------------------------------------
+  */
+
+  if (!paymentTransaction) {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.SKIPPED,
+
+      classification: {
+        state: PAYMENT_RECONCILIATION_STATES.NOT_APPLICABLE,
+
+        reason: PAYMENT_RECONCILIATION_REASONS.PAYMENT_TRANSACTION_NOT_FOUND,
+      },
+
+      paymentTransaction: null,
+
+      order: null,
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Load Related Order
+  |--------------------------------------------------------------------------
+  |
+  | We deliberately load by Order ID first.
+  |
+  | Do NOT query by Order + customer here because the classifier must still
+  | be able to detect a customer mismatch as an unsafe state.
+  |--------------------------------------------------------------------------
+  */
+
+  const order = paymentTransaction.order
+    ? await findOrderById(paymentTransaction.order)
+    : null;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Paid Payment Without Local Order
+  |--------------------------------------------------------------------------
+  |
+  | This is NOT safe to auto-repair.
+  |
+  | A successful external payment may require refund / operational review.
+  |--------------------------------------------------------------------------
+  */
+
+  if (!order) {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.MANUAL_REVIEW,
+
+      classification: {
+        state: PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW,
+
+        reason: PAYMENT_RECONCILIATION_REASONS.ORDER_NOT_FOUND,
+      },
+
+      paymentTransaction,
+
+      order: null,
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Strict Fresh Classification
+  |--------------------------------------------------------------------------
+  */
+
+  const classification = classifyPaymentOrderReconciliationState({
+    order,
+
+    paymentTransaction,
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Not Applicable
+  |--------------------------------------------------------------------------
+  */
+
+  if (classification.state === PAYMENT_RECONCILIATION_STATES.NOT_APPLICABLE) {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.SKIPPED,
+
+      classification,
+
+      paymentTransaction,
+
+      order,
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Unsafe State
+  |--------------------------------------------------------------------------
+  |
+  | Examples:
+  |
+  | - paid Payment + cancelled Order
+  | - amount mismatch
+  | - currency mismatch
+  | - customer mismatch
+  | - untrusted Payment evidence
+  |
+  | Never mutate automatically.
+  |--------------------------------------------------------------------------
+  */
+
+  if (classification.state === PAYMENT_RECONCILIATION_STATES.MANUAL_REVIEW) {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.MANUAL_REVIEW,
+
+      classification,
+
+      paymentTransaction,
+
+      order,
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Already Finalized
+  |--------------------------------------------------------------------------
+  */
+
+  if (
+    classification.state === PAYMENT_RECONCILIATION_STATES.ALREADY_FINALIZED
+  ) {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+
+      classification,
+
+      paymentTransaction,
+
+      order,
+    };
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Recoverable Payment
+  |--------------------------------------------------------------------------
+  |
+  | At this point:
+  |
+  | PaymentTransaction:
+  |   paid + trusted
+  |
+  | Order:
+  |   pending
+  |   online
+  |   payment pending
+  |   inventory reserved
+  |
+  | IMPORTANT:
+  |
+  | We still do not directly update Order or Product inventory here.
+  |--------------------------------------------------------------------------
+  */
+
+  const finalization = await finalizeCapturedCustomerOnlineOrder({
+    orderId: order._id,
+
+    paymentTransactionId: paymentTransaction._id,
+
+    customerId: paymentTransaction.customer,
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Concurrent Finalization Can Produce Reuse
+  |--------------------------------------------------------------------------
+  |
+  | The existing finalizer is idempotent.
+  |
+  | Another request may have finalized the Order after our classification
+  | but before this call acquired its transaction state.
+  |--------------------------------------------------------------------------
+  */
+
+  if (finalization.action === "reuse") {
+    return {
+      action: PAYMENT_RECONCILIATION_ACTIONS.ALREADY_FINALIZED,
+
+      classification,
+
+      paymentTransaction: finalization.paymentTransaction,
+
+      order: finalization.order,
+    };
+  }
+
+  return {
+    action: PAYMENT_RECONCILIATION_ACTIONS.RECOVERED,
+
+    classification,
+
+    paymentTransaction: finalization.paymentTransaction,
+
+    order: finalization.order,
   };
 };

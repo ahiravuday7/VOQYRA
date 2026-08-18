@@ -6790,6 +6790,54 @@ paid but untrusted
 paid + cancelled/released Order
 → excluded ✅
 |--------------------------------------------------------------------------
+Part 206.4 — Single Paid-Payment Reconciliation Service
+
+Update only:
+
+src/modules/payments/payment-reconciliation.service.js
+
+We are not creating new inventory logic. This service will:
+
+load PaymentTransaction
+        ↓
+load Order
+        ↓
+classify current state
+        ↓
+recoverable?
+        ↓
+call existing atomic finalizer
+
+PaymentTransaction
+status = paid
+verified = true
+        │
+        ▼
+Order
+status = pending
+payment.status = pending
+inventory = reserved
+        │
+        ▼
+classification = recoverable
+        │
+        ▼
+finalizeCapturedCustomerOnlineOrder()
+        │
+        ├── Payment revalidated
+        ├── Order reloaded inside transaction
+        ├── reservation race guard claimed
+        ├── stock committed
+        ├── reservedStock reduced
+        ├── inventory ledger written
+        └── Order confirmed
+        │
+        ▼
+action = recovered ✅
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 Part 206.1 — Define Recoverable Payment/Order States
