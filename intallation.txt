@@ -8183,6 +8183,7 @@ Order confirmed ✅
 
 And your existing generic FAILED confirmation rejection remains intact because a failed Payment needs trusted providerVerifiedAt and the already-attached same provider Payment ID before the exception activates.
 |--------------------------------------------------------------------------
+Part 207.15.3 — Integration Test: Old Failed Attempt Returns Through Browser After Attempt #2 Succeeds
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
