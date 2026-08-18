@@ -35194,6 +35194,634 @@ describe("Razorpay Payment webhook processing", () => {
     expect(nextWorkerResult.action).toBe("idle");
   });
 
+  it("records a captured browser return for manual review after reservation expiry without resurrecting the Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Order + Razorpay Payment Attempt
+  |--------------------------------------------------------------------------
+  |
+  | Browser has NOT confirmed yet.
+  |
+  | PaymentTransaction = pending
+  | Order              = pending
+  | Inventory          = reserved
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Initial Inventory
+  |--------------------------------------------------------------------------
+  */
+
+    const productBeforeExpiry = await Product.findById(product._id).lean();
+
+    const variantBeforeExpiry = findProductVariant(
+      productBeforeExpiry,
+
+      variant._id,
+    );
+
+    expect(variantBeforeExpiry.inventory.reservedStock).toBe(quantity);
+
+    const initialStock = variantBeforeExpiry.inventory.stock;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Initial Payment
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentBeforeExpiry = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentBeforeExpiry.status).toBe("pending");
+
+    expect(paymentBeforeExpiry.verifiedAt).toBeNull();
+
+    expect(paymentBeforeExpiry.providerReference.paymentId).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force Reservation Expiry
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryNow = new Date();
+
+    await Order.updateOne(
+      {
+        _id: fixture.order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiryNow.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expire Order
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(
+      fixture.order.id,
+
+      {
+        now: expiryNow,
+      },
+    );
+
+    expect(expiryResult.action).toBe("expire");
+
+    expect(expiryResult.reason).toBe("reservation-expired");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Is Cancelled + Reservation Released
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterExpiry = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterExpiry.status).toBe("cancelled");
+
+    expect(orderAfterExpiry.inventoryStatus).toBe("released");
+
+    expect(orderAfterExpiry.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Was Cancelled Locally
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterExpiry = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterExpiry.status).toBe("cancelled");
+
+    expect(paymentAfterExpiry.cancelledAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterExpiry.verifiedAt).toBeNull();
+
+    const originalCancelledAt = paymentAfterExpiry.cancelledAt;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Was Released
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterExpiry = await Product.findById(product._id).lean();
+
+    const variantAfterExpiry = findProductVariant(
+      productAfterExpiry,
+
+      variant._id,
+    );
+
+    /*
+     * Expiry releases reservedStock.
+     *
+     * It does NOT consume physical stock.
+     */
+    expect(variantAfterExpiry.inventory.stock).toBe(initialStock);
+
+    expect(variantAfterExpiry.inventory.reservedStock).toBe(
+      variantBeforeExpiry.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Release, Zero Commit
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Verify Automatic Expiry Audit
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryHistory = orderAfterExpiry.statusHistory.filter(
+      (entry) =>
+        entry.status === "cancelled" &&
+        entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+        entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    expect(expiryHistory).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Razorpay Financial Truth Changes AFTER Expiry
+  |--------------------------------------------------------------------------
+  |
+  | The customer was actually charged.
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Returns With Valid Razorpay Confirmation
+  |--------------------------------------------------------------------------
+  */
+
+    const firstResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    expect(firstResponse.body.success).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Signature Was Verified
+  |--------------------------------------------------------------------------
+  */
+
+    expect(firstResponse.body.data.action).toBe("verify");
+
+    expect(firstResponse.body.data.verified).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Special Late-Capture Synchronization
+  |--------------------------------------------------------------------------
+  */
+
+    expect(firstResponse.body.data.providerState.action).toBe(
+      "late-capture-manual-review",
+    );
+
+    expect(firstResponse.body.data.providerState.status).toBe("captured");
+
+    expect(firstResponse.body.data.providerState.captured).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Absolutely No Order Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    expect(firstResponse.body.data.orderFinalization.action).toBeNull();
+
+    expect(firstResponse.body.data.orderFinalization.finalized).toBe(false);
+
+    expect(firstResponse.body.data.order).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Customer-Safe Payment Shows Financial Truth
+  |--------------------------------------------------------------------------
+  */
+
+    expect(firstResponse.body.data.payment.status).toBe("paid");
+
+    expect(firstResponse.body.data.payment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    /*
+     * Private Razorpay signature must never leave the backend.
+     */
+    expect(
+      firstResponse.body.data.payment.providerReference.signature,
+    ).toBeUndefined();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Stored Payment = Paid + Manual Review
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterBrowser = await PaymentTransaction.findById(
+      fixture.payment.id,
+    )
+      .select("+providerReference.signature")
+      .lean();
+
+    expect(paymentAfterBrowser.status).toBe("paid");
+
+    expect(paymentAfterBrowser.paidAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterBrowser.verifiedAt).toBeInstanceOf(Date);
+
+    /*
+     * Preserve historical evidence that our system previously cancelled it.
+     */
+    expect(paymentAfterBrowser.cancelledAt).toEqual(originalCancelledAt);
+
+    expect(paymentAfterBrowser.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(paymentAfterBrowser.providerReference.signature).toBe(
+      fixture.signature,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Durable Manual Review
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentAfterBrowser.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(paymentAfterBrowser.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_RESERVATION_EXPIRED,
+    );
+
+    expect(paymentAfterBrowser.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentAfterBrowser.reconciliation.detectedAt).toBeInstanceOf(Date);
+
+    expect(paymentAfterBrowser.reconciliation.lastAttemptedAt).toBeInstanceOf(
+      Date,
+    );
+
+    expect(paymentAfterBrowser.reconciliation.recoveredAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Save Idempotency Timestamps
+  |--------------------------------------------------------------------------
+  */
+
+    const firstVerifiedAt = paymentAfterBrowser.verifiedAt;
+
+    const firstPaidAt = paymentAfterBrowser.paidAt;
+
+    const firstDetectedAt = paymentAfterBrowser.reconciliation.detectedAt;
+
+    const firstLastAttemptedAt =
+      paymentAfterBrowser.reconciliation.lastAttemptedAt;
+
+    /*
+  |--------------------------------------------------------------------------
+  | CRITICAL — Order Must Remain Expired
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterBrowser = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterBrowser.status).toBe("cancelled");
+
+    expect(orderAfterBrowser.inventoryStatus).toBe("released");
+
+    expect(orderAfterBrowser.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+     * PaymentTransaction financial truth is paid,
+     * but the expired Order itself must NOT be converted back to paid.
+     */
+    expect(orderAfterBrowser.payment.status).not.toBe("paid");
+
+    expect(orderAfterBrowser.payment.transactionId).not.toBe(
+      fixture.providerPaymentId,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Confirmed History
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      orderAfterBrowser.statusHistory.filter(
+        (entry) => entry.status === "confirmed",
+      ),
+    ).toHaveLength(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expiry History Must Still Exist Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      orderAfterBrowser.statusHistory.filter(
+        (entry) =>
+          entry.status === "cancelled" &&
+          entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+          entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+      ),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Still Be Released
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterBrowser = await Product.findById(product._id).lean();
+
+    const variantAfterBrowser = findProductVariant(
+      productAfterBrowser,
+
+      variant._id,
+    );
+
+    expect(variantAfterBrowser.inventory.stock).toBe(
+      variantAfterExpiry.inventory.stock,
+    );
+
+    expect(variantAfterBrowser.inventory.reservedStock).toBe(
+      variantAfterExpiry.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Release = 1, Commit = 0
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterBrowser.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterBrowser.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Refresh / Duplicate Return
+  |--------------------------------------------------------------------------
+  |
+  | This proves Part 207.13.2.1.
+  |--------------------------------------------------------------------------
+  */
+
+    const secondResponse = await customerAgent
+      .post(fixture.confirmationUrl)
+      .send(fixture.confirmationBody)
+      .expect(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Signature Confirmation Is Reused
+  |--------------------------------------------------------------------------
+  */
+
+    expect(secondResponse.body.data.action).toBe("reuse");
+
+    expect(secondResponse.body.data.verified).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Special Manual-Review Path
+  |--------------------------------------------------------------------------
+  */
+
+    expect(secondResponse.body.data.providerState.action).toBe(
+      "late-capture-manual-review",
+    );
+
+    expect(secondResponse.body.data.providerState.status).toBe("captured");
+
+    expect(secondResponse.body.data.providerState.captured).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still No Finalization
+  |--------------------------------------------------------------------------
+  */
+
+    expect(secondResponse.body.data.orderFinalization.action).toBeNull();
+
+    expect(secondResponse.body.data.orderFinalization.finalized).toBe(false);
+
+    expect(secondResponse.body.data.order).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Audit Must NOT Increment On Browser Refresh
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterRetry = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterRetry.status).toBe("paid");
+
+    expect(paymentAfterRetry.cancelledAt).toEqual(originalCancelledAt);
+
+    expect(paymentAfterRetry.verifiedAt).toEqual(firstVerifiedAt);
+
+    expect(paymentAfterRetry.paidAt).toEqual(firstPaidAt);
+
+    expect(paymentAfterRetry.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(paymentAfterRetry.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_RESERVATION_EXPIRED,
+    );
+
+    /*
+     * Important:
+     *
+     * Browser refresh is idempotent.
+     *
+     * It must NOT create another reconciliation incident/attempt.
+     */
+    expect(paymentAfterRetry.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentAfterRetry.reconciliation.detectedAt).toEqual(
+      firstDetectedAt,
+    );
+
+    expect(paymentAfterRetry.reconciliation.lastAttemptedAt).toEqual(
+      firstLastAttemptedAt,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Order Still Cancelled
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("cancelled");
+
+    expect(finalOrder.inventoryStatus).toBe("released");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Inventory Still Unchanged
+  |--------------------------------------------------------------------------
+  */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(
+      finalProduct,
+
+      variant._id,
+    );
+
+    expect(finalVariant.inventory.stock).toBe(
+      variantAfterExpiry.inventory.stock,
+    );
+
+    expect(finalVariant.inventory.reservedStock).toBe(
+      variantAfterExpiry.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Settlement Ledger Invariants
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Payment Attempt
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+  });
+
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook

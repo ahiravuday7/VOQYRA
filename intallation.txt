@@ -7954,6 +7954,50 @@ no extra audit attempt
 no Order resurrection
 no inventory movement
 |--------------------------------------------------------------------------
+Part 207.13.3 — Integration Test: Browser Returns After Reservation Expiry
+
+Now we can test the complete browser path.
+
+Your current integration file already has everything required: the Razorpay confirmation fixture, expiry service, reconciliation constants, audit constants, and inventory models—so no new imports are needed. The existing confirmation response also maps confirmationAction → data.action, synchronizationAction → providerState.action, and finalizationAction → orderFinalization.action, which fits the Part 207.13.2 implementation.
+
+What this proves
+
+After the first late browser return:
+
+PaymentTransaction
+├── cancelled → paid
+├── verifiedAt = set
+├── paidAt = set
+├── cancelledAt = preserved
+└── reconciliation
+    ├── status = manual-review
+    └── reason =
+        late-capture-after-reservation-expired
+
+But fulfillment stays frozen:
+
+Order
+├── status = cancelled
+├── inventoryStatus = released
+└── confirmed transitions = 0
+
+
+Inventory Ledger
+├── release = 1
+└── commit = 0
+
+Then the same browser callback arrives again:
+
+/confirm #2
+    ↓
+confirmation = reuse
+    ↓
+manual-review safeguard reused
+    ↓
+attemptCount stays 1
+    ↓
+NO Order resurrection
+NO second inventory operation
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
