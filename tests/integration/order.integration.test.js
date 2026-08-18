@@ -34774,6 +34774,425 @@ describe("Razorpay Payment webhook processing", () => {
 
     expect(nextWorkerResult.action).toBe("idle");
   });
+  it("records a late captured Payment for manual review after reservation expiry without resurrecting the Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Online Order With Reserved Inventory
+  |--------------------------------------------------------------------------
+  */
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Start Razorpay Payment Attempt
+  |--------------------------------------------------------------------------
+  */
+
+    const initiationResponse = await customerAgent
+      .post(`/api/v1/orders/${order.id}/payments`)
+      .send({
+        provider: "razorpay",
+      })
+      .expect(201);
+
+    const payment = initiationResponse.body.data.payment;
+
+    const providerOrderId = payment.providerReference.orderId;
+
+    const providerPaymentId = `pay_part207_expired_late_capture_${new mongoose.Types.ObjectId()}`;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Capture Initial Inventory State
+  |--------------------------------------------------------------------------
+  */
+
+    const productBeforeExpiry = await Product.findById(product._id).lean();
+
+    const variantBeforeExpiry = findProductVariant(
+      productBeforeExpiry,
+
+      variant._id,
+    );
+
+    expect(variantBeforeExpiry.inventory.reservedStock).toBe(quantity);
+
+    const stockBeforeExpiry = variantBeforeExpiry.inventory.stock;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force Reservation Into The Past
+  |--------------------------------------------------------------------------
+  */
+
+    const expiredAt = new Date();
+
+    await Order.updateOne(
+      {
+        _id: order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiredAt.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expire Reservation
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(
+      order.id,
+
+      {
+        now: expiredAt,
+      },
+    );
+
+    expect(expiryResult.action).toBe("expire");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Order Is Now Cancelled + Released
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterExpiry = await Order.findById(order.id).lean();
+
+    expect(orderAfterExpiry.status).toBe("cancelled");
+
+    expect(orderAfterExpiry.inventoryStatus).toBe("released");
+
+    expect(orderAfterExpiry.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Attempt Was Cancelled Locally
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterExpiry = await PaymentTransaction.findById(
+      payment.id,
+    ).lean();
+
+    expect(paymentAfterExpiry.status).toBe("cancelled");
+
+    expect(paymentAfterExpiry.cancelledAt).toBeInstanceOf(Date);
+
+    const originalCancelledAt = paymentAfterExpiry.cancelledAt;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Reservation Was Released
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterExpiry = await Product.findById(product._id).lean();
+
+    const variantAfterExpiry = findProductVariant(
+      productAfterExpiry,
+
+      variant._id,
+    );
+
+    /*
+     * Reservation release does not consume physical stock.
+     */
+    expect(variantAfterExpiry.inventory.stock).toBe(stockBeforeExpiry);
+
+    expect(variantAfterExpiry.inventory.reservedStock).toBe(
+      variantBeforeExpiry.inventory.reservedStock - quantity,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Release Ledger
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    /*
+   |--------------------------------------------------------------------------
+   | No Commit Has Happened
+   |--------------------------------------------------------------------------
+   */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Razorpay Reports Capture AFTER Expiry
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    const eventId = "evt_part207_capture_after_reservation_expired";
+
+    const webhookResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId,
+
+      providerOrderId,
+
+      amount: payment.amount,
+
+      currency: payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(webhookResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Process Dangerous Late Capture
+  |--------------------------------------------------------------------------
+  */
+
+    const webhookResult = await processNextPaymentWebhookEvent();
+
+    expect(webhookResult.action).toBe("processed");
+
+    expect(webhookResult.result.action).toBe("late-capture-manual-review");
+
+    /*
+     * The expired Order must never enter the normal finalization path.
+     */
+    expect(webhookResult.result.orderFinalization).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Must Reflect Financial Truth
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentFinal = await PaymentTransaction.findById(payment.id).lean();
+
+    expect(paymentFinal.status).toBe("paid");
+
+    expect(paymentFinal.paidAt).toBeInstanceOf(Date);
+
+    /*
+     * Preserve evidence that our local system previously cancelled it.
+     */
+    expect(paymentFinal.cancelledAt).toEqual(originalCancelledAt);
+
+    expect(paymentFinal.providerReference.paymentId).toBe(providerPaymentId);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Manual Review Must Be Durable
+  |--------------------------------------------------------------------------
+  */
+
+    expect(paymentFinal.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(paymentFinal.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_RESERVATION_EXPIRED,
+    );
+
+    expect(paymentFinal.reconciliation.attemptCount).toBe(1);
+
+    expect(paymentFinal.reconciliation.detectedAt).toBeInstanceOf(Date);
+
+    expect(paymentFinal.reconciliation.lastAttemptedAt).toBeInstanceOf(Date);
+
+    expect(paymentFinal.reconciliation.recoveredAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | CRITICAL: Expired Order Must Stay Cancelled
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(order.id).lean();
+
+    expect(finalOrder.status).toBe("cancelled");
+
+    expect(finalOrder.inventoryStatus).toBe("released");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+     * The late Payment must not attach itself as the successful Order payment.
+     */
+    expect(finalOrder.payment.status).not.toBe("paid");
+
+    expect(finalOrder.payment.transactionId).not.toBe(providerPaymentId);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Automatic Expiry Audit Must Still Exist
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryHistoryEntries = finalOrder.statusHistory.filter(
+      (entry) =>
+        entry.status === "cancelled" &&
+        entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+        entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+    );
+
+    expect(expiryHistoryEntries).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Confirmed Transition May Appear
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Remain Released
+  |--------------------------------------------------------------------------
+  */
+
+    const productFinal = await Product.findById(product._id).lean();
+
+    const variantFinal = findProductVariant(
+      productFinal,
+
+      variant._id,
+    );
+
+    expect(variantFinal.inventory.stock).toBe(
+      variantAfterExpiry.inventory.stock,
+    );
+
+    expect(variantFinal.inventory.reservedStock).toBe(
+      variantAfterExpiry.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Release
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Absolutely No Commit
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still One PaymentTransaction
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Was Consumed Successfully
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Nothing Left In Inbox
+  |--------------------------------------------------------------------------
+  */
+
+    const nextWorkerResult = await processNextPaymentWebhookEvent();
+
+    expect(nextWorkerResult.action).toBe("idle");
+  });
 
   /*
     |--------------------------------------------------------------------------

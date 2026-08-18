@@ -7645,6 +7645,56 @@ src/modules/payments/payment-webhook-processor.service.js
 
 No Order or inventory mutation should happen in this part.
 |--------------------------------------------------------------------------
+Part 207.9.3 — Integration Test: Payment Captures After Reservation Already Expired
+
+Now we lock down the full dangerous scenario:
+
+Order reservation expires
+        ↓
+inventory released
+Order cancelled
+PaymentTransaction cancelled
+        ↓
+Razorpay reports payment captured LATE
+        ↓
+PaymentTransaction → paid
+manual-review recorded
+        ↓
+Order stays cancelled ✅
+inventory stays released ✅
+NO commit ✅
+
+What this test proves
+
+The final state must deliberately look unusual:
+
+PaymentTransaction
+├─ status = paid
+├─ cancelledAt = original expiry timestamp
+├─ paidAt = later provider capture timestamp
+└─ reconciliation
+   ├─ status = manual-review
+   └─ reason =
+      late-capture-after-reservation-expired
+
+while the Order remains:
+
+Order
+├─ status = cancelled
+├─ inventoryStatus = released
+├─ payment.status != paid
+└─ confirmed history entries = 0
+
+And inventory:
+
+release ledger = 1
+commit ledger  = 0
+
+
+stock         = unchanged by late capture
+reservedStock = remains released
+
+That is exactly what we want. The backend acknowledges the customer was charged, while refusing to silently sell inventory that is no longer reserved.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
