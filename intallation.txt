@@ -6669,8 +6669,82 @@ Part 205.5 — Verify Admin Can See System Expiry Audit History
 
 Now we test that an admin opening an automatically expired Order can see exactly who/what cancelled it.
 |--------------------------------------------------------------------------
+Part 205.7 — Final Regression Check ✅
+
+Part 205 is complete when all of these are true
+✅ reservationExpiryStatus=expired is validated.
+✅ Invalid expiry filter values return 400.
+✅ Repository identifies expiry using the system audit entry, not just status=cancelled.
+✅ Customer-cancelled Orders are excluded.
+✅ Active Orders are excluded.
+✅ Existing filters compose with the expiry filter.
+✅ Pagination and sorting still work.
+✅ Applied filter is returned in data.filters.
+✅ Structured logging records the filter.
+✅ Admin Order detail exposes:
+changedByType = system
+changedBy     = null
+systemActor   = order-reservation-expiry-worker
+✅ Expiry audit note and changedAt are visible.
+✅ Full regression suite passes.
+|--------------------------------------------------------------------------
+Next: Part 206 — Payment Recovery / Reconciliation
+
+This is an important one.
+
+We need to handle situations such as:
+
+Razorpay payment captured ✅
+        ↓
+PaymentTransaction = paid ✅
+        ↓
+Order finalization fails ❌
+        ↓
+Order may still be:
+paymentStatus = pending
+inventoryStatus = reserved
+status = pending
+
+We must never simply lose that successful payment.
+|--------------------------------------------------------------------------
+Part 206.1 — Define Recoverable Payment/Order States
+
+Why we're being strict here
+
+The key recovery case is:
+
+Razorpay captured payment ✅
+        ↓
+PaymentTransaction = paid ✅
+        ↓
+application/transaction failed before Order finalization
+        ↓
+Order.status = pending
+Order.payment.status = pending
+inventoryStatus = reserved
+        ↓
+SAFE TO RETRY FINALIZATION ✅
+
+But this case:
+
+PaymentTransaction = paid
+
+
+Order.status = cancelled
+inventoryStatus = released
+
+must not automatically commit inventory. That goes to:
+
+manual-review
+
+because automatically rebuilding inventory reservations after cancellation would be dangerous.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+Part 206.1 — Define Recoverable Payment/Order States
 
 info:
 The easiest way to remember is:
