@@ -35822,6 +35822,487 @@ describe("Razorpay Payment webhook processing", () => {
     ).toBe(1);
   });
 
+  it("handles concurrent browser confirmation and captured webhook after reservation expiry without resurrecting the Order", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    const quantity = 2;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Order + Razorpay Payment
+  |--------------------------------------------------------------------------
+  */
+
+    const fixture = await createRazorpayPaymentConfirmationFixture({
+      customerAgent,
+
+      product,
+
+      variant,
+
+      quantity,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Initial Inventory
+  |--------------------------------------------------------------------------
+  */
+
+    const productBeforeExpiry = await Product.findById(product._id).lean();
+
+    const variantBeforeExpiry = findProductVariant(
+      productBeforeExpiry,
+
+      variant._id,
+    );
+
+    const initialStock = variantBeforeExpiry.inventory.stock;
+
+    expect(variantBeforeExpiry.inventory.reservedStock).toBe(quantity);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Force Reservation Expiry
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryNow = new Date();
+
+    await Order.updateOne(
+      {
+        _id: fixture.order.id,
+      },
+
+      {
+        $set: {
+          inventoryReservationExpiresAt: new Date(expiryNow.getTime() - 60_000),
+        },
+      },
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Expire Order
+  |--------------------------------------------------------------------------
+  */
+
+    const expiryResult = await expireOnlineOrderInventoryReservation(
+      fixture.order.id,
+
+      {
+        now: expiryNow,
+      },
+    );
+
+    expect(expiryResult.action).toBe("expire");
+
+    expect(expiryResult.reason).toBe("reservation-expired");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Verify Expired State
+  |--------------------------------------------------------------------------
+  */
+
+    const orderAfterExpiry = await Order.findById(fixture.order.id).lean();
+
+    expect(orderAfterExpiry.status).toBe("cancelled");
+
+    expect(orderAfterExpiry.inventoryStatus).toBe("released");
+
+    expect(orderAfterExpiry.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Payment Was Cancelled By Expiry
+  |--------------------------------------------------------------------------
+  */
+
+    const paymentAfterExpiry = await PaymentTransaction.findById(
+      fixture.payment.id,
+    ).lean();
+
+    expect(paymentAfterExpiry.status).toBe("cancelled");
+
+    expect(paymentAfterExpiry.cancelledAt).toBeInstanceOf(Date);
+
+    const originalCancelledAt = paymentAfterExpiry.cancelledAt;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Was Released Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const productAfterExpiry = await Product.findById(product._id).lean();
+
+    const variantAfterExpiry = findProductVariant(
+      productAfterExpiry,
+
+      variant._id,
+    );
+
+    expect(variantAfterExpiry.inventory.stock).toBe(initialStock);
+
+    expect(variantAfterExpiry.inventory.reservedStock).toBe(0);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: orderAfterExpiry.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Razorpay CURRENT Truth = Captured
+  |--------------------------------------------------------------------------
+  */
+
+    setTestRazorpayPaymentDetails({
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Store Captured Webhook
+  |--------------------------------------------------------------------------
+  */
+
+    const eventId = "evt_part207_browser_webhook_after_expiry_race";
+
+    const webhookStorageResponse = await sendPaymentWebhookFixture({
+      eventId,
+
+      eventType: "payment.captured",
+
+      providerPaymentId: fixture.providerPaymentId,
+
+      providerOrderId: fixture.providerOrderId,
+
+      amount: fixture.payment.amount,
+
+      currency: fixture.payment.currency,
+
+      status: "captured",
+
+      captured: true,
+
+      method: "upi",
+    });
+
+    expect(webhookStorageResponse.status).toBe(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser + Webhook Race
+  |--------------------------------------------------------------------------
+  */
+
+    const [browserResponse, webhookResult] = await Promise.all([
+      customerAgent
+        .post(fixture.confirmationUrl)
+        .send(fixture.confirmationBody),
+
+      processNextPaymentWebhookEvent(),
+    ]);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Must Succeed
+  |--------------------------------------------------------------------------
+  */
+
+    expect(browserResponse.status).toBe(200);
+
+    expect(browserResponse.body.success).toBe(true);
+
+    /*
+     * Depending on who stored browser verification first,
+     * verify/reuse are both valid.
+     */
+    expect(["verify", "reuse"]).toContain(browserResponse.body.data.action);
+
+    expect(browserResponse.body.data.verified).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Browser Must Stay On Manual-Review Path
+  |--------------------------------------------------------------------------
+  */
+
+    expect(browserResponse.body.data.providerState.action).toBe(
+      "late-capture-manual-review",
+    );
+
+    expect(browserResponse.body.data.providerState.status).toBe("captured");
+
+    expect(browserResponse.body.data.providerState.captured).toBe(true);
+
+    expect(browserResponse.body.data.orderFinalization.action).toBeNull();
+
+    expect(browserResponse.body.data.orderFinalization.finalized).toBe(false);
+
+    expect(browserResponse.body.data.order).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Must Also Resolve Successfully
+  |--------------------------------------------------------------------------
+  |
+  | It must NOT become retryable merely because the browser won the local
+  | cancelled → paid transition first.
+  |--------------------------------------------------------------------------
+  */
+
+    expect(webhookResult.action).toBe("processed");
+
+    /*
+     * Both channels describe the same dangerous late capture.
+     */
+    expect(webhookResult.result.action).toBe("late-capture-manual-review");
+
+    expect(webhookResult.result.orderFinalization).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Final Payment Financial Truth
+  |--------------------------------------------------------------------------
+  */
+
+    const finalPayment = await PaymentTransaction.findById(fixture.payment.id)
+      .select("+providerReference.signature")
+      .lean();
+
+    expect(finalPayment.status).toBe("paid");
+
+    expect(finalPayment.paidAt).toBeInstanceOf(Date);
+
+    /*
+     * Local cancellation history must remain.
+     */
+    expect(finalPayment.cancelledAt).toEqual(originalCancelledAt);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Both Trust Channels Eventually Recorded
+  |--------------------------------------------------------------------------
+  */
+
+    expect(finalPayment.verifiedAt).toBeInstanceOf(Date);
+
+    expect(finalPayment.providerVerifiedAt).toBeInstanceOf(Date);
+
+    expect(finalPayment.providerReference.paymentId).toBe(
+      fixture.providerPaymentId,
+    );
+
+    expect(finalPayment.providerReference.signature).toBe(fixture.signature);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Durable Manual Review
+  |--------------------------------------------------------------------------
+  */
+
+    expect(finalPayment.reconciliation.status).toBe(
+      PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+    );
+
+    expect(finalPayment.reconciliation.reason).toBe(
+      PAYMENT_RECONCILIATION_REASONS.LATE_CAPTURE_AFTER_RESERVATION_EXPIRED,
+    );
+
+    expect(finalPayment.reconciliation.detectedAt).toBeInstanceOf(Date);
+
+    expect(finalPayment.reconciliation.lastAttemptedAt).toBeInstanceOf(Date);
+
+    expect(finalPayment.reconciliation.recoveredAt).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Audit Attempt Count
+  |--------------------------------------------------------------------------
+  |
+  | Both browser and webhook are genuine processing channels.
+  |
+  | Depending on interleaving:
+  |
+  | 1 = one sees the other's completed audit
+  | 2 = both race into the atomic manual-review audit operation
+  |--------------------------------------------------------------------------
+  */
+
+    expect(finalPayment.reconciliation.attemptCount).toBeGreaterThanOrEqual(1);
+
+    expect(finalPayment.reconciliation.attemptCount).toBeLessThanOrEqual(2);
+
+    /*
+  |--------------------------------------------------------------------------
+  | CRITICAL — Order Must Stay Expired
+  |--------------------------------------------------------------------------
+  */
+
+    const finalOrder = await Order.findById(fixture.order.id).lean();
+
+    expect(finalOrder.status).toBe("cancelled");
+
+    expect(finalOrder.inventoryStatus).toBe("released");
+
+    expect(finalOrder.inventoryReservationExpiresAt).toBeNull();
+
+    /*
+     * PaymentTransaction is financially paid,
+     * but the expired Order is NOT restored as paid.
+     */
+    expect(finalOrder.payment.status).not.toBe("paid");
+
+    expect(finalOrder.payment.transactionId).not.toBe(
+      fixture.providerPaymentId,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | No Confirmed Transition
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter((entry) => entry.status === "confirmed"),
+    ).toHaveLength(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Automatic Expiry Transition
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      finalOrder.statusHistory.filter(
+        (entry) =>
+          entry.status === "cancelled" &&
+          entry.changedByType === AUDIT_ACTOR_TYPES.SYSTEM &&
+          entry.systemActor === SYSTEM_AUDIT_ACTORS.ORDER_RESERVATION_EXPIRY,
+      ),
+    ).toHaveLength(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inventory Must Stay Released
+  |--------------------------------------------------------------------------
+  */
+
+    const finalProduct = await Product.findById(product._id).lean();
+
+    const finalVariant = findProductVariant(
+      finalProduct,
+
+      variant._id,
+    );
+
+    expect(finalVariant.inventory.stock).toBe(
+      variantAfterExpiry.inventory.stock,
+    );
+
+    expect(finalVariant.inventory.reservedStock).toBe(
+      variantAfterExpiry.inventory.reservedStock,
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Exactly One Release
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "release",
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Absolutely No Commit
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await ProductInventoryLedger.countDocuments({
+        referenceId: finalOrder.orderNumber,
+
+        operation: "commit",
+      }),
+    ).toBe(0);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Still Exactly One Payment Attempt
+  |--------------------------------------------------------------------------
+  */
+
+    expect(
+      await PaymentTransaction.countDocuments({
+        order: fixture.order.id,
+      }),
+    ).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Webhook Event Processed Exactly Once
+  |--------------------------------------------------------------------------
+  */
+
+    const storedWebhook = await PaymentWebhookEvent.findOne({
+      providerEventId: eventId,
+    }).lean();
+
+    expect(storedWebhook.processingStatus).toBe("processed");
+
+    expect(storedWebhook.processingAttempts).toBe(1);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Inbox Empty
+  |--------------------------------------------------------------------------
+  */
+
+    const nextWebhookResult = await processNextPaymentWebhookEvent();
+
+    expect(nextWebhookResult.action).toBe("idle");
+  });
+
   /*
     |--------------------------------------------------------------------------
     | 2. Authorized Webhook

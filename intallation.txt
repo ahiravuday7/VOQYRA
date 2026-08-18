@@ -8048,6 +8048,56 @@ Browser                         Webhook
 
 Without this protection, the browser can incorrectly return a 409 even though both channels describe the same legitimate Razorpay payment.
 |--------------------------------------------------------------------------
+Part 207.14.2 — Integration Test: Browser + Webhook Race After Expiry
+
+Now test:
+
+Order reservation expires
+        ↓
+Order = cancelled
+Payment = cancelled
+Inventory = released
+        ↓
+Razorpay = captured
+
+
+        ┌───────────────┐
+        │               │
+     Browser         Webhook
+     /confirm         worker
+        │               │
+        └───────┬───────┘
+                ↓
+Payment = paid
+manual-review
+                ↓
+Order STILL cancelled
+Inventory STILL released
+
+The final invariant is:
+
+PaymentTransaction
+├─ status = paid
+├─ verifiedAt = Date
+├─ providerVerifiedAt = Date
+├─ cancelledAt = preserved
+└─ reconciliation = manual-review
+
+
+Order
+├─ status = cancelled
+└─ inventoryStatus = released
+
+
+Ledger
+├─ release = 1
+└─ commit = 0
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
