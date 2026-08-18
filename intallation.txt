@@ -7049,6 +7049,7 @@ Your current server already manages the payment webhook worker and reservation-e
 |--------------------------------------------------------------------------
 Part 206.9.1 — Persist Payment Reconciliation Observability
 |--------------------------------------------------------------------------
+Part 206.9.2 — Atomic Reconciliation Audit Repository Writes
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 

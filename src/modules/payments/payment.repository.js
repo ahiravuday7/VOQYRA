@@ -1,5 +1,6 @@
 import PaymentTransaction, {
   PAYMENT_TRANSACTION_STATUSES,
+  PAYMENT_RECONCILIATION_RECORD_STATUSES,
 } from "./payment.model.js";
 
 import Order from "../orders/order.model.js";
@@ -1313,4 +1314,159 @@ export const cancelOpenPaymentTransactionsForExpiredOrder = (
       runValidators: true,
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Record Successful Payment Reconciliation
+|--------------------------------------------------------------------------
+|
+| Durable audit for:
+|
+| PaymentTransaction = paid
+| Order finalization was previously incomplete
+| reconciliation successfully repaired the Order
+|
+| detectedAt is preserved once first recorded.
+| attemptCount increments atomically.
+|--------------------------------------------------------------------------
+*/
+
+export const recordPaymentReconciliationRecovered = (
+  paymentTransactionId,
+
+  {
+    reason,
+
+    attemptedAt = new Date(),
+
+    recoveredAt = attemptedAt,
+  } = {},
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      status: PAYMENT_TRANSACTION_STATUSES.PAID,
+    },
+
+    [
+      {
+        $set: {
+          "reconciliation.status":
+            PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+
+          "reconciliation.reason": reason ?? null,
+
+          "reconciliation.detectedAt": {
+            $ifNull: ["$reconciliation.detectedAt", attemptedAt],
+          },
+
+          "reconciliation.lastAttemptedAt": attemptedAt,
+
+          "reconciliation.attemptCount": {
+            $add: [
+              {
+                $ifNull: ["$reconciliation.attemptCount", 0],
+              },
+
+              1,
+            ],
+          },
+
+          "reconciliation.recoveredAt": recoveredAt,
+        },
+      },
+    ],
+
+    {
+      new: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Record Payment Reconciliation Manual Review
+|--------------------------------------------------------------------------
+|
+| A paid Payment exists but automatically modifying the related Order is
+| unsafe.
+|
+| Important:
+|
+| Never downgrade an already recovered reconciliation record back to
+| manual-review.
+|--------------------------------------------------------------------------
+*/
+
+export const recordPaymentReconciliationManualReview = (
+  paymentTransactionId,
+
+  {
+    reason,
+
+    attemptedAt = new Date(),
+  } = {},
+
+  { session = null } = {},
+) => {
+  const query = PaymentTransaction.findOneAndUpdate(
+    {
+      _id: paymentTransactionId,
+
+      status: PAYMENT_TRANSACTION_STATUSES.PAID,
+
+      "reconciliation.status": {
+        $ne: PAYMENT_RECONCILIATION_RECORD_STATUSES.RECOVERED,
+      },
+    },
+
+    [
+      {
+        $set: {
+          "reconciliation.status":
+            PAYMENT_RECONCILIATION_RECORD_STATUSES.MANUAL_REVIEW,
+
+          "reconciliation.reason": reason ?? null,
+
+          "reconciliation.detectedAt": {
+            $ifNull: ["$reconciliation.detectedAt", attemptedAt],
+          },
+
+          "reconciliation.lastAttemptedAt": attemptedAt,
+
+          "reconciliation.attemptCount": {
+            $add: [
+              {
+                $ifNull: ["$reconciliation.attemptCount", 0],
+              },
+
+              1,
+            ],
+          },
+
+          "reconciliation.recoveredAt": null,
+        },
+      },
+    ],
+
+    {
+      new: true,
+    },
+  ).lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
 };
