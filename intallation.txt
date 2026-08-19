@@ -8455,6 +8455,24 @@ Brand Module
         ↓
 208.x Product ↔ Brand integration
 |--------------------------------------------------------------------------
+Part 208.2 — Brand Request Validation
+
+For this part, change only one file:
+
+src/modules/brands/brand.validation.js
+
+Do not create routes, repository, service, controller, or mapper yet.
+This validation file prepares these future APIs:
+POST   /api/v1/admin/brands
+
+GET    /api/v1/admin/brands
+GET    /api/v1/admin/brands/:brandId
+
+PATCH  /api/v1/admin/brands/:brandId
+DELETE /api/v1/admin/brands/:brandId
+
+GET    /api/v1/brands
+GET    /api/v1/brands/:slug
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
