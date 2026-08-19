@@ -8548,7 +8548,18 @@ PATCH  /admin/brands/:brandId
 PATCH  /admin/brands/:brandId/restore
 DELETE /admin/brands/:brandId
 |--------------------------------------------------------------------------
+Part 208.8 — Public Brand Routes
+
+Now we expose the customer-facing Brand APIs.
+
+For this part, create only one file:
+
+src/modules/brands/brand.public.routes.js
+
+GET /api/v1/brands 
+will return only: active+not deleted
 |--------------------------------------------------------------------------
+Part 208.9 — Mount Brand Routes in app.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
