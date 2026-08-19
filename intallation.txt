@@ -8884,6 +8884,292 @@ Now we extend the existing:
 
 tests/integration/collection.integration.test.js
 |--------------------------------------------------------------------------
+Part 212.2 — Product Brand Migration Preflight
+
+Now we create a read-only dry-run utility before changing the Product schema.
+
+Your current Product data stores Brand as text—for example "Aayu & Aura"—and Product validation also expects a string today. The normal application database connection is already centralized in src/config/database.js, so the migration utility should reuse it rather than creating a separate MongoDB connection.
+
+This step will not update a single Product or Brand document.
+
+Part 212.2 changes
+
+Create:
+
+src/scripts/preflight-product-brand-migration.js
+
+Update:
+
+package.json
+
+info:
+What the script actually does
+
+Suppose MongoDB contains:
+
+PRODUCTS
+
+
+Product A
+brand = "Aayu & Aura"
+
+
+Product B
+brand = "Nike"
+
+
+Product C
+brand = "Unknown Brand"
+
+and Brand master data contains:
+
+BRANDS
+
+
+Aayu & Aura
+_id = 111
+
+
+Nike
+_id = 222
+
+The preflight produces conceptually:
+
+"Aayu & Aura"
+      ↓ exact normalized match
+Brand 111
+      ✅
+
+
+"Nike"
+      ↓ exact normalized match
+Brand 222
+      ✅
+
+
+"Unknown Brand"
+      ↓
+No Brand
+      ❌
+
+But it does not perform:
+
+Product.brand = Brand._id
+
+yet.
+
+4. Why we're using exact normalized matching
+
+This will match:
+
+Aayu & Aura
+AAYU & AURA
+  Aayu & Aura
+Aayu   &   Aura
+
+to the same normalized name.
+
+But we intentionally do not automatically interpret:
+
+Aayu
+Aayu and Aura
+Aayu&Aura Store
+AA
+
+as:
+
+Aayu & Aura
+
+because migration code should never guess master-data relationships.
+
+5. Ambiguous Brand protection
+
+Suppose Brand master data accidentally contains:
+
+Brand 1
+name = "Urban"
+
+
+Brand 2
+name = "URBAN"
+
+and Product has:
+
+brand = "Urban"
+
+After normalization:
+
+urban
+ ↓
+Brand 1
+Brand 2
+
+The preflight reports:
+
+ambiguousMatches = 1
+readyForAutomaticMigration = false
+
+rather than arbitrarily selecting one.
+
+That's exactly what we want.
+
+6. Deleted and inactive Brands are handled differently
+Deleted Brand
+Product brand text
+      ↓
+soft-deleted Brand
+
+is treated as unsafe:
+
+deletedBrandMatches > 0
+preflight FAILED
+
+We don't want to migrate a Product onto a deleted master-data dependency.
+
+Inactive Brand
+
+An inactive Brand is different:
+
+Product
+brand = "Legacy Brand"
+
+
+Brand
+name = "Legacy Brand"
+status = inactive
+deletedAt = null
+
+The identity mapping is still deterministic, so the script reports it as a warning.
+
+Later our Product rules will enforce:
+
+Draft Product
+   +
+Inactive Brand
+   → allowed
+
+
+Active Product
+   +
+Inactive Brand
+   → not publishable / not publicly visible
+7. Why we read Product through the raw collection
+
+This line is deliberate:
+
+Product.collection
+  .find({})
+
+instead of:
+
+Product.find({})
+
+because today Mongoose defines:
+
+brand: String
+
+and eventually it will define:
+
+brand: ObjectId
+
+Reading raw MongoDB values makes the migration diagnostic reliable even if the database becomes partially migrated.
+
+8. Run the preflight
+
+First ensure your MongoDB connection is working.
+
+Then:
+
+npm run preflight:product-brand
+
+You might see something conceptually like:
+
+Product Brand migration preflight summary
+
+
+totalProducts: 12
+totalBrands: 4
+
+
+exactActiveMatches: 10
+exactInactiveMatches: 1
+
+
+deletedBrandMatches: 0
+ambiguousMatches: 0
+unmappedProducts: 1
+invalidBrandValues: 0
+alreadyReferenced: 0
+brokenReferences: 0
+
+
+unsafeCount: 1
+
+
+readyForAutomaticMigration: false
+
+In that situation, do not continue with the Product schema migration until the one unmapped Brand is resolved.
+
+Ideal output
+
+The ideal result is:
+
+exactActiveMatches:       X
+
+
+exactInactiveMatches:     0
+
+
+deletedBrandMatches:      0
+ambiguousMatches:         0
+unmappedProducts:         0
+invalidBrandValues:       0
+brokenReferences:         0
+
+
+unsafeCount:              0
+
+
+readyForAutomaticMigration: true
+
+
+Product Brand migration preflight PASSED
+
+If there are zero Products, that's also perfectly safe:
+
+totalProducts: 0
+unsafeCount: 0
+
+
+readyForAutomaticMigration: true
+9. Important: don't create Brand records automatically
+
+If the report says:
+
+unmapped:
+
+
+Product:
+Classic Cotton T-Shirt
+
+
+brand:
+Aayu & Aura
+
+we should not make this script automatically create the Brand.
+
+Instead, resolve it using your normal Brand admin/master-data flow.
+
+That preserves:
+
+slug
+status
+logo
+audit data
+createdBy
+updatedBy
+
+properly.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

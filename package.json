@@ -9,7 +9,8 @@
     "start": "node src/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "preflight:product-brand": "node src/scripts/preflight-product-brand-migration.js"
   },
   "keywords": [
     "clothing",
