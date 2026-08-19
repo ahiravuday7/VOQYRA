@@ -8474,6 +8474,13 @@ DELETE /api/v1/admin/brands/:brandId
 GET    /api/v1/brands
 GET    /api/v1/brands/:slug
 |--------------------------------------------------------------------------
+Part 208.3 — Brand Repository
+
+For this part, create only one file:
+
+src/modules/brands/brand.repository.js
+
+Do not create the service/controller/routes yet.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
