@@ -8510,6 +8510,21 @@ For this part, create only one file:
 
 src/modules/brands/brand.mapper.js
 |--------------------------------------------------------------------------
+Part 208.6 — Brand Controller
+
+I checked your actual category.controller.js and product.controller.js. Your backend consistently uses:
+
+request.validated.body / params / query
+request.user._id
+request.log?.info(...)
+{ success, message, data } response format
+public and admin mappings separated
+
+So we’ll follow that exact style.
+
+For this part, create only one file:
+
+src/modules/brands/brand.controller.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
