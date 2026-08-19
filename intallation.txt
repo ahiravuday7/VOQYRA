@@ -8646,6 +8646,13 @@ For this part, create only one file:
 
 src/modules/size-guides/size-guide.validation.js
 |--------------------------------------------------------------------------
+Part 209.3 — SizeGuide Repository
+
+Now we add the database-access layer for SizeGuide.
+
+For this part, create only one file:
+
+src/modules/size-guides/size-guide.repository.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
