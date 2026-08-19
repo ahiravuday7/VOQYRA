@@ -8721,6 +8721,11 @@ I verified your existing test foundation uses createAuthenticatedAgent() with a 
 For this part, create only one file:
 
 tests/integration/size-guide.integration.test.js
+Part 209.10.2 — Advanced Tests
+
+Update only:
+
+tests/integration/size-guide.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
