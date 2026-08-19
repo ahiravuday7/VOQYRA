@@ -8856,6 +8856,33 @@ DELETE /api/v1/admin/collections/:collectionId
 
 PATCH  /api/v1/admin/collections/:collectionId/restore
 |--------------------------------------------------------------------------
+Part 210.10.1 — Collection Core Integration Tests
+
+Now that Collection routes are mounted, we should test the complete Collection API flow before moving to advanced filtering/pagination cases.
+
+For this part, create only one file:
+
+tests/integration/collection.integration.test.js
+
+This first test batch covers:
+
+admin authentication/authorization
+create Collection
+protected-field validation
+duplicate slug
+partial banner update
+empty PATCH
+public visibility
+featured filtering
+soft delete
+restore
+unknown Collection handling
+
+Part 210.10.2 — Collection Advanced Integration Tests
+
+Now we extend the existing:
+
+tests/integration/collection.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
