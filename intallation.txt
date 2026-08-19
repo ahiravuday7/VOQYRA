@@ -8668,6 +8668,15 @@ For this part, create only one file:
 
 src/modules/size-guides/size-guide.mapper.js
 |--------------------------------------------------------------------------
+Part 209.6 — SizeGuide Controller
+
+Next we add the HTTP controller layer for the SizeGuide module.
+
+For this part, create only one file:
+
+src/modules/size-guides/size-guide.controller.js
+
+POST /api/v1/admin/size-guides
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
