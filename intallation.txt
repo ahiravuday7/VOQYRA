@@ -8714,6 +8714,13 @@ DELETE /api/v1/admin/size-guides/:sizeGuideId
 
 PATCH  /api/v1/admin/size-guides/:sizeGuideId/restore
 |--------------------------------------------------------------------------
+Part 209.10.1 — SizeGuide Core Integration Tests
+
+I verified your existing test foundation uses createAuthenticatedAgent() with a default ADMIN user and request.agent(app) so cookies persist, exactly as we need here. Your test environment also uses a MongoDB replica set, which is important because the SizeGuide update/delete/restore services use transactions.
+
+For this part, create only one file:
+
+tests/integration/size-guide.integration.test.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
