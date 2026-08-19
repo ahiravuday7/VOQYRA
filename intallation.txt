@@ -8654,6 +8654,11 @@ For this part, create only one file:
 
 src/modules/size-guides/size-guide.repository.js
 |--------------------------------------------------------------------------
+Part 209.4 — SizeGuide Service
+
+Create only:
+
+src/modules/size-guides/size-guide.service.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
