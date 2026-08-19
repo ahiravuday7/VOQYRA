@@ -8526,6 +8526,27 @@ For this part, create only one file:
 
 src/modules/brands/brand.controller.js
 |--------------------------------------------------------------------------
+Part 208.7 — Admin Brand Routes
+
+Your existing Category and Product admin routes use the same chain:
+
+authenticate
+→ authorizeRoles(USER_ROLES.ADMIN)
+→ validateRequest(...)
+→ controller
+
+We’ll follow that exact project convention. This continues the Brand module required by your roadmap.
+
+For this part, create only one file:
+
+src/modules/brands/brand.routes.js
+
+GET    /admin/brands
+POST   /admin/brands
+GET    /admin/brands/:brandId
+PATCH  /admin/brands/:brandId
+PATCH  /admin/brands/:brandId/restore
+DELETE /admin/brands/:brandId
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
