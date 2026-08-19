@@ -8573,6 +8573,68 @@ tests/integration/brand.integration.test.js
 |--------------------------------------------------------------------------
 Part 208.10.2 — Brand List, Filters & Idempotency Tests
 |--------------------------------------------------------------------------
+Part 209.1 — SizeGuide Constants + Model
+
+For this part, create only two files:
+
+src/shared/constants/size-guide.constants.js
+
+
+src/modules/size-guides/size-guide.model.js
+Understand the SizeGuide structure first
+
+A clothing size guide needs to support something like:
+
+Size	Chest	Waist	Length
+S	36	30	27
+M	38	32	28
+L	40	34	29
+XL	42	36	30
+
+But we shouldn't hardcode:
+
+chest
+waist
+length
+
+into the database schema.
+
+Why?
+
+A T-shirt may need:
+
+Chest
+Length
+Shoulder
+Sleeve
+
+while trousers may need:
+
+Waist
+Hip
+Inseam
+Outseam
+
+and footwear could eventually use:
+
+Foot Length
+UK Size
+EU Size
+
+So we'll use a flexible structure:
+
+SizeGuide
+   │
+   ├── columns
+   │     ├── chest
+   │     ├── waist
+   │     └── length
+   │
+   └── rows
+         ├── S
+         ├── M
+         ├── L
+         └── XL
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
