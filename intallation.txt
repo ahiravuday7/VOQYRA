@@ -8841,6 +8841,20 @@ For this part, create only one file:
 
 src/modules/collections/collection.public.routes.js
 |--------------------------------------------------------------------------
+Part 210.9 — Mount Collection Routes in app.js
+
+Now we connect the Collection module to the main Express app.
+POST   /api/v1/admin/collections
+
+GET    /api/v1/admin/collections
+
+GET    /api/v1/admin/collections/:collectionId
+
+PATCH  /api/v1/admin/collections/:collectionId
+
+DELETE /api/v1/admin/collections/:collectionId
+
+PATCH  /api/v1/admin/collections/:collectionId/restore
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

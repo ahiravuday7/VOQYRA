@@ -23,6 +23,9 @@ import publicBrandRoutes from "./modules/brands/brand.public.routes.js";
 import sizeGuideRoutes from "./modules/size-guides/size-guide.routes.js";
 import publicSizeGuideRoutes from "./modules/size-guides/size-guide.public.routes.js";
 
+import collectionRoutes from "./modules/collections/collection.routes.js";
+import publicCollectionRoutes from "./modules/collections/collection.public.routes.js";
+
 import orderRoutes from "./modules/orders/order.routes.js";
 import adminOrderRoutes from "./modules/orders/order.admin.routes.js";
 
@@ -158,6 +161,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/categories", publicCategoryRoutes);
 app.use("/api/v1/brands", publicBrandRoutes);
 app.use("/api/v1/size-guides", publicSizeGuideRoutes);
+app.use("/api/v1/collections", publicCollectionRoutes);
 app.use("/api/v1/products", publicProductRoutes);
 app.use("/api/v1/orders", orderRoutes);
 
@@ -169,6 +173,7 @@ app.use("/api/v1/orders", orderRoutes);
 app.use("/api/v1/admin/categories", categoryRoutes);
 app.use("/api/v1/admin/brands", brandRoutes);
 app.use("/api/v1/admin/size-guides", sizeGuideRoutes);
+app.use("/api/v1/admin/collections", collectionRoutes);
 app.use("/api/v1/admin/products", productRoutes);
 app.use("/api/v1/admin/orders", adminOrderRoutes);
 app.use("/api/v1/admin/order-returns", orderReturnAdminRoutes);
