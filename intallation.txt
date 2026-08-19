@@ -8187,6 +8187,87 @@ Part 207.15.3 — Integration Test: Old Failed Attempt Returns Through Browser A
 |--------------------------------------------------------------------------
 Part 207.15.4 — Retry / Refresh Must Stay Idempotent
 |--------------------------------------------------------------------------
+Part 207.16.1 — Payment Hardening Regression
+
+Now we stop adding behavior and verify that all Parts 206–207 work together without breaking older payment/order flows. ✅
+
+No file changes in this part.
+
+Run these tests together:
+
+npx vitest run tests/unit/payment-reconciliation.test.js tests/unit/payment-reconciliation-worker.test.js tests/integration/payment-reconciliation-admin.integration.test.js tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism --reporter=verbose
+
+This regression covers the major payment system boundaries we’ve built:
+
+Payment initiation / retries
+        ↓
+Browser confirmation
+        ↓
+Webhook processing
+        ↓
+Payment reconciliation
+        ↓
+Order finalization
+        ↓
+Inventory commit / release
+        ↓
+Reservation expiry
+        ↓
+Late captures / failed attempts
+        ↓
+Concurrency + idempotency
+What we need to see
+
+Ideally:
+
+Test Files  4 passed
+Tests       all passed
+
+The exact number of tests can differ as we’ve added new integration cases, so don’t worry about the count. The important thing is:
+
+failed = 0
+If everything passes
+
+Then the main invariants of Part 207 are protected:
+
+1 Order can be financially settled only once
+
+
+Inventory commit ≤ 1
+Inventory release ≤ 1
+
+
+Expired Order cannot be resurrected
+
+
+Old Payment attempt cannot replace newer successful attempt
+
+
+Late provider capture is recorded as financial truth
+
+
+Unsafe late capture → manual-review
+
+
+Duplicate browser callbacks are idempotent
+
+
+Duplicate webhooks are idempotent
+
+
+Webhook / browser / reconciliation races converge safely
+If anything fails
+
+Send me the full failed-test output, especially:
+
+FAIL ...
+Expected ...
+Received ...
+stack trace
+
+and we’ll fix only that regression.
+
+If this command is fully green, the next step is Part 207.16.2 — complete backend test-suite regression, and after that we can officially close Part 207.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
