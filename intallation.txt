@@ -8269,6 +8269,96 @@ and we’ll fix only that regression.
 
 If this command is fully green, the next step is Part 207.16.2 — complete backend test-suite regression, and after that we can officially close Part 207.
 |--------------------------------------------------------------------------
+Part 207.16.2 — Full Backend Regression
+
+Now run the entire backend test suite, not only payment/order tests.
+
+No code changes in this part.
+
+From your backend folder, run:
+
+npx vitest run --testTimeout=120000 --no-file-parallelism --reporter=verbose
+
+This checks that all the payment hardening work still works correctly with the rest of the backend:
+
+Authentication
+Categories
+Products
+Inventory
+Inventory ledger
+Cart
+Orders
+Payments
+Payment webhooks
+Reservation expiry
+Payment reconciliation
+Admin reconciliation
+Returns / replacements
+All existing integrations
+Expected result
+
+We need:
+
+Test Files  all passed
+Tests       all passed
+
+
+Failed = 0
+
+The exact test count is not important because we added several tests during Parts 206–207.
+
+What this validates
+
+Part 207 introduced some fairly deep payment lifecycle changes:
+
+failed → late captured
+cancelled → late captured
+
+
+browser ↔ webhook races
+webhook ↔ reconciliation races
+payment ↔ reservation-expiry races
+multiple payment attempts
+manual-review incidents
+
+The full regression confirms those changes did not break unrelated backend behavior.
+
+If all tests pass
+
+Then Part 207 is complete. ✅
+
+At that point our protected payment invariants are:
+
+Order finalization      → max once
+Inventory commit        → max once
+Reservation release     → max once
+
+
+Duplicate webhook       → safe
+Duplicate browser return→ safe
+
+
+Expired Order           → cannot resurrect
+Old Payment attempt     → cannot replace newer successful attempt
+
+
+Late real capture       → financial truth preserved
+Unsafe late capture     → manual review
+
+
+Webhook/browser/
+reconciliation/expiry
+races                    → converge safely
+
+Run the full suite now.
+
+If it is all green, send next and we’ll officially close Part 207 and move to the next backend part/module.
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 
