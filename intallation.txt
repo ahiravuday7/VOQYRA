@@ -8502,6 +8502,13 @@ Restore
 Public active Brand listing
 Public Brand lookup by slug
 |--------------------------------------------------------------------------
+Part 208.5 — Brand Mapper
+
+Now we add the response-transformation layer so admin and public APIs never accidentally return the same Brand fields.
+
+For this part, create only one file:
+
+src/modules/brands/brand.mapper.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
