@@ -8561,6 +8561,21 @@ will return only: active+not deleted
 |--------------------------------------------------------------------------
 Part 208.9 — Mount Brand Routes in app.js
 |--------------------------------------------------------------------------
+Part 208.10.1 — Brand Core Integration Tests
+
+Now that the Brand routes are mounted, we should test the full API flow before adding more functionality.
+
+I checked your existing category.integration.test.js, authentication helper, Vitest setup, and Supertest conventions. We’ll follow those same patterns.
+
+For this part, create only one file:
+
+tests/integration/brand.integration.test.js
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
