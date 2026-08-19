@@ -8727,6 +8727,124 @@ Update only:
 
 tests/integration/size-guide.integration.test.js
 |--------------------------------------------------------------------------
+Part 210.1 — Collection Constants + Model
+
+For this part, create only two files:
+
+src/shared/constants/collection.constants.js
+src/modules/collections/collection.model.js
+|--------------------------------------------------------------------------
+Part 210.2 — Collection Request Validation
+
+Next we add the Zod validation layer for Collection.
+
+We’ll also avoid the Zod v4 .partial() issue we hit with SizeGuide by using an unrefined base schema first.
+
+For this part, create only one file:
+
+src/modules/collections/collection.validation.js
+What this prepares
+
+Eventually we'll expose:
+
+ADMIN
+
+
+POST   /api/v1/admin/collections
+GET    /api/v1/admin/collections
+GET    /api/v1/admin/collections/:collectionId
+
+
+PATCH  /api/v1/admin/collections/:collectionId
+
+
+DELETE /api/v1/admin/collections/:collectionId
+
+
+PATCH  /api/v1/admin/collections/:collectionId/restore
+
+and:
+
+PUBLIC
+
+
+GET /api/v1/collections
+
+
+GET /api/v1/collections/:slug
+|--------------------------------------------------------------------------
+Part 210.3 — Collection Repository
+
+Now we add the database-access layer for Collection.
+
+For this part, create only one file:
+
+src/modules/collections/collection.repository.js
+|--------------------------------------------------------------------------
+Part 210.4 — Collection Service
+
+Now we add the business-logic layer for Collection.
+
+This part handles:
+
+duplicate slug protection
+create/update
+partial banner updates
+admin listing/search/filter/pagination
+soft delete
+restore
+public visibility
+public lookup by slug
+
+For this part, create only one file:
+
+src/modules/collections/collection.service.js
+|--------------------------------------------------------------------------
+Part 210.5 — Collection Mapper
+
+Now we add the response-mapping layer so public and admin Collection responses stay intentionally different.
+
+For this part, create only one file:
+
+src/modules/collections/collection.mapper.js
+|--------------------------------------------------------------------------
+Part 210.6 — Collection Controller
+
+Next we add the HTTP controller layer for Collection.
+
+For this part, create only one file:
+
+src/modules/collections/collection.controller.js
+|--------------------------------------------------------------------------
+Part 210.7 — Admin Collection Routes
+
+Next we expose the admin Collection APIs.
+
+This follows the same backend pattern you’re already using for Category, Brand, and SizeGuide:
+
+authenticate
+→ authorizeRoles(USER_ROLES.ADMIN)
+→ validateRequest(...)
+→ controller
+
+Collection is the final master-data module before the later Product dependency migration.
+
+For this part, create only one file:
+
+src/modules/collections/collection.routes.js
+|--------------------------------------------------------------------------
+Part 210.8 — Public Collection Routes
+
+Now we expose the customer-facing Collection APIs.
+
+For this part, create only one file:
+
+src/modules/collections/collection.public.routes.js
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
