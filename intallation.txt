@@ -8354,7 +8354,106 @@ Run the full suite now.
 
 If it is all green, send next and we’ll officially close Part 207 and move to the next backend part/module.
 |--------------------------------------------------------------------------
+Your next module should be: Brand Module ✅
+
+According to your original roadmap, the master-data order is:
+
+Category → Brand → SizeGuide → Collection → Product.
+
+Your current backend already has a very advanced Category module and then jumped directly into Product, Inventory, Orders, Returns/Replacements, and Payments. But there is currently no brands module in src/modules.
+
+I also confirmed that your current Product model uses:
+
+brand: {
+  type: String,
+  required: [true, "Product brand is required"],
+  trim: true,
+  maxlength: [100, "Product brand cannot exceed 100 characters"],
+}
+
+So right now "Nike" / "Adidas" / "Levi's" is simply stored as text. Your original architecture planned a proper Brand master-data module before Product. The selected stack also explicitly lists brands as a recommended backend module.
+
+Where your roadmap currently stands
+Roadmap area	Current status
+Backend foundation	✅ Done
+MongoDB / environment / logging / errors	✅ Done
+User	✅ Done
+Address	✅ Done
+Authentication / authorization	✅ Done
+Category	✅ Very complete
+Brand	❌ Missing — NEXT
+SizeGuide	❌ Missing
+Collection	❌ Missing
+Product	✅ Already built
+Product inventory	✅ Advanced
+Inventory ledger	✅ Done
+Seed data	❌ Not found
+Cloudinary image upload	❌ Not found
+Multer	❌ Not installed
+Orders	✅ Very advanced
+Shipments/delivery inside Order workflow	✅ Implemented
+Returns / replacements	✅ Very advanced
+Payments / Razorpay	✅ Very advanced
+Webhooks / reconciliation / workers	✅ Advanced
+Cart	❌ Missing
+Wishlist	❌ Missing
+RecentlyViewed	❌ Missing
+Admin frontend	❌ Not present in this backend package
+
+There is one small checkpoint before starting Brand: your intallation.txt ends at Part 207.16.2 — Full Backend Regression. It says to run the entire Vitest suite and close Part 207 when everything is green. The file contains the expected result, but I don't see a recorded actual final test result after that instruction.
+
+So I would structure the continuation as:
+
+Part 207.16.2 → confirm full regression is green
+
+then
+
+Part 208: Brand Module — Brand Model / Schema 🚀
+
+And because you want this project built in small chunks, Part 208 should only create the Brand foundation, not the entire Brand API in one shot.
+
+A sensible sequence from here is Brand Model → Brand Validation → Brand Repository/Service → Brand Mapper/Controller → Brand Routes → Brand Integration Tests → connect Product to Brand. After Brand is complete, move to SizeGuide, then Collection, then deal with seed data and Cloudinary image upload before moving on to the frontend.
+
+One important architecture decision will come during Brand integration: your existing Product currently stores brand as a string. Since we're following your original roadmap, we should eventually change that to something like a Brand ObjectId reference rather than maintaining two competing sources of truth.
+
+I've also saved the current backend progress so when you say “next”, I can continue from this exact state rather than restarting or guessing.
+
+So the next development step is: Part 208 — Brand Model / Schema.
 |--------------------------------------------------------------------------
+Part 208.1 — Brand Constants + Brand Model
+
+For this part, change only these two files:
+
+src/shared/constants/brand.constants.js
+src/modules/brands/brand.model.js
+
+Do not change product.model.js yet. Your existing Product currently stores brand as a string; we'll migrate that safely only after the Brand CRUD is working.
+Part 207
+Payment hardening
+        ✅
+
+Part 208
+Brand Module
+        ↓
+208.1 Brand Constants + Model    ← WE ARE HERE
+        ↓
+208.2 Brand Request Validation
+        ↓
+208.3 Brand Repository
+        ↓
+208.4 Brand Service
+        ↓
+208.5 Brand Mapper
+        ↓
+208.6 Brand Controller
+        ↓
+208.7 Admin Brand Routes
+        ↓
+208.8 Public Brand APIs
+        ↓
+208.9 Integration Tests
+        ↓
+208.x Product ↔ Brand integration
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
