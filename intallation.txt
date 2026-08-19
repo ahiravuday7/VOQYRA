@@ -8678,8 +8678,41 @@ src/modules/size-guides/size-guide.controller.js
 
 POST /api/v1/admin/size-guides
 |--------------------------------------------------------------------------
+Part 209.7 — Admin SizeGuide Routes
+
+Next we expose the admin SizeGuide APIs.
+
+For this part, create only one file:
+
+src/modules/size-guides/size-guide.routes.js
 |--------------------------------------------------------------------------
+Part 209.8 — Public SizeGuide Routes
+
+Next we expose the customer-facing SizeGuide APIs.
+
+For this part, create only one file:
+
+src/modules/size-guides/size-guide.public.routes.js
+GET /api/v1/size-guides?category=68a400000000000000000001
 |--------------------------------------------------------------------------
+Part 209.9 — Mount SizeGuide Routes in app.js
+
+Now the SizeGuide module is complete enough to expose through the API.
+
+For this part, update only:
+
+src/app.js
+POST   /api/v1/admin/size-guides
+
+GET    /api/v1/admin/size-guides
+
+GET    /api/v1/admin/size-guides/:sizeGuideId
+
+PATCH  /api/v1/admin/size-guides/:sizeGuideId
+
+DELETE /api/v1/admin/size-guides/:sizeGuideId
+
+PATCH  /api/v1/admin/size-guides/:sizeGuideId/restore
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

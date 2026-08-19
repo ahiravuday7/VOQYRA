@@ -20,6 +20,9 @@ import publicCategoryRoutes from "./modules/categories/category.public.routes.js
 import brandRoutes from "./modules/brands/brand.routes.js";
 import publicBrandRoutes from "./modules/brands/brand.public.routes.js";
 
+import sizeGuideRoutes from "./modules/size-guides/size-guide.routes.js";
+import publicSizeGuideRoutes from "./modules/size-guides/size-guide.public.routes.js";
+
 import orderRoutes from "./modules/orders/order.routes.js";
 import adminOrderRoutes from "./modules/orders/order.admin.routes.js";
 
@@ -154,6 +157,7 @@ app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/categories", publicCategoryRoutes);
 app.use("/api/v1/brands", publicBrandRoutes);
+app.use("/api/v1/size-guides", publicSizeGuideRoutes);
 app.use("/api/v1/products", publicProductRoutes);
 app.use("/api/v1/orders", orderRoutes);
 
@@ -164,6 +168,7 @@ app.use("/api/v1/orders", orderRoutes);
 */
 app.use("/api/v1/admin/categories", categoryRoutes);
 app.use("/api/v1/admin/brands", brandRoutes);
+app.use("/api/v1/admin/size-guides", sizeGuideRoutes);
 app.use("/api/v1/admin/products", productRoutes);
 app.use("/api/v1/admin/orders", adminOrderRoutes);
 app.use("/api/v1/admin/order-returns", orderReturnAdminRoutes);
