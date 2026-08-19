@@ -8482,6 +8482,31 @@ src/modules/brands/brand.repository.js
 
 Do not create the service/controller/routes yet.
 |--------------------------------------------------------------------------
+Part 208.4 — Brand Service
+
+For this part, create only one file:
+
+src/modules/brands/brand.service.js
+
+Do not create the mapper, controller, or routes yet.
+
+This service will handle:
+
+Create Brand
+Prevent duplicate slugs
+Update Brand
+Get admin Brand
+Admin Brand listing/filtering/pagination
+Soft delete
+Restore
+Public active Brand listing
+Public Brand lookup by slug
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
