@@ -611,4 +611,603 @@ describe("Brand API integration", () => {
 
     expect(publicResponse.body.errorCode).toBe("BRAND_NOT_FOUND");
   });
+
+  /*
+|--------------------------------------------------------------------------
+| Admin Brand Pagination, Search and Sorting
+|--------------------------------------------------------------------------
+*/
+
+  it("lists brands with pagination, search and sorting", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Brands
+  |--------------------------------------------------------------------------
+  */
+
+    await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+
+      description: "Sportswear and lifestyle brand",
+
+      sortOrder: 3,
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Adidas",
+
+      slug: "adidas",
+
+      description: "Football and sports brand",
+
+      sortOrder: 1,
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Puma",
+
+      slug: "puma",
+
+      description: "Fashion and footwear brand",
+
+      sortOrder: 2,
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Levi's",
+
+      slug: "levis",
+
+      description: "Denim clothing brand",
+
+      sortOrder: 4,
+    }).expect(201);
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Page — Alphabetical
+  |--------------------------------------------------------------------------
+  */
+
+    const firstPageResponse = await agent
+      .get(`${adminBrandUrl}?page=1&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    const firstPageData = firstPageResponse.body.data;
+
+    expect(firstPageData.brands).toHaveLength(2);
+
+    expect(firstPageData.brands.map((brand) => brand.name)).toEqual([
+      "Adidas",
+      "Levi's",
+    ]);
+
+    expect(firstPageData.pagination).toEqual({
+      page: 1,
+
+      limit: 2,
+
+      totalItems: 4,
+
+      totalPages: 2,
+
+      hasPreviousPage: false,
+
+      hasNextPage: true,
+    });
+
+    expect(firstPageData.filters.sortBy).toBe("name");
+
+    expect(firstPageData.filters.sortDirection).toBe("asc");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Second Page
+  |--------------------------------------------------------------------------
+  */
+
+    const secondPageResponse = await agent
+      .get(`${adminBrandUrl}?page=2&limit=2&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    const secondPageData = secondPageResponse.body.data;
+
+    expect(secondPageData.brands.map((brand) => brand.name)).toEqual([
+      "Nike",
+      "Puma",
+    ]);
+
+    expect(secondPageData.pagination).toEqual({
+      page: 2,
+
+      limit: 2,
+
+      totalItems: 4,
+
+      totalPages: 2,
+
+      hasPreviousPage: true,
+
+      hasNextPage: false,
+    });
+
+    /*
+  |--------------------------------------------------------------------------
+  | Search by Description
+  |--------------------------------------------------------------------------
+  */
+
+    const searchResponse = await agent
+      .get(`${adminBrandUrl}?search=sports&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    const searchedBrands = searchResponse.body.data.brands;
+
+    expect(searchedBrands).toHaveLength(2);
+
+    expect(searchedBrands.map((brand) => brand.slug)).toEqual([
+      "adidas",
+      "nike",
+    ]);
+
+    expect(searchResponse.body.data.filters.search).toBe("sports");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Search Treats Regex Characters as Text
+  |--------------------------------------------------------------------------
+  */
+
+    const safeSearchResponse = await agent
+      .get(`${adminBrandUrl}?search=Nike.*`)
+      .expect(200);
+
+    expect(safeSearchResponse.body.data.brands).toHaveLength(0);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Admin Brand Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("filters brands by status and featured state", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+
+      status: "active",
+
+      isFeatured: true,
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Puma",
+
+      slug: "puma",
+
+      status: "active",
+
+      isFeatured: false,
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Adidas",
+
+      slug: "adidas",
+
+      status: "inactive",
+
+      isFeatured: true,
+    }).expect(201);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Status Filter
+  |--------------------------------------------------------------------------
+  */
+
+    const inactiveResponse = await agent
+      .get(`${adminBrandUrl}?status=inactive`)
+      .expect(200);
+
+    expect(inactiveResponse.body.data.brands).toHaveLength(1);
+
+    expect(inactiveResponse.body.data.brands[0].slug).toBe("adidas");
+
+    expect(inactiveResponse.body.data.filters.status).toBe("inactive");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Featured Filter
+  |--------------------------------------------------------------------------
+  */
+
+    const featuredResponse = await agent
+      .get(`${adminBrandUrl}?isFeatured=true&sortBy=name&sortDirection=asc`)
+      .expect(200);
+
+    expect(
+      featuredResponse.body.data.brands.map((brand) => brand.slug),
+    ).toEqual(["adidas", "nike"]);
+
+    expect(featuredResponse.body.data.filters.isFeatured).toBe(true);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Combined Filters
+  |--------------------------------------------------------------------------
+  */
+
+    const combinedResponse = await agent
+      .get(`${adminBrandUrl}?status=active&isFeatured=true`)
+      .expect(200);
+
+    expect(combinedResponse.body.data.brands).toHaveLength(1);
+
+    expect(combinedResponse.body.data.brands[0].slug).toBe("nike");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Deleted Brand List Filters
+|--------------------------------------------------------------------------
+*/
+
+  it("supports exclude, only and include deleted brand filters", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const nikeResponse = await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+    }).expect(201);
+
+    const adidasResponse = await createBrandRequest(agent, {
+      name: "Adidas",
+
+      slug: "adidas",
+    }).expect(201);
+
+    const pumaResponse = await createBrandRequest(agent, {
+      name: "Puma",
+
+      slug: "puma",
+    }).expect(201);
+
+    const nike = nikeResponse.body.data.brand;
+
+    const adidas = adidasResponse.body.data.brand;
+
+    const puma = pumaResponse.body.data.brand;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Delete Two Brands
+  |--------------------------------------------------------------------------
+  */
+
+    await agent.delete(`${adminBrandUrl}/${nike.id}`).expect(200);
+
+    await agent.delete(`${adminBrandUrl}/${adidas.id}`).expect(200);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Default = Exclude Deleted
+  |--------------------------------------------------------------------------
+  */
+
+    const defaultResponse = await agent.get(adminBrandUrl).expect(200);
+
+    expect(defaultResponse.body.data.filters.deleted).toBe("exclude");
+
+    expect(defaultResponse.body.data.brands).toHaveLength(1);
+
+    expect(defaultResponse.body.data.brands[0].id).toBe(puma.id);
+
+    expect(defaultResponse.body.data.brands[0].isDeleted).toBe(false);
+
+    /*
+  |--------------------------------------------------------------------------
+  | Deleted Only
+  |--------------------------------------------------------------------------
+  */
+
+    const deletedOnlyResponse = await agent
+      .get(`${adminBrandUrl}?deleted=only`)
+      .expect(200);
+
+    expect(deletedOnlyResponse.body.data.filters.deleted).toBe("only");
+
+    const deletedBrands = deletedOnlyResponse.body.data.brands;
+
+    expect(deletedBrands).toHaveLength(2);
+
+    expect(deletedBrands.every((brand) => brand.isDeleted === true)).toBe(true);
+
+    expect(deletedBrands.map((brand) => brand.slug)).toEqual(
+      expect.arrayContaining(["nike", "adidas"]),
+    );
+
+    /*
+  |--------------------------------------------------------------------------
+  | Include Deleted
+  |--------------------------------------------------------------------------
+  */
+
+    const includeResponse = await agent
+      .get(`${adminBrandUrl}?deleted=include`)
+      .expect(200);
+
+    expect(includeResponse.body.data.filters.deleted).toBe("include");
+
+    expect(includeResponse.body.data.brands).toHaveLength(3);
+
+    expect(includeResponse.body.data.brands.map((brand) => brand.slug)).toEqual(
+      expect.arrayContaining(["nike", "adidas", "puma"]),
+    );
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Deleted Brand Slug Reservation
+|--------------------------------------------------------------------------
+*/
+
+  it("does not allow a soft-deleted brand slug to be reused", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const createResponse = await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+    }).expect(201);
+
+    const brand = createResponse.body.data.brand;
+
+    /*
+     * Soft delete Nike.
+     */
+    await agent.delete(`${adminBrandUrl}/${brand.id}`).expect(200);
+
+    /*
+     * nike remains globally reserved.
+     */
+    const duplicateResponse = await createBrandRequest(agent, {
+      name: "New Nike",
+
+      slug: "nike",
+    }).expect(409);
+
+    expect(duplicateResponse.body.success).toBe(false);
+
+    expect(duplicateResponse.body.errorCode).toBe("BRAND_SLUG_ALREADY_EXISTS");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Brand Slug Update Collision
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects changing a brand slug to another existing brand slug", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const nikeResponse = await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+    }).expect(201);
+
+    await createBrandRequest(agent, {
+      name: "Adidas",
+
+      slug: "adidas",
+    }).expect(201);
+
+    const nike = nikeResponse.body.data.brand;
+
+    const response = await agent
+      .patch(`${adminBrandUrl}/${nike.id}`)
+      .send({
+        slug: "adidas",
+      })
+      .expect(409);
+
+    expect(response.body.success).toBe(false);
+
+    expect(response.body.errorCode).toBe("BRAND_SLUG_ALREADY_EXISTS");
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Idempotent Brand Delete and Restore
+|--------------------------------------------------------------------------
+*/
+
+  it("allows brand delete and restore operations to be repeated safely", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    const createResponse = await createBrandRequest(agent, {
+      name: "Nike",
+
+      slug: "nike",
+    }).expect(201);
+
+    const brand = createResponse.body.data.brand;
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Delete
+  |--------------------------------------------------------------------------
+  */
+
+    const firstDeleteResponse = await agent
+      .delete(`${adminBrandUrl}/${brand.id}`)
+      .expect(200);
+
+    const firstDeletedBrand = firstDeleteResponse.body.data.brand;
+
+    expect(firstDeletedBrand.isDeleted).toBe(true);
+
+    expect(firstDeletedBrand.deletedAt).not.toBeNull();
+
+    expect(firstDeletedBrand.deletedBy).toBeDefined();
+
+    const firstDeletedAt = firstDeletedBrand.deletedAt;
+
+    const firstDeletedBy = firstDeletedBrand.deletedBy;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Repeated Delete
+  |--------------------------------------------------------------------------
+  */
+
+    const secondDeleteResponse = await agent
+      .delete(`${adminBrandUrl}/${brand.id}`)
+      .expect(200);
+
+    const secondDeletedBrand = secondDeleteResponse.body.data.brand;
+
+    expect(secondDeletedBrand.isDeleted).toBe(true);
+
+    /*
+     * Repeated deletion must not overwrite
+     * the original deletion metadata.
+     */
+    expect(secondDeletedBrand.deletedAt).toBe(firstDeletedAt);
+
+    expect(secondDeletedBrand.deletedBy).toBe(firstDeletedBy);
+
+    /*
+  |--------------------------------------------------------------------------
+  | First Restore
+  |--------------------------------------------------------------------------
+  */
+
+    const firstRestoreResponse = await agent
+      .patch(`${adminBrandUrl}/${brand.id}/restore`)
+      .send({})
+      .expect(200);
+
+    const firstRestoredBrand = firstRestoreResponse.body.data.brand;
+
+    expect(firstRestoredBrand.isDeleted).toBe(false);
+
+    expect(firstRestoredBrand.deletedAt).toBeNull();
+
+    expect(firstRestoredBrand.deletedBy).toBeNull();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Repeated Restore
+  |--------------------------------------------------------------------------
+  */
+
+    const secondRestoreResponse = await agent
+      .patch(`${adminBrandUrl}/${brand.id}/restore`)
+      .send({})
+      .expect(200);
+
+    const secondRestoredBrand = secondRestoreResponse.body.data.brand;
+
+    expect(secondRestoredBrand.isDeleted).toBe(false);
+
+    expect(secondRestoredBrand.deletedAt).toBeNull();
+
+    expect(secondRestoredBrand.deletedBy).toBeNull();
+
+    /*
+     * Brand remains publicly available.
+     */
+    await request(app).get(`${publicBrandUrl}/nike`).expect(200);
+  });
+
+  /*
+|--------------------------------------------------------------------------
+| Admin Brand List Query Validation
+|--------------------------------------------------------------------------
+*/
+
+  it("rejects invalid admin brand list query parameters", async () => {
+    const { agent } = await createAuthenticatedAgent();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Invalid Page
+  |--------------------------------------------------------------------------
+  */
+
+    const pageResponse = await agent.get(`${adminBrandUrl}?page=0`).expect(400);
+
+    expect(pageResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Invalid Limit
+  |--------------------------------------------------------------------------
+  */
+
+    const limitResponse = await agent
+      .get(`${adminBrandUrl}?limit=101`)
+      .expect(400);
+
+    expect(limitResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Invalid Status
+  |--------------------------------------------------------------------------
+  */
+
+    const statusResponse = await agent
+      .get(`${adminBrandUrl}?status=archived`)
+      .expect(400);
+
+    expect(statusResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Invalid Featured Value
+  |--------------------------------------------------------------------------
+  */
+
+    const featuredResponse = await agent
+      .get(`${adminBrandUrl}?isFeatured=yes`)
+      .expect(400);
+
+    expect(featuredResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Invalid Deleted Filter
+  |--------------------------------------------------------------------------
+  */
+
+    const deletedResponse = await agent
+      .get(`${adminBrandUrl}?deleted=true`)
+      .expect(400);
+
+    expect(deletedResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+    /*
+  |--------------------------------------------------------------------------
+  | Unknown Query Field
+  |--------------------------------------------------------------------------
+  */
+
+    const unknownResponse = await agent
+      .get(`${adminBrandUrl}?randomField=value`)
+      .expect(400);
+
+    expect(unknownResponse.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+  });
 });
