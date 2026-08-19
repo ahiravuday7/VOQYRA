@@ -8636,6 +8636,15 @@ SizeGuide
          ├── L
          └── XL
 |--------------------------------------------------------------------------
+Part 209.2 — SizeGuide Request Validation
+
+Now we add the Zod validation layer for the SizeGuide module.
+
+I matched this to your existing category.validation.js conventions: z.strictObject(), pagination, boolean query parsing, soft-delete filters, admin/public schemas, and MongoDB ObjectId validation. The roadmap places SizeGuide as the next master-data dependency after Brand.
+
+For this part, create only one file:
+
+src/modules/size-guides/size-guide.validation.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
