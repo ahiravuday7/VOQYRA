@@ -9177,6 +9177,28 @@ Part 212.4 — Product Brand Backfill Utility
 
 Before changing Product.brand to ObjectId, we need the actual database migration utility.
 |--------------------------------------------------------------------------
+Part 212.5 — Controlled Product Model Cutover
+
+Now we perform the actual String → Brand ObjectId cutover, add SizeGuide and Collection[] references, and migrate the existing Product text index.
+
+Your MongoDB documents now conceptually change from:
+
+{
+  "brand": "Aayu & Aura"
+}
+
+to:
+
+{
+  "brand": {
+    "$oid": "BRAND_OBJECT_ID"
+  }
+}
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
 

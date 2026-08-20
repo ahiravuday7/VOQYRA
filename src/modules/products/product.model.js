@@ -517,11 +517,46 @@ const productSchema = new Schema(
     },
 
     brand: {
-      type: String,
-      required: [true, "Product brand is required"],
-      trim: true,
+      type: Schema.Types.ObjectId,
 
-      maxlength: [100, "Product brand cannot exceed 100 characters"],
+      ref: "Brand",
+
+      required: [true, "Product brand is required"],
+    },
+
+    sizeGuide: {
+      type: Schema.Types.ObjectId,
+
+      ref: "SizeGuide",
+
+      default: null,
+    },
+
+    /*
+|--------------------------------------------------------------------------
+| Collections
+|--------------------------------------------------------------------------
+|
+| A Product may belong to multiple merchandising Collections.
+|
+| Examples:
+|
+| New Arrivals
+| Best Sellers
+| Festive Collection
+|--------------------------------------------------------------------------
+*/
+
+    collections: {
+      type: [
+        {
+          type: Schema.Types.ObjectId,
+
+          ref: "Collection",
+        },
+      ],
+
+      default: [],
     },
 
     attributes: {
@@ -762,6 +797,70 @@ productSchema.index(
   },
 );
 
+/*
+|--------------------------------------------------------------------------
+| Brand Product Listing
+|--------------------------------------------------------------------------
+*/
+
+productSchema.index(
+  {
+    brand: 1,
+
+    status: 1,
+
+    deletedAt: 1,
+
+    createdAt: -1,
+  },
+  {
+    name: "product_brand_status_index",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Size Guide Product Lookup
+|--------------------------------------------------------------------------
+*/
+
+productSchema.index(
+  {
+    sizeGuide: 1,
+
+    status: 1,
+
+    deletedAt: 1,
+  },
+  {
+    name: "product_size_guide_index",
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Collection Product Listing
+|--------------------------------------------------------------------------
+|
+| collections is an array, so MongoDB creates this as a multikey index.
+|--------------------------------------------------------------------------
+*/
+
+productSchema.index(
+  {
+    collections: 1,
+
+    status: 1,
+
+    deletedAt: 1,
+
+    createdAt: -1,
+  },
+  {
+    name: "product_collection_status_index",
+  },
+);
+
 productSchema.index(
   {
     status: 1,
@@ -812,9 +911,11 @@ productSchema.index(
 productSchema.index(
   {
     name: "text",
-    brand: "text",
+
     shortDescription: "text",
+
     description: "text",
+
     tags: "text",
   },
   {
@@ -822,9 +923,11 @@ productSchema.index(
 
     weights: {
       name: 10,
-      brand: 7,
+
       tags: 5,
+
       shortDescription: 3,
+
       description: 1,
     },
   },
