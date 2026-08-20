@@ -902,7 +902,7 @@ export const toPublicProductSummary = (product) => {
 
     category: mapPublicProductCategory(productObject.category),
 
-    brand: productObject.brand,
+    brand: mapPublicProductBrand(productObject.brand),
 
     tags: productObject.tags ?? [],
 
@@ -975,8 +975,6 @@ export const toPublicProduct = (product) => {
     collections: (productObject.collections ?? [])
       .map(mapPublicProductCollection)
       .filter(Boolean),
-
-    brand: productObject.brand,
 
     attributes: (productObject.attributes ?? []).map(mapProductAttribute),
 

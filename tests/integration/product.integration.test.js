@@ -7581,4 +7581,542 @@ describe("Product master-data dependencies", () => {
 
     expect(hiddenResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
   });
+
+  it("filters admin Products by Brand, SizeGuide and Collection", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Category
+    |--------------------------------------------------------------------------
+    */
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Brands
+    |--------------------------------------------------------------------------
+    */
+
+    const firstBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Filter Alpha Brand",
+
+      slug: "filter-alpha-brand",
+    });
+
+    const secondBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Filter Beta Brand",
+
+      slug: "filter-beta-brand",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Size Guide
+    |--------------------------------------------------------------------------
+    */
+
+    const sizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: category.id,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Collection
+    |--------------------------------------------------------------------------
+    */
+
+    const collection = await createProductDependencyCollection(adminAgent, {
+      name: "Filter Summer Collection",
+
+      slug: "filter-summer-collection",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product One
+    |--------------------------------------------------------------------------
+    |
+    | Brand      = Alpha
+    | SizeGuide  = assigned
+    | Collection = assigned
+    |--------------------------------------------------------------------------
+    */
+
+    const firstRequest = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: firstBrand.id,
+
+      sizeGuideId: sizeGuide.id,
+
+      collectionIds: [collection.id],
+
+      overrides: {
+        name: "Alpha Filter Product",
+
+        slug: "alpha-filter-product",
+      },
+    });
+
+    const firstResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(firstRequest)
+      .expect(201);
+
+    const firstProduct = firstResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Two
+    |--------------------------------------------------------------------------
+    |
+    | Brand      = Beta
+    | SizeGuide  = null
+    | Collection = none
+    |--------------------------------------------------------------------------
+    */
+
+    const secondRequest = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: secondBrand.id,
+
+      overrides: {
+        name: "Beta Filter Product",
+
+        slug: "beta-filter-product",
+      },
+    });
+
+    const secondResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(secondRequest)
+      .expect(201);
+
+    const secondProduct = secondResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Brand Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const brandResponse = await adminAgent
+      .get(`${adminProductUrl}?brand=${firstBrand.id}`)
+      .expect(200);
+
+    expect(brandResponse.body.data.products).toHaveLength(1);
+
+    expect(brandResponse.body.data.products[0].id).toBe(firstProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | SizeGuide Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const sizeGuideResponse = await adminAgent
+      .get(`${adminProductUrl}?sizeGuide=${sizeGuide.id}`)
+      .expect(200);
+
+    expect(sizeGuideResponse.body.data.products).toHaveLength(1);
+
+    expect(sizeGuideResponse.body.data.products[0].id).toBe(firstProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Collection Filter
+    |--------------------------------------------------------------------------
+    */
+
+    const collectionResponse = await adminAgent
+      .get(`${adminProductUrl}?collection=${collection.id}`)
+      .expect(200);
+
+    expect(collectionResponse.body.data.products).toHaveLength(1);
+
+    expect(collectionResponse.body.data.products[0].id).toBe(firstProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Defensive Check
+    |--------------------------------------------------------------------------
+    */
+
+    expect(
+      brandResponse.body.data.products.map((product) => product.id),
+    ).not.toContain(secondProduct.id);
+  });
+
+  it("searches admin and public Products by Brand name", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const searchableBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Aurora Heritage",
+
+      slug: "aurora-heritage",
+    });
+
+    const otherBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Urban Thread",
+
+      slug: "urban-thread",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Aurora Product
+    |--------------------------------------------------------------------------
+    */
+
+    const auroraRequest = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: searchableBrand.id,
+
+      overrides: {
+        /*
+         * Deliberately do NOT put Aurora
+         * in Product name, slug, SKU or tags.
+         *
+         * Search must succeed only through Brand.
+         */
+        name: "Classic Cotton Piece",
+
+        slug: "classic-cotton-piece",
+
+        tags: ["cotton"],
+      },
+    });
+
+    const auroraResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(auroraRequest)
+      .expect(201);
+
+    const auroraProduct = auroraResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Other Product
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: otherBrand.id,
+
+          overrides: {
+            name: "Regular Linen Piece",
+
+            slug: "regular-linen-piece",
+
+            tags: ["linen"],
+          },
+        }),
+      )
+      .expect(201);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admin Search
+    |--------------------------------------------------------------------------
+    */
+
+    const adminSearchResponse = await adminAgent
+      .get(`${adminProductUrl}?search=Aurora`)
+      .expect(200);
+
+    expect(adminSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(adminSearchResponse.body.data.products[0].id).toBe(auroraProduct.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Search
+    |--------------------------------------------------------------------------
+    */
+
+    const publicSearchResponse = await request(app)
+      .get(`${publicProductUrl}?search=Aurora`)
+      .expect(200);
+
+    expect(publicSearchResponse.body.data.products).toHaveLength(1);
+
+    expect(publicSearchResponse.body.data.products[0].id).toBe(
+      auroraProduct.id,
+    );
+
+    expect(publicSearchResponse.body.data.products[0].brand.name).toBe(
+      "Aurora Heritage",
+    );
+  });
+
+  it("sorts admin Products alphabetically by Brand name", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Intentionally Create Brands Out of Alphabetical Order
+    |--------------------------------------------------------------------------
+    */
+
+    const zuluBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Zulu Fashion",
+
+      slug: "zulu-fashion",
+    });
+
+    const alphaBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Alpha Apparel",
+
+      slug: "alpha-apparel",
+    });
+
+    const mangoBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Mango Studio",
+
+      slug: "mango-studio",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Products
+    |--------------------------------------------------------------------------
+    */
+
+    const brandProducts = [
+      {
+        brand: zuluBrand,
+
+        name: "Zulu Product",
+
+        slug: "zulu-brand-product",
+      },
+
+      {
+        brand: alphaBrand,
+
+        name: "Alpha Product",
+
+        slug: "alpha-brand-product",
+      },
+
+      {
+        brand: mangoBrand,
+
+        name: "Mango Product",
+
+        slug: "mango-brand-product",
+      },
+    ];
+
+    for (const item of brandProducts) {
+      await adminAgent
+        .post(adminProductUrl)
+        .send(
+          createProductDependencyRequestBody({
+            categoryId: category.id,
+
+            brandId: item.brand.id,
+
+            overrides: {
+              name: item.name,
+
+              slug: item.slug,
+            },
+          }),
+        )
+        .expect(201);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ascending Brand Sort
+    |--------------------------------------------------------------------------
+    */
+
+    const ascendingResponse = await adminAgent
+      .get(`${adminProductUrl}?sortBy=brand&sortDirection=asc`)
+      .expect(200);
+
+    expect(
+      ascendingResponse.body.data.products.map((product) => product.brand.name),
+    ).toEqual(["Alpha Apparel", "Mango Studio", "Zulu Fashion"]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Descending Brand Sort
+    |--------------------------------------------------------------------------
+    */
+
+    const descendingResponse = await adminAgent
+      .get(`${adminProductUrl}?sortBy=brand&sortDirection=desc`)
+      .expect(200);
+
+    expect(
+      descendingResponse.body.data.products.map(
+        (product) => product.brand.name,
+      ),
+    ).toEqual(["Zulu Fashion", "Mango Studio", "Alpha Apparel"]);
+  });
+  it("filters public Products by Brand ID", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const firstBrand = await createProductDependencyBrand(adminAgent);
+
+    const secondBrand = await createProductDependencyBrand(adminAgent);
+
+    const firstResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: firstBrand.id,
+
+          overrides: {
+            name: "Public First Brand Product",
+
+            slug: "public-first-brand-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const firstProduct = firstResponse.body.data.product;
+
+    await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: secondBrand.id,
+
+          overrides: {
+            name: "Public Second Brand Product",
+
+            slug: "public-second-brand-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const response = await request(app)
+      .get(`${publicProductUrl}?brand=${firstBrand.id}`)
+      .expect(200);
+
+    expect(response.body.data.products).toHaveLength(1);
+
+    expect(response.body.data.products[0].id).toBe(firstProduct.id);
+
+    expect(response.body.data.products[0].brand.id).toBe(firstBrand.id);
+  });
+
+  it("keeps a Product public when its Collection becomes inactive but excludes it from that Collection filter", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent, {
+      name: "Seasonal Edit",
+
+      slug: "seasonal-edit",
+    });
+
+    const requestBody = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: brand.id,
+
+      collectionIds: [collection.id],
+
+      overrides: {
+        name: "Seasonal Public Product",
+
+        slug: "seasonal-public-product",
+      },
+    });
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(requestBody)
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initially Public Through Collection
+    |--------------------------------------------------------------------------
+    */
+
+    const initialCollectionResponse = await request(app)
+      .get(`${publicProductUrl}?collection=${collection.id}`)
+      .expect(200);
+
+    expect(initialCollectionResponse.body.data.products).toHaveLength(1);
+
+    expect(initialCollectionResponse.body.data.products[0].id).toBe(product.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Disable Collection
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .patch(`${adminCollectionUrl}/${collection.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Itself Remains Public
+    |--------------------------------------------------------------------------
+    */
+
+    const publicDetailResponse = await request(app)
+      .get(`${publicProductUrl}/${requestBody.slug}`)
+      .expect(200);
+
+    expect(publicDetailResponse.body.data.product.id).toBe(product.id);
+
+    /*
+     * Inactive Collection must not be exposed.
+     */
+
+    expect(publicDetailResponse.body.data.product.collections).toEqual([]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Collection Filter No Longer Matches
+    |--------------------------------------------------------------------------
+    */
+
+    const filteredResponse = await request(app)
+      .get(`${publicProductUrl}?collection=${collection.id}`)
+      .expect(200);
+
+    expect(filteredResponse.body.data.products).toEqual([]);
+
+    expect(filteredResponse.body.data.pagination.totalItems).toBe(0);
+  });
 });
