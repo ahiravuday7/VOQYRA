@@ -18,6 +18,268 @@ const mapObjectId = (value) => {
 
 /*
 |--------------------------------------------------------------------------
+| Populated Reference Check
+|--------------------------------------------------------------------------
+|
+| A Product dependency can arrive as:
+|
+| ObjectId
+|
+| OR
+|
+| populated Mongoose / aggregation object.
+|--------------------------------------------------------------------------
+*/
+
+const isPopulatedReference = (value) => {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value.name !== undefined || value.slug !== undefined),
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Brand Logo
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminBrandLogo = (logo) => {
+  return {
+    url: logo?.url ?? "",
+
+    publicId: logo?.publicId ?? "",
+
+    altText: logo?.altText ?? "",
+  };
+};
+
+const mapPublicBrandLogo = (logo) => {
+  return {
+    url: logo?.url ?? "",
+
+    altText: logo?.altText ?? "",
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Brand Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminProductBrand = (brand) => {
+  if (!brand) {
+    return null;
+  }
+
+  /*
+   * Unpopulated ObjectId.
+   */
+  if (!isPopulatedReference(brand)) {
+    return {
+      id: mapObjectId(brand),
+    };
+  }
+
+  return {
+    id: mapObjectId(brand),
+
+    name: brand.name ?? "",
+
+    slug: brand.slug ?? "",
+
+    logo: mapAdminBrandLogo(brand.logo),
+
+    status: brand.status ?? null,
+
+    isDeleted: Boolean(brand.deletedAt),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Brand Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductBrand = (brand) => {
+  if (!brand) {
+    return null;
+  }
+
+  if (!isPopulatedReference(brand)) {
+    return {
+      id: mapObjectId(brand),
+    };
+  }
+
+  return {
+    id: mapObjectId(brand),
+
+    name: brand.name ?? "",
+
+    slug: brand.slug ?? "",
+
+    logo: mapPublicBrandLogo(brand.logo),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Size Guide Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminProductSizeGuide = (sizeGuide) => {
+  if (!sizeGuide) {
+    return null;
+  }
+
+  if (!isPopulatedReference(sizeGuide)) {
+    return {
+      id: mapObjectId(sizeGuide),
+    };
+  }
+
+  return {
+    id: mapObjectId(sizeGuide),
+
+    name: sizeGuide.name ?? "",
+
+    slug: sizeGuide.slug ?? "",
+
+    unit: sizeGuide.unit ?? null,
+
+    status: sizeGuide.status ?? null,
+
+    isDeleted: Boolean(sizeGuide.deletedAt),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Size Guide Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductSizeGuide = (sizeGuide) => {
+  if (!sizeGuide) {
+    return null;
+  }
+
+  if (!isPopulatedReference(sizeGuide)) {
+    return {
+      id: mapObjectId(sizeGuide),
+    };
+  }
+
+  return {
+    id: mapObjectId(sizeGuide),
+
+    name: sizeGuide.name ?? "",
+
+    slug: sizeGuide.slug ?? "",
+
+    unit: sizeGuide.unit ?? null,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Collection Banner
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminCollectionBanner = (banner) => {
+  return {
+    url: banner?.url ?? "",
+
+    publicId: banner?.publicId ?? "",
+
+    altText: banner?.altText ?? "",
+  };
+};
+
+const mapPublicCollectionBanner = (banner) => {
+  return {
+    url: banner?.url ?? "",
+
+    altText: banner?.altText ?? "",
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Collection Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapAdminProductCollection = (collection) => {
+  if (!collection) {
+    return null;
+  }
+
+  if (!isPopulatedReference(collection)) {
+    return {
+      id: mapObjectId(collection),
+    };
+  }
+
+  return {
+    id: mapObjectId(collection),
+
+    name: collection.name ?? "",
+
+    slug: collection.slug ?? "",
+
+    banner: mapAdminCollectionBanner(collection.banner),
+
+    status: collection.status ?? null,
+
+    isFeatured: Boolean(collection.isFeatured),
+
+    sortOrder: collection.sortOrder ?? 0,
+
+    isDeleted: Boolean(collection.deletedAt),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Collection Reference
+|--------------------------------------------------------------------------
+*/
+
+const mapPublicProductCollection = (collection) => {
+  if (!collection) {
+    return null;
+  }
+
+  if (!isPopulatedReference(collection)) {
+    return {
+      id: mapObjectId(collection),
+    };
+  }
+
+  return {
+    id: mapObjectId(collection),
+
+    name: collection.name ?? "",
+
+    slug: collection.slug ?? "",
+
+    banner: mapPublicCollectionBanner(collection.banner),
+
+    isFeatured: Boolean(collection.isFeatured),
+
+    sortOrder: collection.sortOrder ?? 0,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Product Image Mapper
 |--------------------------------------------------------------------------
 */
@@ -302,7 +564,13 @@ export const toAdminProduct = (product) => {
 
     category: mapObjectId(productObject.category),
 
-    brand: productObject.brand,
+    brand: mapAdminProductBrand(productObject.brand),
+
+    sizeGuide: mapAdminProductSizeGuide(productObject.sizeGuide),
+
+    collections: (productObject.collections ?? [])
+      .map(mapAdminProductCollection)
+      .filter(Boolean),
 
     attributes: (productObject.attributes ?? []).map(mapProductAttribute),
 
@@ -699,6 +967,14 @@ export const toPublicProduct = (product) => {
     description: productObject.description ?? "",
 
     category: mapPublicProductCategory(productObject.category),
+
+    brand: mapPublicProductBrand(productObject.brand),
+
+    sizeGuide: mapPublicProductSizeGuide(productObject.sizeGuide),
+
+    collections: (productObject.collections ?? [])
+      .map(mapPublicProductCollection)
+      .filter(Boolean),
 
     brand: productObject.brand,
 
