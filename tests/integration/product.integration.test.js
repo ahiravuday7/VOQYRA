@@ -1,9 +1,10 @@
+import mongoose from "mongoose";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import app from "../../src/app.js";
 
-import { createAuthenticatedAgent } from "../helpers/auth-test.helper.js";
+import { createAuthenticatedAgent as createBaseAuthenticatedAgent } from "../helpers/auth-test.helper.js";
 import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 import Category from "../../src/modules/categories/category.model.js";
 
@@ -12,11 +13,59 @@ import Product from "../../src/modules/products/product.model.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../src/shared/constants/product-inventory.constants.js";
 
+import { createActiveBrandFixture } from "../helpers/product-brand-test.helper.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 
 const adminProductUrl = "/api/v1/admin/products";
 
 const publicProductUrl = "/api/v1/products";
+
+const adminBrandUrl = "/api/v1/admin/brands";
+
+const adminSizeGuideUrl = "/api/v1/admin/size-guides";
+
+const adminCollectionUrl = "/api/v1/admin/collections";
+
+let defaultProductBrandId = null;
+
+/*
+|--------------------------------------------------------------------------
+| Product Test Authentication Wrapper
+|--------------------------------------------------------------------------
+|
+| Every admin test agent also receives a valid active Brand fixture.
+|
+| Existing Product tests can therefore continue using the shared
+| createProductPayload() factory without creating a Brand manually.
+|--------------------------------------------------------------------------
+*/
+
+const createAuthenticatedAgent = async (options = {}) => {
+  const result = await createBaseAuthenticatedAgent(options);
+
+  const resolvedRole = options.role ?? USER_ROLES.ADMIN;
+
+  if (resolvedRole === USER_ROLES.ADMIN) {
+    const brand = await createActiveBrandFixture();
+
+    defaultProductBrandId = String(brand._id ?? brand.id);
+  }
+
+  return result;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Authentication Wrapper
+|--------------------------------------------------------------------------
+*/
+
+const createAuthenticatedAdminAgent = () => {
+  return createAuthenticatedAgent({
+    role: USER_ROLES.ADMIN,
+  });
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -36,6 +85,281 @@ const createCategoryRequest = (agent, categoryData) => {
 
 const createProductRequest = (agent, productData) => {
   return agent.post(adminProductUrl).send(productData);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Dependency Fixture Sequence
+|--------------------------------------------------------------------------
+*/
+
+let productDependencyFixtureSequence = 0;
+
+/*
+|--------------------------------------------------------------------------
+| Active Product Category Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createProductDependencyCategory = async (adminAgent, overrides = {}) => {
+  productDependencyFixtureSequence += 1;
+
+  const suffix = productDependencyFixtureSequence;
+
+  const response = await adminAgent
+    .post(adminCategoryUrl)
+    .send({
+      name: `Product Dependency Category ${suffix}`,
+
+      slug: `product-dependency-category-${suffix}`,
+
+      status: "active",
+
+      ...overrides,
+    })
+    .expect(201);
+
+  return response.body.data.category;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Brand Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createProductDependencyBrand = async (adminAgent, overrides = {}) => {
+  productDependencyFixtureSequence += 1;
+
+  const suffix = productDependencyFixtureSequence;
+
+  const response = await adminAgent
+    .post(adminBrandUrl)
+    .send({
+      name: `Product Brand ${suffix}`,
+
+      slug: `product-brand-${suffix}`,
+
+      description: "Brand used by Product dependency integration tests.",
+
+      status: "active",
+
+      isFeatured: false,
+
+      sortOrder: suffix,
+
+      ...overrides,
+    })
+    .expect(201);
+
+  return response.body.data.brand;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Size Guide Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createProductDependencySizeGuide = async (
+  adminAgent,
+  { category = null, ...overrides } = {},
+) => {
+  productDependencyFixtureSequence += 1;
+
+  const suffix = productDependencyFixtureSequence;
+
+  const response = await adminAgent
+    .post(adminSizeGuideUrl)
+    .send({
+      name: `Product Size Guide ${suffix}`,
+
+      slug: `product-size-guide-${suffix}`,
+
+      category,
+
+      unit: "cm",
+
+      columns: [
+        {
+          key: "chest",
+
+          label: "Chest",
+
+          sortOrder: 1,
+        },
+      ],
+
+      rows: [
+        {
+          size: "M",
+
+          measurements: [
+            {
+              key: "chest",
+
+              value: "100",
+            },
+          ],
+
+          sortOrder: 1,
+        },
+      ],
+
+      status: "active",
+
+      sortOrder: suffix,
+
+      ...overrides,
+    })
+    .expect(201);
+
+  return response.body.data.sizeGuide;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Collection Fixture
+|--------------------------------------------------------------------------
+*/
+
+const createProductDependencyCollection = async (
+  adminAgent,
+  overrides = {},
+) => {
+  productDependencyFixtureSequence += 1;
+
+  const suffix = productDependencyFixtureSequence;
+
+  const response = await adminAgent
+    .post(adminCollectionUrl)
+    .send({
+      name: `Product Collection ${suffix}`,
+
+      slug: `product-collection-${suffix}`,
+
+      description: "Collection used by Product dependency integration tests.",
+
+      status: "active",
+
+      isFeatured: false,
+
+      sortOrder: suffix,
+
+      ...overrides,
+    })
+    .expect(201);
+
+  return response.body.data.collection;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Dependency Request Factory
+|--------------------------------------------------------------------------
+*/
+
+const createProductDependencyRequestBody = ({
+  categoryId,
+
+  brandId,
+
+  sizeGuideId = null,
+
+  collectionIds = [],
+
+  status = "active",
+
+  overrides = {},
+}) => {
+  productDependencyFixtureSequence += 1;
+
+  const suffix = productDependencyFixtureSequence;
+
+  const name = `Dependency Product ${suffix}`;
+
+  const slug = `dependency-product-${suffix}`;
+
+  return {
+    name,
+
+    slug,
+
+    shortDescription: "Product dependency integration test.",
+
+    description:
+      "Product used to verify Brand, SizeGuide and Collection dependencies.",
+
+    category: String(categoryId),
+
+    brand: String(brandId),
+
+    sizeGuide: sizeGuideId ? String(sizeGuideId) : null,
+
+    collections: collectionIds.map((id) => String(id)),
+
+    materials: ["100% Cotton"],
+
+    careInstructions: ["Machine wash cold"],
+
+    countryOfOrigin: "India",
+
+    tags: ["dependency-test"],
+
+    images: [
+      {
+        url: `https://example.com/${slug}.jpg`,
+
+        altText: name,
+
+        sortOrder: 1,
+
+        isPrimary: true,
+      },
+    ],
+
+    variants: [
+      {
+        sku: `DEPENDENCY-${suffix}-M`,
+
+        size: "M",
+
+        color: {
+          name: "Black",
+
+          code: "#000000",
+        },
+
+        pricing: {
+          buyingPrice: 300,
+
+          sellingPrice: 799,
+
+          discountPrice: 699,
+
+          currency: "INR",
+        },
+
+        inventory: {
+          stock: 10,
+
+          reservedStock: 0,
+
+          lowStockThreshold: 3,
+        },
+
+        shipping: {
+          weightInGrams: 250,
+        },
+
+        isActive: true,
+      },
+    ],
+
+    status,
+
+    ...overrides,
+  };
 };
 
 /*
@@ -132,6 +456,12 @@ const createInventoryLedgerTestProduct = async ({
 */
 
 const createProductPayload = (overrides = {}) => {
+  const resolvedBrand = overrides.brand ?? defaultProductBrandId;
+
+  if (!resolvedBrand) {
+    throw new Error("Product test fixture requires an active Brand");
+  }
+
   return {
     name: "Classic Cotton T-Shirt",
 
@@ -143,7 +473,7 @@ const createProductPayload = (overrides = {}) => {
 
     category: overrides.category,
 
-    brand: "Aayu & Aura",
+    brand: resolvedBrand,
 
     materials: ["100% Cotton"],
 
@@ -161,19 +491,25 @@ const createProductPayload = (overrides = {}) => {
 
         color: {
           name: "Black",
+
           code: "#000000",
         },
 
         pricing: {
           buyingPrice: 300,
+
           sellingPrice: 699,
+
           discountPrice: 599,
+
           currency: "INR",
         },
 
         inventory: {
           stock: 20,
+
           reservedStock: 2,
+
           lowStockThreshold: 5,
         },
 
@@ -1468,8 +1804,6 @@ describe("Product integration", () => {
 
         category: category.id,
 
-        brand: "Aayu & Aura",
-
         tags: ["polo", "cotton"],
 
         variants: [
@@ -1540,7 +1874,7 @@ describe("Product integration", () => {
 
     expect(updatedProduct.category).toBe(category.id);
 
-    expect(updatedProduct.brand).toBe("Aayu & Aura");
+    expect(updatedProduct.brand.id).toBe(originalProduct.brand.id);
 
     expect(updatedProduct.tags).toEqual(["polo", "cotton"]);
 
@@ -7030,5 +7364,221 @@ describe("Product integration", () => {
 
       expect(response.body.success).toBe(false);
     }
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Part 212 — Product Master-Data Dependencies
+|--------------------------------------------------------------------------
+*/
+
+describe("Product master-data dependencies", () => {
+  /*
+    |--------------------------------------------------------------------------
+    | Complete Dependency Creation
+    |--------------------------------------------------------------------------
+    */
+
+  it("creates an active Product with Brand, SizeGuide and Collections", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const sizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: category.id,
+    });
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const requestBody = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: brand.id,
+
+      sizeGuideId: sizeGuide.id,
+
+      collectionIds: [collection.id],
+    });
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(requestBody)
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.id).toBeTruthy();
+
+    /*
+        |--------------------------------------------------------------------------
+        | Admin Detail Must Populate Dependencies
+        |--------------------------------------------------------------------------
+        */
+
+    const detailResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    const detailedProduct = detailResponse.body.data.product;
+
+    expect(detailedProduct.brand.id).toBe(brand.id);
+
+    expect(detailedProduct.brand.name).toBe(brand.name);
+
+    expect(detailedProduct.sizeGuide.id).toBe(sizeGuide.id);
+
+    expect(detailedProduct.collections).toHaveLength(1);
+
+    expect(detailedProduct.collections[0].id).toBe(collection.id);
+  });
+
+  it("rejects the old String Brand format", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const requestBody = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      /*
+       * Temporarily valid ObjectId;
+       * overridden below.
+       */
+      brandId: new mongoose.Types.ObjectId(),
+    });
+
+    requestBody.brand = "Aayu & Aura";
+
+    const response = await adminAgent.post(adminProductUrl).send(requestBody);
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects an active Product using an inactive Brand", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent, {
+      status: "inactive",
+    });
+
+    const response = await adminAgent.post(adminProductUrl).send(
+      createProductDependencyRequestBody({
+        categoryId: category.id,
+
+        brandId: brand.id,
+
+        status: "active",
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("PRODUCT_BRAND_INACTIVE");
+  });
+
+  it("rejects a SizeGuide from an unrelated Category", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const productCategory = await createProductDependencyCategory(adminAgent);
+
+    const unrelatedCategory = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const sizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: unrelatedCategory.id,
+    });
+
+    const response = await adminAgent.post(adminProductUrl).send(
+      createProductDependencyRequestBody({
+        categoryId: productCategory.id,
+
+        brandId: brand.id,
+
+        sizeGuideId: sizeGuide.id,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "PRODUCT_SIZE_GUIDE_CATEGORY_MISMATCH",
+    );
+  });
+
+  it("rejects a Product referencing a missing Collection", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const missingCollectionId = new mongoose.Types.ObjectId();
+
+    const response = await adminAgent.post(adminProductUrl).send(
+      createProductDependencyRequestBody({
+        categoryId: category.id,
+
+        brandId: brand.id,
+
+        collectionIds: [missingCollectionId],
+      }),
+    );
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("PRODUCT_COLLECTION_NOT_FOUND");
+  });
+
+  it("hides an active Product publicly when its Brand becomes inactive", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const requestBody = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: brand.id,
+    });
+
+    await adminAgent.post(adminProductUrl).send(requestBody).expect(201);
+
+    /*
+     * Initially publicly available.
+     */
+
+    await request(app)
+      .get(`${publicProductUrl}/${requestBody.slug}`)
+      .expect(200);
+
+    /*
+     * Disable Brand after Product publication.
+     */
+
+    await adminAgent
+      .patch(`${adminBrandUrl}/${brand.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    /*
+     * Product must disappear defensively.
+     */
+
+    const hiddenResponse = await request(app).get(
+      `${publicProductUrl}/${requestBody.slug}`,
+    );
+
+    expect(hiddenResponse.status).toBe(404);
+
+    expect(hiddenResponse.body.errorCode).toBe("PRODUCT_NOT_FOUND");
   });
 });
