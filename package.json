@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration",
-    "preflight:product-brand": "node src/scripts/preflight-product-brand-migration.js"
+    "preflight:product-brand": "node src/scripts/preflight-product-brand-migration.js",
+    "migrate:product-brand": "node src/scripts/migrate-product-brand.js",
+    "migrate:product-brand:apply": "node src/scripts/migrate-product-brand.js --apply"
   },
   "keywords": [
     "clothing",

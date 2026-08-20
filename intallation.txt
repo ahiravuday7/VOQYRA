@@ -9173,6 +9173,9 @@ properly.
 |--------------------------------------------------------------------------
 Part 212.3 — Prepare Downstream Product Fixtures for Brand Migration
 |--------------------------------------------------------------------------
+Part 212.4 — Product Brand Backfill Utility
+
+Before changing Product.brand to ObjectId, we need the actual database migration utility.
 |--------------------------------------------------------------------------
 info:
 The easiest way to remember is:
