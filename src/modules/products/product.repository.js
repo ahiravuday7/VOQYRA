@@ -5,12 +5,85 @@ import Product from "./product.model.js";
 
 /*
 |--------------------------------------------------------------------------
+| Apply Product Master-Data Filters
+|--------------------------------------------------------------------------
+*/
+
+const applyProductMasterDataFilters = (
+  filter,
+  { category, brand, sizeGuide, collection } = {},
+) => {
+  if (category) {
+    filter.category = new mongoose.Types.ObjectId(category);
+  }
+
+  if (brand) {
+    filter.brand = new mongoose.Types.ObjectId(brand);
+  }
+
+  if (sizeGuide) {
+    filter.sizeGuide = new mongoose.Types.ObjectId(sizeGuide);
+  }
+
+  if (collection) {
+    /*
+     * Product.collections is an array.
+     *
+     * Matching one ObjectId automatically checks
+     * whether that ObjectId exists in the array.
+     */
+    filter.collections = new mongoose.Types.ObjectId(collection);
+  }
+
+  return filter;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Master-Data Population
+|--------------------------------------------------------------------------
+*/
+
+const populateProductMasterData = (query) => {
+  return query
+    .populate({
+      path: "brand",
+
+      select: "_id name slug logo status deletedAt",
+    })
+    .populate({
+      path: "sizeGuide",
+
+      select: "_id name slug unit status deletedAt",
+    })
+    .populate({
+      path: "collections",
+
+      select: "_id name slug banner status isFeatured sortOrder deletedAt",
+
+      options: {
+        sort: {
+          sortOrder: 1,
+          name: 1,
+        },
+      },
+    });
+};
+
+/*
+|--------------------------------------------------------------------------
 | Find Product by ID
 |--------------------------------------------------------------------------
 */
 
 export const findProductById = (productId, options = {}) => {
-  const { session = null, includeDeleted = false } = options;
+  const {
+    session = null,
+
+    includeDeleted = false,
+
+    populateMasterData = false,
+  } = options;
 
   const filter = {
     _id: productId,
@@ -20,13 +93,59 @@ export const findProductById = (productId, options = {}) => {
     filter.deletedAt = null;
   }
 
-  const query = Product.findOne(filter);
+  let query = Product.findOne(filter);
+
+  if (populateMasterData) {
+    query = populateProductMasterData(query);
+  }
 
   if (session) {
     query.session(session);
   }
 
   return query;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Admin Product with Master Data
+|--------------------------------------------------------------------------
+*/
+
+export const findAdminProductById = (productId, options = {}) => {
+  return findProductById(productId, {
+    ...options,
+
+    populateMasterData: true,
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Find Product IDs by Brand IDs
+|--------------------------------------------------------------------------
+*/
+
+export const findProductIdsByBrandIds = async (brandIds, options = {}) => {
+  const { includeDeleted = false } = options;
+
+  if (!Array.isArray(brandIds) || brandIds.length === 0) {
+    return [];
+  }
+
+  const filter = {
+    brand: {
+      $in: brandIds,
+    },
+  };
+
+  if (!includeDeleted) {
+    filter.deletedAt = null;
+  }
+
+  const products = await Product.find(filter).select("_id").lean();
+
+  return products.map((product) => product._id);
 };
 
 /*
@@ -187,14 +306,20 @@ const buildAdminProductMatchFilter = (filters) => {
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Category
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Master Data Filters
+|--------------------------------------------------------------------------
+*/
 
-  if (filters.category) {
-    match.category = new mongoose.Types.ObjectId(filters.category);
-  }
+  applyProductMasterDataFilters(match, {
+    category: filters.category,
+
+    brand: filters.brand,
+
+    sizeGuide: filters.sizeGuide,
+
+    collection: filters.collection,
+  });
 
   /*
     |--------------------------------------------------------------------------
@@ -237,7 +362,6 @@ const buildAdminProductMatchFilter = (filters) => {
     |
     | - Name
     | - Slug
-    | - Brand
     | - Tags
     | - Variant SKU
     |--------------------------------------------------------------------------
@@ -252,15 +376,15 @@ const buildAdminProductMatchFilter = (filters) => {
       {
         name: searchExpression,
       },
+
       {
         slug: searchExpression,
       },
-      {
-        brand: searchExpression,
-      },
+
       {
         tags: searchExpression,
       },
+
       {
         "variants.sku": searchExpression,
       },
@@ -621,14 +745,27 @@ const buildPublicProductMatchFilter = (filters = {}) => {
   };
 
   /*
-    |--------------------------------------------------------------------------
-    | Exact Category Filter
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Master Data Filters
+|--------------------------------------------------------------------------
+|
+| Public storefront supports:
+|
+| Category
+| Brand
+| Collection
+|
+| SizeGuide is intentionally admin-only.
+|--------------------------------------------------------------------------
+*/
 
-  if (filters.category) {
-    match.category = new mongoose.Types.ObjectId(filters.category);
-  }
+  applyProductMasterDataFilters(match, {
+    category: filters.category,
+
+    brand: filters.brand,
+
+    collection: filters.collection,
+  });
 
   /*
     |--------------------------------------------------------------------------
@@ -657,7 +794,6 @@ const buildPublicProductMatchFilter = (filters = {}) => {
     |
     | - Product name
     | - Product slug
-    | - Brand
     | - Tags
     | - Variant SKU
     |--------------------------------------------------------------------------
@@ -672,15 +808,15 @@ const buildPublicProductMatchFilter = (filters = {}) => {
       {
         name: searchExpression,
       },
+
       {
         slug: searchExpression,
       },
-      {
-        brand: searchExpression,
-      },
+
       {
         tags: searchExpression,
       },
+
       {
         "variants.sku": searchExpression,
       },

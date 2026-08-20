@@ -9228,6 +9228,7 @@ Collection ObjectId[]
 
 This follows the master-data dependency architecture where Category, Brand, SizeGuide and Collection precede Product.
 |--------------------------------------------------------------------------
+Part 212.7 — Product Repository Dependency Filters
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
