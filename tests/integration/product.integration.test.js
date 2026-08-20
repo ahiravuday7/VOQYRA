@@ -8589,4 +8589,375 @@ describe("Product master-data dependencies", () => {
 
     expect(detailsResponse.body.data.product.isDeleted).toBe(true);
   });
+
+  it("keeps a Product public when its Collection is deleted but removes the Collection from public output", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent, {
+      name: "Deleted Merchandising Collection",
+
+      slug: "deleted-merchandising-collection",
+    });
+
+    const requestBody = createProductDependencyRequestBody({
+      categoryId: category.id,
+
+      brandId: brand.id,
+
+      collectionIds: [collection.id],
+
+      overrides: {
+        name: "Deleted Collection Product",
+
+        slug: "deleted-collection-product",
+      },
+    });
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(requestBody)
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initially Public with Collection
+    |--------------------------------------------------------------------------
+    */
+
+    const initialResponse = await request(app)
+      .get(`${publicProductUrl}/${requestBody.slug}`)
+      .expect(200);
+
+    expect(initialResponse.body.data.product.collections).toHaveLength(1);
+
+    expect(initialResponse.body.data.product.collections[0].id).toBe(
+      collection.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Collection
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .delete(`${adminCollectionUrl}/${collection.id}`)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Public
+    |--------------------------------------------------------------------------
+    */
+
+    const publicResponse = await request(app)
+      .get(`${publicProductUrl}/${requestBody.slug}`)
+      .expect(200);
+
+    expect(publicResponse.body.data.product.id).toBe(product.id);
+
+    /*
+     * Deleted Collection must not be exposed.
+     */
+
+    expect(publicResponse.body.data.product.collections).toEqual([]);
+  });
+
+  it("does not return Products when filtering publicly by a deleted Collection", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          collectionIds: [collection.id],
+
+          overrides: {
+            name: "Deleted Collection Filter Product",
+
+            slug: "deleted-collection-filter-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initially Filterable
+    |--------------------------------------------------------------------------
+    */
+
+    const initialFilterResponse = await request(app)
+      .get(`${publicProductUrl}?collection=${collection.id}`)
+      .expect(200);
+
+    expect(
+      initialFilterResponse.body.data.products.map((item) => item.id),
+    ).toContain(product.id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Collection
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .delete(`${adminCollectionUrl}/${collection.id}`)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Deleted Collection Must Not Merchandise Products
+    |--------------------------------------------------------------------------
+    */
+
+    const deletedFilterResponse = await request(app)
+      .get(`${publicProductUrl}?collection=${collection.id}`)
+      .expect(200);
+
+    expect(deletedFilterResponse.body.data.products).toEqual([]);
+
+    expect(deletedFilterResponse.body.data.pagination.totalItems).toBe(0);
+  });
+
+  it("allows removing a deleted Collection from a Product", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          collectionIds: [collection.id],
+
+          overrides: {
+            name: "Collection Repair Product",
+
+            slug: "collection-repair-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Collection
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .delete(`${adminCollectionUrl}/${collection.id}`)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Remove Invalid Relationship
+    |--------------------------------------------------------------------------
+    */
+
+    const updateResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        collections: [],
+      })
+      .expect(200);
+
+    expect(updateResponse.body.data.product.collections).toEqual([]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Persisted State
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.collections).toEqual([]);
+  });
+
+  it("allows restoring an active Product when its Collection became inactive", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          collectionIds: [collection.id],
+
+          overrides: {
+            name: "Inactive Collection Restore Product",
+
+            slug: "inactive-collection-restore-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Collection Becomes Inactive
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .patch(`${adminCollectionUrl}/${collection.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Is Allowed
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}/restore`)
+      .expect(200);
+
+    expect(restoreResponse.body.data.product.isDeleted).toBe(false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Remains Public
+    |--------------------------------------------------------------------------
+    */
+
+    const publicResponse = await request(app)
+      .get(`${publicProductUrl}/${product.slug}`)
+      .expect(200);
+
+    /*
+     * Inactive Collection is not exposed publicly.
+     */
+
+    expect(publicResponse.body.data.product.collections).toEqual([]);
+  });
+
+  it("rejects restoring a Product when one of its Collections was deleted", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          collectionIds: [collection.id],
+
+          overrides: {
+            name: "Deleted Collection Restore Product",
+
+            slug: "deleted-collection-restore-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Collection
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .delete(`${adminCollectionUrl}/${collection.id}`)
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Must Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await adminAgent.patch(
+      `${adminProductUrl}/${product.id}/restore`,
+    );
+
+    expect(restoreResponse.status).toBe(400);
+
+    expect(restoreResponse.body.errorCode).toBe("PRODUCT_COLLECTION_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Deleted
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.isDeleted).toBe(true);
+  });
 });

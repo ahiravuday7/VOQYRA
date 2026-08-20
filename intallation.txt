@@ -9246,6 +9246,11 @@ Part 212.11.3 — Product PATCH + Restore Dependency Tests
 
 Now test the existing Product, not creation/listing.
 |--------------------------------------------------------------------------
+Part 212.11.4 — Collection Lifecycle Dependency Tests
+
+Next we verify the special Collection rule:
+
+Inactive Collection does not invalidate a Product. Deleted Collection does.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 
