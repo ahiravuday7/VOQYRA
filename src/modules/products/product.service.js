@@ -29,6 +29,7 @@ import {
   findProductVariantInventorySnapshot,
   releaseVariantStockAtomically,
   reserveVariantStockAtomically,
+  findAdminProductById,
 } from "./product.repository.js";
 
 import { BRAND_STATUSES } from "../../shared/constants/brand.constants.js";
@@ -1000,7 +1001,22 @@ export const createProduct = async (productData, actorUserId) => {
 */
 
 export const getAdminProductById = async (productId) => {
-  const product = await findProductById(productId, {
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product with Master Data
+  |--------------------------------------------------------------------------
+  |
+  | Admin detail includes:
+  |
+  | - Brand
+  | - SizeGuide
+  | - Collections
+  |
+  | Deleted Products are also available to admins.
+  |--------------------------------------------------------------------------
+  */
+
+  const product = await findAdminProductById(productId, {
     includeDeleted: true,
   });
 

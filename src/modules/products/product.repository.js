@@ -3,6 +3,16 @@ import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js"
 import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
 import Product from "./product.model.js";
 
+import { BRAND_STATUSES } from "../../shared/constants/brand.constants.js";
+
+import { SIZE_GUIDE_STATUSES } from "../../shared/constants/size-guide.constants.js";
+
+import { COLLECTION_STATUSES } from "../../shared/constants/collection.constants.js";
+
+import Brand from "../brands/brand.model.js";
+import SizeGuide from "../size-guides/size-guide.model.js";
+import Collection from "../collections/collection.model.js";
+
 /*
 |--------------------------------------------------------------------------
 | Apply Product Master-Data Filters
@@ -269,6 +279,164 @@ const escapeRegularExpression = (value) => {
 
 /*
 |--------------------------------------------------------------------------
+| Product Search Stage
+|--------------------------------------------------------------------------
+|
+| Must run AFTER Brand has been populated.
+|--------------------------------------------------------------------------
+*/
+
+const buildProductSearchStage = (search) => {
+  if (!search) {
+    return null;
+  }
+
+  const escapedSearch = escapeRegularExpression(search);
+
+  const searchExpression = new RegExp(escapedSearch, "i");
+
+  return {
+    $match: {
+      $or: [
+        {
+          name: searchExpression,
+        },
+
+        {
+          slug: searchExpression,
+        },
+
+        {
+          tags: searchExpression,
+        },
+
+        {
+          "variants.sku": searchExpression,
+        },
+
+        /*
+         * Brand master-data search.
+         */
+        {
+          "brand.name": searchExpression,
+        },
+
+        {
+          "brand.slug": searchExpression,
+        },
+      ],
+    },
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| Admin Product Master-Data Population
+|--------------------------------------------------------------------------
+*/
+
+const buildAdminProductMasterDataStages = () => {
+  return [
+    /*
+      |--------------------------------------------------------------------------
+      | Brand
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: Brand.collection.name,
+
+        localField: "brand",
+
+        foreignField: "_id",
+
+        as: "__adminBrand",
+      },
+    },
+
+    {
+      $set: {
+        brand: {
+          $ifNull: [
+            {
+              $arrayElemAt: ["$__adminBrand", 0],
+            },
+
+            /*
+             * Preserve the raw reference if
+             * the Brand no longer exists.
+             */
+            "$brand",
+          ],
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | SizeGuide
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: SizeGuide.collection.name,
+
+        localField: "sizeGuide",
+
+        foreignField: "_id",
+
+        as: "__adminSizeGuide",
+      },
+    },
+
+    {
+      $set: {
+        sizeGuide: {
+          $ifNull: [
+            {
+              $arrayElemAt: ["$__adminSizeGuide", 0],
+            },
+
+            "$sizeGuide",
+          ],
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Collections
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: Collection.collection.name,
+
+        localField: "collections",
+
+        foreignField: "_id",
+
+        as: "collections",
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Cleanup
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $unset: ["__adminBrand", "__adminSizeGuide"],
+    },
+  ];
+};
+
+/*
+|--------------------------------------------------------------------------
 | Admin Product Sort Fields
 |--------------------------------------------------------------------------
 */
@@ -351,44 +519,6 @@ const buildAdminProductMatchFilter = (filters) => {
 
   if (filters.isBestSeller !== undefined) {
     match.isBestSeller = filters.isBestSeller;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Product Search
-    |--------------------------------------------------------------------------
-    |
-    | Searches:
-    |
-    | - Name
-    | - Slug
-    | - Tags
-    | - Variant SKU
-    |--------------------------------------------------------------------------
-    */
-
-  if (filters.search) {
-    const escapedSearch = escapeRegularExpression(filters.search);
-
-    const searchExpression = new RegExp(escapedSearch, "i");
-
-    match.$or = [
-      {
-        name: searchExpression,
-      },
-
-      {
-        slug: searchExpression,
-      },
-
-      {
-        tags: searchExpression,
-      },
-
-      {
-        "variants.sku": searchExpression,
-      },
-    ];
   }
 
   return match;
@@ -607,73 +737,146 @@ export const listAdminProducts = async (filters) => {
   const skip = (page - 1) * limit;
 
   /*
-   * Validation already protects this value,
-   * but the repository keeps a defensive fallback.
-   */
+  |--------------------------------------------------------------------------
+  | Normalize Sorting
+  |--------------------------------------------------------------------------
+  */
+
   const normalizedSortBy = ADMIN_PRODUCT_SORT_FIELDS.has(sortBy)
     ? sortBy
     : "createdAt";
 
   const normalizedSortDirection = sortDirection === "asc" ? 1 : -1;
 
+  /*
+  |--------------------------------------------------------------------------
+  | Brand Sorting
+  |--------------------------------------------------------------------------
+  |
+  | Product.brand is now an ObjectId.
+  |
+  | Sorting directly by:
+  |
+  | brand
+  |
+  | would sort MongoDB ObjectIds.
+  |
+  | Instead:
+  |
+  | sortBy=brand
+  |
+  | means:
+  |
+  | brand.name
+  |--------------------------------------------------------------------------
+  */
+
+  const normalizedSortField =
+    normalizedSortBy === "brand" ? "brand.name" : normalizedSortBy;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Build Filters
+  |--------------------------------------------------------------------------
+  */
+
   const matchFilter = buildAdminProductMatchFilter(filters);
 
   const stockStatusStage = buildStockStatusStage(stockStatus);
 
+  const searchStage = buildProductSearchStage(filters.search);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Build Pipeline
+  |--------------------------------------------------------------------------
+  */
+
   const pipeline = [
     /*
-      |--------------------------------------------------------------------------
-      | Normal Product Filters
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Normal Product Filters
+    |--------------------------------------------------------------------------
+    */
 
     {
       $match: matchFilter,
     },
 
     /*
-      |--------------------------------------------------------------------------
-      | Calculate Active Variant Stock
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Populate Brand / SizeGuide / Collections
+    |--------------------------------------------------------------------------
+    |
+    | This must happen before:
+    |
+    | - Brand-name searching
+    | - Brand-name sorting
+    |--------------------------------------------------------------------------
+    */
 
-    buildActiveVariantStockStage(),
+    ...buildAdminProductMasterDataStages(),
   ];
 
   /*
-    |--------------------------------------------------------------------------
-    | Apply Stock Filter
-    |--------------------------------------------------------------------------
-    */
+  |--------------------------------------------------------------------------
+  | Product + Brand Search
+  |--------------------------------------------------------------------------
+  */
+
+  if (searchStage) {
+    pipeline.push(searchStage);
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Calculate Active Variant Stock
+  |--------------------------------------------------------------------------
+  */
+
+  pipeline.push(buildActiveVariantStockStage());
+
+  /*
+  |--------------------------------------------------------------------------
+  | Apply Stock Status Filter
+  |--------------------------------------------------------------------------
+  */
 
   if (stockStatusStage) {
     pipeline.push(stockStatusStage);
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Pagination and Total Count
-    |--------------------------------------------------------------------------
-    |
-    | $facet runs both pipelines against the same
-    | filtered Product result set.
-    |--------------------------------------------------------------------------
-    */
+  |--------------------------------------------------------------------------
+  | Pagination + Count
+  |--------------------------------------------------------------------------
+  */
 
   pipeline.push({
     $facet: {
       products: [
+        /*
+        |--------------------------------------------------------------------------
+        | Sorting
+        |--------------------------------------------------------------------------
+        */
+
         {
           $sort: {
-            [normalizedSortBy]: normalizedSortDirection,
+            [normalizedSortField]: normalizedSortDirection,
 
             /*
-             * Stable sorting when two fields
-             * contain the same value.
+             * Stable sorting.
              */
             _id: normalizedSortDirection,
           },
         },
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pagination
+        |--------------------------------------------------------------------------
+        */
 
         {
           $skip: skip,
@@ -684,9 +887,11 @@ export const listAdminProducts = async (filters) => {
         },
 
         /*
-         * Remove the internal stock calculation
-         * before returning Product documents.
-         */
+        |--------------------------------------------------------------------------
+        | Remove Internal Fields
+        |--------------------------------------------------------------------------
+        */
+
         {
           $unset: "__activeVariantStock",
         },
@@ -699,6 +904,12 @@ export const listAdminProducts = async (filters) => {
       ],
     },
   });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Execute
+  |--------------------------------------------------------------------------
+  */
 
   const [result] = await Product.aggregate(pipeline);
 
@@ -713,8 +924,11 @@ export const listAdminProducts = async (filters) => {
 
     pagination: {
       page,
+
       limit,
+
       totalItems,
+
       totalPages,
 
       hasPreviousPage: page > 1,
@@ -783,44 +997,6 @@ const buildPublicProductMatchFilter = (filters = {}) => {
 
   if (filters.isBestSeller !== undefined) {
     match.isBestSeller = filters.isBestSeller;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Public Search
-    |--------------------------------------------------------------------------
-    |
-    | Searches:
-    |
-    | - Product name
-    | - Product slug
-    | - Tags
-    | - Variant SKU
-    |--------------------------------------------------------------------------
-    */
-
-  if (filters.search) {
-    const escapedSearch = escapeRegularExpression(filters.search);
-
-    const searchExpression = new RegExp(escapedSearch, "i");
-
-    match.$or = [
-      {
-        name: searchExpression,
-      },
-
-      {
-        slug: searchExpression,
-      },
-
-      {
-        tags: searchExpression,
-      },
-
-      {
-        "variants.sku": searchExpression,
-      },
-    ];
   }
 
   return match;
@@ -986,6 +1162,264 @@ const buildPublicCategoryVisibilityStages = () => {
       },
     },
   ];
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Brand Visibility
+|--------------------------------------------------------------------------
+|
+| Public Product requires:
+|
+| Brand exists
+| Brand active
+| Brand not deleted
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicBrandVisibilityStages = () => {
+  return [
+    {
+      $lookup: {
+        from: Brand.collection.name,
+
+        let: {
+          brandId: "$brand",
+        },
+
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $eq: ["$_id", "$$brandId"],
+              },
+            },
+          },
+
+          {
+            $match: {
+              status: BRAND_STATUSES.ACTIVE,
+
+              deletedAt: null,
+            },
+          },
+
+          {
+            $project: {
+              _id: 1,
+
+              name: 1,
+
+              slug: 1,
+
+              logo: 1,
+            },
+          },
+        ],
+
+        as: "__publicBrand",
+      },
+    },
+
+    /*
+     * Missing / inactive / deleted Brand
+     * removes the Product.
+     */
+    {
+      $unwind: "$__publicBrand",
+    },
+
+    {
+      $set: {
+        brand: "$__publicBrand",
+      },
+    },
+  ];
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Supplemental Master Data
+|--------------------------------------------------------------------------
+*/
+
+const buildPublicSupplementalMasterDataStages = () => {
+  return [
+    /*
+      |--------------------------------------------------------------------------
+      | Size Guide
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: SizeGuide.collection.name,
+
+        let: {
+          sizeGuideId: "$sizeGuide",
+        },
+
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $eq: ["$_id", "$$sizeGuideId"],
+              },
+            },
+          },
+
+          {
+            $match: {
+              status: SIZE_GUIDE_STATUSES.ACTIVE,
+
+              deletedAt: null,
+            },
+          },
+
+          {
+            $project: {
+              _id: 1,
+
+              name: 1,
+
+              slug: 1,
+
+              unit: 1,
+            },
+          },
+        ],
+
+        as: "__publicSizeGuide",
+      },
+    },
+
+    {
+      $match: {
+        $expr: {
+          $or: [
+            /*
+             * Product does not use a SizeGuide.
+             */
+            {
+              $eq: [
+                {
+                  $ifNull: ["$sizeGuide", null],
+                },
+
+                null,
+              ],
+            },
+
+            /*
+             * Product references a valid,
+             * active SizeGuide.
+             */
+            {
+              $eq: [
+                {
+                  $size: "$__publicSizeGuide",
+                },
+
+                1,
+              ],
+            },
+          ],
+        },
+      },
+    },
+
+    {
+      $set: {
+        sizeGuide: {
+          $ifNull: [
+            {
+              $arrayElemAt: ["$__publicSizeGuide", 0],
+            },
+
+            null,
+          ],
+        },
+      },
+    },
+
+    /*
+      |--------------------------------------------------------------------------
+      | Collections
+      |--------------------------------------------------------------------------
+      |
+      | Only active, non-deleted Collections are
+      | exposed publicly.
+      |--------------------------------------------------------------------------
+      */
+
+    {
+      $lookup: {
+        from: Collection.collection.name,
+
+        let: {
+          collectionIds: {
+            $ifNull: ["$collections", []],
+          },
+        },
+
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $in: ["$_id", "$$collectionIds"],
+              },
+            },
+          },
+
+          {
+            $match: {
+              status: COLLECTION_STATUSES.ACTIVE,
+
+              deletedAt: null,
+            },
+          },
+
+          {
+            $project: {
+              _id: 1,
+
+              name: 1,
+
+              slug: 1,
+
+              banner: 1,
+
+              isFeatured: 1,
+
+              sortOrder: 1,
+            },
+          },
+
+          {
+            $sort: {
+              sortOrder: 1,
+
+              name: 1,
+            },
+          },
+        ],
+
+        as: "collections",
+      },
+    },
+  ];
+};
+
+const buildPublicCollectionVerificationStage = (collectionId) => {
+  if (!collectionId) {
+    return null;
+  }
+
+  return {
+    $match: {
+      "collections._id": new mongoose.Types.ObjectId(collectionId),
+    },
+  };
 };
 
 /*
@@ -1275,11 +1709,21 @@ const buildPublicProductCleanupStage = () => {
   return {
     $unset: [
       "__publicCategory",
+
       "__publicCategoryAncestors",
+
+      "__publicBrand",
+
+      "__publicSizeGuide",
+
       "__activeVariants",
+
       "__publicVariantMetrics",
+
       "__availableStock",
+
       "__minimumPrice",
+
       "__maximumPrice",
     ],
   };
@@ -1294,48 +1738,153 @@ const buildPublicProductCleanupStage = () => {
 export const listPublicProducts = async (filters) => {
   const {
     page = 1,
+
     limit = 20,
+
     inStock,
+
     minPrice,
+
     maxPrice,
+
     sort = "newest",
   } = filters;
 
   const skip = (page - 1) * limit;
 
+  /*
+  |--------------------------------------------------------------------------
+  | Search
+  |--------------------------------------------------------------------------
+  |
+  | Search must run after Brand population
+  | because Product.brand is now an ObjectId.
+  |--------------------------------------------------------------------------
+  */
+
+  const searchStage = buildProductSearchStage(filters.search);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Public Collection Verification
+  |--------------------------------------------------------------------------
+  |
+  | Product may internally reference an inactive Collection.
+  |
+  | The Product itself remains public,
+  | but filtering by that inactive Collection must not return it.
+  |--------------------------------------------------------------------------
+  */
+
+  const collectionVerificationStage = buildPublicCollectionVerificationStage(
+    filters.collection,
+  );
+
+  /*
+  |--------------------------------------------------------------------------
+  | Base Pipeline
+  |--------------------------------------------------------------------------
+  */
+
   const pipeline = [
     /*
-      |--------------------------------------------------------------------------
-      | Active and Published Products
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Active / Published Products
+    |--------------------------------------------------------------------------
+    */
 
     {
       $match: buildPublicProductMatchFilter(filters),
     },
 
     /*
-      |--------------------------------------------------------------------------
-      | Category Visibility
-      |--------------------------------------------------------------------------
-      */
+    |--------------------------------------------------------------------------
+    | Brand Visibility
+    |--------------------------------------------------------------------------
+    |
+    | Requires:
+    |
+    | - Brand exists
+    | - Brand active
+    | - Brand not deleted
+    |
+    | This also populates Product.brand.
+    |--------------------------------------------------------------------------
+    */
 
-    ...buildPublicCategoryVisibilityStages(),
-
-    /*
-      |--------------------------------------------------------------------------
-      | Variant Availability and Prices
-      |--------------------------------------------------------------------------
-      */
-
-    ...buildPublicVariantCalculationStages(),
+    ...buildPublicBrandVisibilityStages(),
   ];
 
   /*
-    |--------------------------------------------------------------------------
-    | Availability Filter
-    |--------------------------------------------------------------------------
-    */
+  |--------------------------------------------------------------------------
+  | Product / Brand Search
+  |--------------------------------------------------------------------------
+  */
+
+  if (searchStage) {
+    pipeline.push(searchStage);
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Category Visibility
+  |--------------------------------------------------------------------------
+  |
+  | Requires:
+  |
+  | - Category exists
+  | - Category active
+  | - Category not deleted
+  | - All ancestors available
+  |--------------------------------------------------------------------------
+  */
+
+  pipeline.push(...buildPublicCategoryVisibilityStages());
+
+  /*
+  |--------------------------------------------------------------------------
+  | SizeGuide + Collections
+  |--------------------------------------------------------------------------
+  |
+  | SizeGuide:
+  | Only active/non-deleted data is populated.
+  |
+  | Collections:
+  | Only active/non-deleted Collections are returned.
+  |--------------------------------------------------------------------------
+  */
+
+  pipeline.push(...buildPublicSupplementalMasterDataStages());
+
+  /*
+  |--------------------------------------------------------------------------
+  | Verify Requested Collection
+  |--------------------------------------------------------------------------
+  |
+  | Important:
+  |
+  | This happens after active Collections
+  | have been populated.
+  |--------------------------------------------------------------------------
+  */
+
+  if (collectionVerificationStage) {
+    pipeline.push(collectionVerificationStage);
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Variant Availability + Pricing
+  |--------------------------------------------------------------------------
+  */
+
+  pipeline.push(...buildPublicVariantCalculationStages());
+
+  /*
+  |--------------------------------------------------------------------------
+  | Stock Filter
+  |--------------------------------------------------------------------------
+  */
 
   const stockFilterStage = buildPublicStockFilterStage(inStock);
 
@@ -1344,10 +1893,10 @@ export const listPublicProducts = async (filters) => {
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Price Filter
-    |--------------------------------------------------------------------------
-    */
+  |--------------------------------------------------------------------------
+  | Price Filter
+  |--------------------------------------------------------------------------
+  */
 
   const priceFilterStage = buildPublicPriceFilterStage(minPrice, maxPrice);
 
@@ -1356,17 +1905,29 @@ export const listPublicProducts = async (filters) => {
   }
 
   /*
-    |--------------------------------------------------------------------------
-    | Pagination
-    |--------------------------------------------------------------------------
-    */
+  |--------------------------------------------------------------------------
+  | Pagination
+  |--------------------------------------------------------------------------
+  */
 
   pipeline.push({
     $facet: {
       products: [
+        /*
+        |--------------------------------------------------------------------------
+        | Sorting
+        |--------------------------------------------------------------------------
+        */
+
         {
           $sort: buildPublicProductSort(sort),
         },
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pagination
+        |--------------------------------------------------------------------------
+        */
 
         {
           $skip: skip,
@@ -1375,6 +1936,12 @@ export const listPublicProducts = async (filters) => {
         {
           $limit: limit,
         },
+
+        /*
+        |--------------------------------------------------------------------------
+        | Remove Internal Aggregation Fields
+        |--------------------------------------------------------------------------
+        */
 
         buildPublicProductCleanupStage(),
       ],
@@ -1386,6 +1953,12 @@ export const listPublicProducts = async (filters) => {
       ],
     },
   });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Execute
+  |--------------------------------------------------------------------------
+  */
 
   const [result] = await Product.aggregate(pipeline);
 
@@ -1400,8 +1973,11 @@ export const listPublicProducts = async (filters) => {
 
     pagination: {
       page,
+
       limit,
+
       totalItems,
+
       totalPages,
 
       hasPreviousPage: page > 1,
@@ -1421,7 +1997,7 @@ export const findPublicProductBySlug = async (slug) => {
   const pipeline = [
     /*
       |--------------------------------------------------------------------------
-      | Active, Published and Non-Deleted Product
+      | Product Availability
       |--------------------------------------------------------------------------
       */
 
@@ -1435,7 +2011,15 @@ export const findPublicProductBySlug = async (slug) => {
 
     /*
       |--------------------------------------------------------------------------
-      | Validate and Populate Category Path
+      | Brand Visibility
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicBrandVisibilityStages(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Category Visibility
       |--------------------------------------------------------------------------
       */
 
@@ -1443,7 +2027,15 @@ export const findPublicProductBySlug = async (slug) => {
 
     /*
       |--------------------------------------------------------------------------
-      | Only One Product
+      | SizeGuide + Collections
+      |--------------------------------------------------------------------------
+      */
+
+    ...buildPublicSupplementalMasterDataStages(),
+
+    /*
+      |--------------------------------------------------------------------------
+      | Only One
       |--------------------------------------------------------------------------
       */
 
@@ -2145,14 +2737,18 @@ export const findProductsForCheckout = async (
     },
 
     /*
-      |--------------------------------------------------------------------------
-      | Validate Complete Category Path
-      |--------------------------------------------------------------------------
-      |
-      | This reuses the same category rules as the
-      | public Product API.
-      |--------------------------------------------------------------------------
-      */
+|--------------------------------------------------------------------------
+| Brand Availability
+|--------------------------------------------------------------------------
+*/
+
+    ...buildPublicBrandVisibilityStages(),
+
+    /*
+|--------------------------------------------------------------------------
+| Category Availability
+|--------------------------------------------------------------------------
+*/
 
     ...buildPublicCategoryVisibilityStages(),
 
