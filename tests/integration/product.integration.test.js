@@ -8119,4 +8119,474 @@ describe("Product master-data dependencies", () => {
 
     expect(filteredResponse.body.data.pagination.totalItems).toBe(0);
   });
+
+  it("rejects changing an active Product to an inactive Brand and preserves the original Brand", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const activeBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Original Active Brand",
+
+      slug: "original-active-brand",
+    });
+
+    const inactiveBrand = await createProductDependencyBrand(adminAgent, {
+      name: "Inactive Replacement Brand",
+
+      slug: "inactive-replacement-brand",
+
+      status: "inactive",
+    });
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: activeBrand.id,
+
+          overrides: {
+            name: "Brand Update Product",
+
+            slug: "brand-update-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Brand Update
+    |--------------------------------------------------------------------------
+    */
+
+    const updateResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        brand: inactiveBrand.id,
+      });
+
+    expect(updateResponse.status).toBe(409);
+
+    expect(updateResponse.body.errorCode).toBe("PRODUCT_BRAND_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Original Brand Must Remain
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.brand.id).toBe(activeBrand.id);
+  });
+
+  it("rejects assigning an inactive SizeGuide to an active Product but allows removing the SizeGuide", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Initial Active SizeGuide
+    |--------------------------------------------------------------------------
+    */
+
+    const activeSizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: category.id,
+
+      name: "Active Product Size Guide",
+
+      slug: "active-product-size-guide",
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactive SizeGuide
+    |--------------------------------------------------------------------------
+    */
+
+    const inactiveSizeGuide = await createProductDependencySizeGuide(
+      adminAgent,
+      {
+        category: category.id,
+
+        name: "Inactive Product Size Guide",
+
+        slug: "inactive-product-size-guide",
+
+        status: "inactive",
+      },
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          sizeGuideId: activeSizeGuide.id,
+
+          overrides: {
+            name: "Size Guide Update Product",
+
+            slug: "size-guide-update-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Inactive SizeGuide Must Be Rejected
+    |--------------------------------------------------------------------------
+    */
+
+    const invalidResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        sizeGuide: inactiveSizeGuide.id,
+      });
+
+    expect(invalidResponse.status).toBe(409);
+
+    expect(invalidResponse.body.errorCode).toBe("PRODUCT_SIZE_GUIDE_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Existing SizeGuide Must Remain
+    |--------------------------------------------------------------------------
+    */
+
+    const unchangedResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(unchangedResponse.body.data.product.sizeGuide.id).toBe(
+      activeSizeGuide.id,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Removing SizeGuide Is Allowed
+    |--------------------------------------------------------------------------
+    |
+    | SizeGuide is optional.
+    |--------------------------------------------------------------------------
+    */
+
+    const clearResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        sizeGuide: null,
+      })
+      .expect(200);
+
+    expect(clearResponse.body.data.product.sizeGuide).toBeNull();
+  });
+
+  it("rejects changing a Product to a SizeGuide from an unrelated Category", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const productCategory = await createProductDependencyCategory(adminAgent);
+
+    const unrelatedCategory = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const validSizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: productCategory.id,
+    });
+
+    const invalidSizeGuide = await createProductDependencySizeGuide(
+      adminAgent,
+      {
+        category: unrelatedCategory.id,
+      },
+    );
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: productCategory.id,
+
+          brandId: brand.id,
+
+          sizeGuideId: validSizeGuide.id,
+
+          overrides: {
+            name: "Size Guide Category Product",
+
+            slug: "size-guide-category-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const response = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        sizeGuide: invalidSizeGuide.id,
+      });
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe(
+      "PRODUCT_SIZE_GUIDE_CATEGORY_MISMATCH",
+    );
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.sizeGuide.id).toBe(
+      validSizeGuide.id,
+    );
+  });
+
+  it("rejects updating a Product with a missing Collection and preserves its existing Collections", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const collection = await createProductDependencyCollection(adminAgent);
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          collectionIds: [collection.id],
+
+          overrides: {
+            name: "Collection Update Product",
+
+            slug: "collection-update-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const missingCollectionId = new mongoose.Types.ObjectId().toString();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Invalid Collection Update
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        collections: [missingCollectionId],
+      });
+
+    expect(response.status).toBe(400);
+
+    expect(response.body.errorCode).toBe("PRODUCT_COLLECTION_NOT_FOUND");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Existing Collection Must Remain
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.collections).toHaveLength(1);
+
+    expect(detailsResponse.body.data.product.collections[0].id).toBe(
+      collection.id,
+    );
+  });
+
+  it("rejects restoring an active Product when its Brand became inactive while deleted", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Active Product
+    |--------------------------------------------------------------------------
+    */
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          overrides: {
+            name: "Restore Brand Product",
+
+            slug: "restore-brand-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Brand Becomes Inactive While Product Is Deleted
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .patch(`${adminBrandUrl}/${brand.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Must Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await adminAgent.patch(
+      `${adminProductUrl}/${product.id}/restore`,
+    );
+
+    expect(restoreResponse.status).toBe(409);
+
+    expect(restoreResponse.body.errorCode).toBe("PRODUCT_BRAND_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Must Remain Deleted
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.isDeleted).toBe(true);
+  });
+
+  it("rejects restoring an active Product when its SizeGuide became inactive while deleted", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    const brand = await createProductDependencyBrand(adminAgent);
+
+    const sizeGuide = await createProductDependencySizeGuide(adminAgent, {
+      category: category.id,
+    });
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductDependencyRequestBody({
+          categoryId: category.id,
+
+          brandId: brand.id,
+
+          sizeGuideId: sizeGuide.id,
+
+          overrides: {
+            name: "Restore Size Guide Product",
+
+            slug: "restore-size-guide-product",
+          },
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Product
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent.delete(`${adminProductUrl}/${product.id}`).expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | SizeGuide Becomes Inactive
+    |--------------------------------------------------------------------------
+    */
+
+    await adminAgent
+      .patch(`${adminSizeGuideUrl}/${sizeGuide.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Restore Must Fail
+    |--------------------------------------------------------------------------
+    */
+
+    const restoreResponse = await adminAgent.patch(
+      `${adminProductUrl}/${product.id}/restore`,
+    );
+
+    expect(restoreResponse.status).toBe(409);
+
+    expect(restoreResponse.body.errorCode).toBe("PRODUCT_SIZE_GUIDE_INACTIVE");
+
+    /*
+    |--------------------------------------------------------------------------
+    | Product Remains Deleted
+    |--------------------------------------------------------------------------
+    */
+
+    const detailsResponse = await adminAgent
+      .get(`${adminProductUrl}/${product.id}`)
+      .expect(200);
+
+    expect(detailsResponse.body.data.product.isDeleted).toBe(true);
+  });
 });
