@@ -9252,6 +9252,7 @@ Next we verify the special Collection rule:
 
 Inactive Collection does not invalidate a Product. Deleted Collection does.
 |--------------------------------------------------------------------------
+Part 212.11.5 — Full Product Regression Checkpoint
 |--------------------------------------------------------------------------
 
 info:
