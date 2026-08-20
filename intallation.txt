@@ -9230,6 +9230,9 @@ This follows the master-data dependency architecture where Category, Brand, Size
 |--------------------------------------------------------------------------
 Part 212.7 — Product Repository Dependency Filters
 |--------------------------------------------------------------------------
+Part 212.8 — Product Dependency Service Rules
+
+Now we update the business logic so Product cannot store invalid Brand, SizeGuide, or Collection references.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 info:

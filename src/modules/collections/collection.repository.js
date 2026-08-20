@@ -199,3 +199,40 @@ export const findPublicCollectionBySlug = (slug) => {
     )
     .lean();
 };
+
+/*
+|--------------------------------------------------------------------------
+| Find Collections by IDs
+|--------------------------------------------------------------------------
+|
+| Used by Product dependency validation.
+|--------------------------------------------------------------------------
+*/
+
+export const findCollectionsByIds = (collectionIds, options = {}) => {
+  const { session = null, includeDeleted = false } = options;
+
+  if (!Array.isArray(collectionIds) || collectionIds.length === 0) {
+    return [];
+  }
+
+  const filter = {
+    _id: {
+      $in: collectionIds,
+    },
+  };
+
+  if (!includeDeleted) {
+    filter.deletedAt = null;
+  }
+
+  const query = Collection.find(filter)
+    .select("_id name slug status deletedAt")
+    .lean();
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

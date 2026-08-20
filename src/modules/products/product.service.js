@@ -31,6 +31,16 @@ import {
   reserveVariantStockAtomically,
 } from "./product.repository.js";
 
+import { BRAND_STATUSES } from "../../shared/constants/brand.constants.js";
+
+import { SIZE_GUIDE_STATUSES } from "../../shared/constants/size-guide.constants.js";
+
+import { findBrandById } from "../brands/brand.repository.js";
+
+import { findSizeGuideById } from "../size-guides/size-guide.repository.js";
+
+import { findCollectionsByIds } from "../collections/collection.repository.js";
+
 /*
 |--------------------------------------------------------------------------
 | Product Errors
@@ -165,6 +175,46 @@ const createInventoryConflictError = () => {
       errorCode: "PRODUCT_INVENTORY_CONFLICT",
     },
   );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Brand Errors
+|--------------------------------------------------------------------------
+*/
+
+const createProductBrandNotFoundError = () => {
+  return new AppError("Product brand was not found", 400, {
+    errorCode: "PRODUCT_BRAND_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Size Guide Errors
+|--------------------------------------------------------------------------
+*/
+
+const createProductSizeGuideNotFoundError = () => {
+  return new AppError("Product size guide was not found", 400, {
+    errorCode: "PRODUCT_SIZE_GUIDE_NOT_FOUND",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Collection Errors
+|--------------------------------------------------------------------------
+*/
+
+const createProductCollectionNotFoundError = (collectionIds) => {
+  return new AppError("One or more Product collections were not found", 400, {
+    errorCode: "PRODUCT_COLLECTION_NOT_FOUND",
+
+    details: {
+      collectionIds,
+    },
+  });
 };
 
 /*
@@ -525,6 +575,304 @@ const validateProductCategory = async (
 
 /*
 |--------------------------------------------------------------------------
+| Validate Product Brand
+|--------------------------------------------------------------------------
+|
+| Rules:
+|
+| Every Product:
+| - Brand must exist.
+| - Brand must not be deleted.
+|
+| Active Product:
+| - Brand must also be active.
+|--------------------------------------------------------------------------
+*/
+
+const validateProductBrand = async (brandId, productStatus, options = {}) => {
+  const { session = null } = options;
+
+  const brand = await findBrandById(brandId, {
+    session,
+  });
+
+  /*
+   * Repository excludes soft-deleted Brands,
+   * so deleted and missing Brand references
+   * are treated as unavailable.
+   */
+  if (!brand) {
+    throw createProductBrandNotFoundError();
+  }
+
+  if (
+    productStatus === PRODUCT_STATUSES.ACTIVE &&
+    brand.status !== BRAND_STATUSES.ACTIVE
+  ) {
+    throw new AppError("An active Product requires an active Brand", 409, {
+      errorCode: "PRODUCT_BRAND_INACTIVE",
+    });
+  }
+
+  return brand;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Validate Product Size Guide
+|--------------------------------------------------------------------------
+|
+| SizeGuide is optional.
+|
+| When supplied:
+|
+| - It must exist.
+| - It must not be deleted.
+| - Its Category must be compatible with the Product Category.
+|
+| Active Product:
+|
+| - SizeGuide must also be active.
+|--------------------------------------------------------------------------
+*/
+
+const validateProductSizeGuide = async (
+  sizeGuideId,
+  productCategory,
+  productStatus,
+  options = {},
+) => {
+  /*
+   * SizeGuide is optional.
+   */
+  if (!sizeGuideId) {
+    return null;
+  }
+
+  const { session = null } = options;
+
+  const sizeGuide = await findSizeGuideById(sizeGuideId, {
+    session,
+  });
+
+  if (!sizeGuide) {
+    throw createProductSizeGuideNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Active Product → Active SizeGuide
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    productStatus === PRODUCT_STATUSES.ACTIVE &&
+    sizeGuide.status !== SIZE_GUIDE_STATUSES.ACTIVE
+  ) {
+    throw new AppError("An active Product requires an active Size Guide", 409, {
+      errorCode: "PRODUCT_SIZE_GUIDE_INACTIVE",
+    });
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Generic SizeGuide
+    |--------------------------------------------------------------------------
+    |
+    | category = null
+    |
+    | Can be used by any Product.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!sizeGuide.category) {
+    return sizeGuide;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Category Compatibility
+    |--------------------------------------------------------------------------
+    |
+    | A SizeGuide may belong to:
+    |
+    | 1. The exact Product Category
+    |
+    | OR
+    |
+    | 2. Any ancestor of the Product Category.
+    |
+    | Example:
+    |
+    | Men
+    |   └── Topwear
+    |        └── T-Shirts
+    |
+    | Product Category:
+    | T-Shirts
+    |
+    | Valid SizeGuide categories:
+    |
+    | T-Shirts  ✅
+    | Topwear   ✅
+    | Men       ✅
+    |--------------------------------------------------------------------------
+    */
+
+  const compatibleCategoryIds = new Set(
+    [productCategory._id, ...(productCategory.ancestors ?? [])].map(
+      objectIdToString,
+    ),
+  );
+
+  const sizeGuideCategoryId = objectIdToString(sizeGuide.category);
+
+  if (!compatibleCategoryIds.has(sizeGuideCategoryId)) {
+    throw new AppError(
+      "Product Size Guide is not compatible with the Product Category",
+      409,
+      {
+        errorCode: "PRODUCT_SIZE_GUIDE_CATEGORY_MISMATCH",
+
+        details: {
+          productCategoryId: objectIdToString(productCategory._id),
+
+          sizeGuideCategoryId,
+        },
+      },
+    );
+  }
+
+  return sizeGuide;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Validate Product Collections
+|--------------------------------------------------------------------------
+|
+| Collections are merchandising relationships.
+|
+| Rules:
+|
+| - Every supplied Collection must exist.
+| - Every supplied Collection must not be deleted.
+| - Inactive Collections are allowed.
+|
+| An inactive Collection does NOT make the Product inactive.
+|--------------------------------------------------------------------------
+*/
+
+const validateProductCollections = async (collectionIds, options = {}) => {
+  if (!Array.isArray(collectionIds) || collectionIds.length === 0) {
+    return [];
+  }
+
+  const { session = null } = options;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Defensive Duplicate Protection
+    |--------------------------------------------------------------------------
+    |
+    | Zod already rejects duplicate IDs.
+    | This protects internal Service callers too.
+    |--------------------------------------------------------------------------
+    */
+
+  const normalizedIds = collectionIds.map(objectIdToString);
+
+  const uniqueIds = [...new Set(normalizedIds)];
+
+  if (uniqueIds.length !== normalizedIds.length) {
+    throw new AppError(
+      "Product collections cannot contain duplicate Collection IDs",
+      400,
+      {
+        errorCode: "PRODUCT_COLLECTION_DUPLICATE",
+      },
+    );
+  }
+
+  const collections = await findCollectionsByIds(uniqueIds, {
+    session,
+  });
+
+  const foundIds = new Set(
+    collections.map((collection) => objectIdToString(collection._id)),
+  );
+
+  const missingIds = uniqueIds.filter(
+    (collectionId) => !foundIds.has(collectionId),
+  );
+
+  if (missingIds.length > 0) {
+    throw createProductCollectionNotFoundError(missingIds);
+  }
+
+  return collections;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Validate Product Master-Data Dependencies
+|--------------------------------------------------------------------------
+*/
+
+const validateProductMasterDataDependencies = async (
+  productData,
+  options = {},
+) => {
+  const { session = null } = options;
+
+  /*
+    |--------------------------------------------------------------------------
+    | Category First
+    |--------------------------------------------------------------------------
+    |
+    | SizeGuide compatibility depends on the resolved
+    | Product Category and its ancestor path.
+    |--------------------------------------------------------------------------
+    */
+
+  const category = await validateProductCategory(
+    productData.category,
+    productData.status,
+    {
+      session,
+    },
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Other Dependencies
+    |--------------------------------------------------------------------------
+    */
+
+  await Promise.all([
+    validateProductBrand(productData.brand, productData.status, {
+      session,
+    }),
+
+    validateProductSizeGuide(
+      productData.sizeGuide,
+      category,
+      productData.status,
+      {
+        session,
+      },
+    ),
+
+    validateProductCollections(productData.collections ?? [], {
+      session,
+    }),
+  ]);
+
+  return category;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Validate Active Product Requirements
 |--------------------------------------------------------------------------
 |
@@ -595,18 +943,24 @@ export const createProduct = async (productData, actorUserId) => {
   };
 
   /*
-    |--------------------------------------------------------------------------
-    | Validate Independent Product Rules
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Validate Independent Product Rules
+|--------------------------------------------------------------------------
+*/
 
   await Promise.all([
     ensureProductSlugIsAvailable(normalizedProductData.slug),
 
     ensureProductSkusAreAvailable(normalizedProductData.variants),
-
-    validateProductCategory(normalizedProductData.category, resultingStatus),
   ]);
+
+  /*
+|--------------------------------------------------------------------------
+| Validate Master-Data Dependencies
+|--------------------------------------------------------------------------
+*/
+
+  await validateProductMasterDataDependencies(normalizedProductData);
 
   /*
     |--------------------------------------------------------------------------
@@ -794,15 +1148,12 @@ export const updateProduct = async (productId, updateData, actorUserId) => {
   });
 
   /*
-    |--------------------------------------------------------------------------
-    | Validate Category
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Validate Master-Data Dependencies
+|--------------------------------------------------------------------------
+*/
 
-  await validateProductCategory(
-    resultingProductData.category,
-    resultingProductData.status,
-  );
+  await validateProductMasterDataDependencies(resultingProductData);
 
   /*
     |--------------------------------------------------------------------------
@@ -935,27 +1286,29 @@ export const restoreProduct = async (productId, actorUserId) => {
 
   /*
     |--------------------------------------------------------------------------
-    | Revalidate Category
+    | Revalidate Master-Data Dependencies
     |--------------------------------------------------------------------------
     |
-    | The category may have changed while the Product
-    | was deleted.
+    | Any dependency may have changed while
+    | the Product was deleted.
     |--------------------------------------------------------------------------
     */
 
-  await validateProductCategory(product.category, product.status);
+  await validateProductMasterDataDependencies({
+    category: product.category,
+
+    brand: product.brand,
+
+    sizeGuide: product.sizeGuide,
+
+    collections: product.collections,
+
+    status: product.status,
+  });
 
   /*
     |--------------------------------------------------------------------------
     | Revalidate Active Product Requirements
-    |--------------------------------------------------------------------------
-    |
-    | An active Product still requires:
-    |
-    | - An active category path
-    | - At least one active variant
-    | - At least one image
-    | - Exactly one primary image
     |--------------------------------------------------------------------------
     */
 
@@ -963,6 +1316,7 @@ export const restoreProduct = async (productId, actorUserId) => {
 
   product.set({
     deletedAt: null,
+
     deletedBy: null,
 
     updatedBy: actorUserId,
