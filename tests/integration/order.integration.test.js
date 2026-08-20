@@ -72,6 +72,11 @@ import {
   PAYMENT_RECONCILIATION_STATES,
 } from "../../src/modules/payments/payment-reconciliation.service.js";
 
+import {
+  createActiveBrandFixture,
+  resolveProductBrandRequestValue,
+} from "../helpers/product-brand-test.helper.js";
+
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
 
@@ -128,16 +133,27 @@ const createActiveCategoryFixture = async (overrides = {}) => {
 const createActiveProductFixture = async (overrides = {}) => {
   const {
     category,
+
+    brand: suppliedBrand,
+
     name: suppliedName,
+
     slug: suppliedSlug,
+
     images: suppliedImages,
+
     variants: suppliedVariants,
+
     ...remainingOverrides
   } = overrides;
 
   if (!category) {
     throw new Error("Active Product fixture requires a Category ID");
   }
+
+  const brand = suppliedBrand ?? (await createActiveBrandFixture());
+
+  const productBrandValue = resolveProductBrandRequestValue(brand);
 
   const { agent } = await createAuthenticatedAdminAgent();
 
@@ -186,7 +202,7 @@ const createActiveProductFixture = async (overrides = {}) => {
     .send({
       shortDescription: "Order integration test Product.",
       description: "An active Product used by Order integration tests.",
-      brand: "Aayu & Aura",
+      brand: productBrandValue,
       materials: ["100% Cotton"],
       careInstructions: ["Machine wash cold"],
       countryOfOrigin: "India",
