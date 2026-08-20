@@ -9195,6 +9195,38 @@ to:
   }
 }
 |--------------------------------------------------------------------------
+Part 212.6 — Product Request Validation Migration
+The Product request contract is now:
+
+CREATE PRODUCT
+
+
+category
+   ↓
+Category ObjectId
+   REQUIRED
+
+
+brand
+   ↓
+Brand ObjectId
+   REQUIRED
+
+
+sizeGuide
+   ↓
+SizeGuide ObjectId | null
+   OPTIONAL
+
+
+collections
+   ↓
+Collection ObjectId[]
+   OPTIONAL
+   UNIQUE IDs
+   MAX 50
+
+This follows the master-data dependency architecture where Category, Brand, SizeGuide and Collection precede Product.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

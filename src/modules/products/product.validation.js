@@ -74,15 +74,73 @@ const emptyObjectSchema = z.preprocess(
   z.strictObject({}),
 );
 
-const objectIdSchema = z
-  .string({
-    error: "Product category ID is required",
+/*
+|--------------------------------------------------------------------------
+| MongoDB ObjectId
+|--------------------------------------------------------------------------
+*/
+
+const createObjectIdSchema = (fieldName) => {
+  return z
+    .string({
+      error: `${fieldName} is required`,
+    })
+    .trim()
+    .regex(/^[a-fA-F0-9]{24}$/, {
+      error: `${fieldName} must be a valid MongoDB ObjectId`,
+    })
+    .toLowerCase();
+};
+
+const productIdSchema = createObjectIdSchema("Product ID");
+
+const categoryIdSchema = createObjectIdSchema("Product category ID");
+
+const brandIdSchema = createObjectIdSchema("Product brand ID");
+
+const sizeGuideIdSchema = createObjectIdSchema("Product size guide ID");
+
+const collectionIdSchema = createObjectIdSchema("Product collection ID");
+
+const variantIdSchema = createObjectIdSchema("Product variant ID");
+
+const actorIdSchema = createObjectIdSchema("Actor ID");
+
+/*
+|--------------------------------------------------------------------------
+| Product Collections
+|--------------------------------------------------------------------------
+*/
+
+const MAX_PRODUCT_COLLECTIONS = 50;
+
+const productCollectionsSchema = z
+  .array(collectionIdSchema, {
+    error: "Product collections must be an array",
   })
-  .trim()
-  .regex(/^[a-fA-F0-9]{24}$/, {
-    error: "Value must be a valid MongoDB ObjectId",
+  .max(MAX_PRODUCT_COLLECTIONS, {
+    error: `Product cannot belong to more than ${MAX_PRODUCT_COLLECTIONS} collections`,
   })
-  .toLowerCase();
+  .superRefine((collectionIds, context) => {
+    const seen = new Set();
+
+    collectionIds.forEach((collectionId, index) => {
+      if (seen.has(collectionId)) {
+        context.addIssue({
+          code: "custom",
+
+          message:
+            "Product collections cannot contain duplicate Collection IDs",
+
+          path: [index],
+        });
+
+        return;
+      }
+
+      seen.add(collectionId);
+    });
+  });
 
 /*
 |--------------------------------------------------------------------------
@@ -876,7 +934,7 @@ const productSeoSchema = z.strictObject({
 */
 
 const productIdParamsSchema = z.strictObject({
-  productId: objectIdSchema,
+  productId: productIdSchema,
 });
 
 /*
@@ -886,9 +944,9 @@ const productIdParamsSchema = z.strictObject({
 */
 
 const productVariantParamsSchema = z.strictObject({
-  productId: objectIdSchema,
+  productId: productIdSchema,
 
-  variantId: objectIdSchema,
+  variantId: variantIdSchema,
 });
 
 /*
@@ -1024,19 +1082,19 @@ const createProductBodySchema = z.strictObject({
     })
     .optional(),
 
-  category: objectIdSchema,
+  /*
+|--------------------------------------------------------------------------
+| Master Data Dependencies
+|--------------------------------------------------------------------------
+*/
 
-  brand: z
-    .string({
-      error: "Product brand is required",
-    })
-    .trim()
-    .min(1, {
-      error: "Product brand is required",
-    })
-    .max(100, {
-      error: "Product brand cannot exceed 100 characters",
-    }),
+  category: categoryIdSchema,
+
+  brand: brandIdSchema,
+
+  sizeGuide: sizeGuideIdSchema.nullable().optional(),
+
+  collections: productCollectionsSchema.optional(),
 
   attributes: z
     .array(productAttributeSchema)
@@ -1153,19 +1211,19 @@ const adminProductListQuerySchema = z.strictObject({
     .default(20),
 
   /*
-    |--------------------------------------------------------------------------
-    | Search
-    |--------------------------------------------------------------------------
-    |
-    | Later this will search:
-    |
-    | - Product name
-    | - Slug
-    | - Brand
-    | - Tags
-    | - Variant SKU
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Search
+|--------------------------------------------------------------------------
+|
+| Search will eventually support:
+|
+| - Product name
+| - Product slug
+| - Product tags
+| - Variant SKU
+| - Brand name through Brand master-data lookup
+|--------------------------------------------------------------------------
+*/
 
   search: z
     .string({
@@ -1181,12 +1239,18 @@ const adminProductListQuerySchema = z.strictObject({
     .optional(),
 
   /*
-    |--------------------------------------------------------------------------
-    | Category
-    |--------------------------------------------------------------------------
-    */
+|--------------------------------------------------------------------------
+| Master Data Filters
+|--------------------------------------------------------------------------
+*/
 
-  category: objectIdSchema.optional(),
+  category: categoryIdSchema.optional(),
+
+  brand: brandIdSchema.optional(),
+
+  sizeGuide: sizeGuideIdSchema.optional(),
+
+  collection: collectionIdSchema.optional(),
 
   /*
     |--------------------------------------------------------------------------
@@ -1292,9 +1356,9 @@ const adminProductInventoryLedgerListQuerySchema = z
       |--------------------------------------------------------------------------
       */
 
-    product: objectIdSchema.optional(),
+    product: productIdSchema.optional(),
 
-    variantId: objectIdSchema.optional(),
+    variantId: variantIdSchema.optional(),
 
     /*
       |--------------------------------------------------------------------------
@@ -1332,7 +1396,7 @@ const adminProductInventoryLedgerListQuerySchema = z
       |--------------------------------------------------------------------------
       */
 
-    actor: objectIdSchema.optional(),
+    actor: actorIdSchema.optional(),
 
     /*
       |--------------------------------------------------------------------------
@@ -1422,7 +1486,17 @@ const publicProductListQuerySchema = z
       })
       .optional(),
 
-    category: objectIdSchema.optional(),
+    /*
+|--------------------------------------------------------------------------
+| Master Data Filters
+|--------------------------------------------------------------------------
+*/
+
+    category: categoryIdSchema.optional(),
+
+    brand: brandIdSchema.optional(),
+
+    collection: collectionIdSchema.optional(),
 
     isFeatured: queryBooleanSchema.optional(),
 
