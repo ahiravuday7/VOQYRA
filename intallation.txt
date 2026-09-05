@@ -9296,7 +9296,33 @@ Part 212.17.3 — Verify Product Master-Data Indexes
 Part 212.17.3.1 — Verify Text Index Fields
 Part 212.17.4 — Final Product Master-Data Schema Check
 |--------------------------------------------------------------------------
+Part 213.1 — Seed Data Design 🌱
+Goal
+
+We want one development command that can create realistic master data in the correct dependency order:
+
+Category
+   ↓
+Brand
+   ↓
+SizeGuide
+   ↓
+Collection
+   ↓
+Product
 |--------------------------------------------------------------------------
+Part 213.2 — Category Seed 🌱
+Part 213.3 — Brand Seed 🌱
+Part 213.4 — SizeGuide Seed 🌱
+Part 213.5 — Collection Seed 🌱
+Part 213.6 — Product Seed 🌱
+Part 213.7 — Main Seed Runner 🌱
+Part 213.8 — Add npm run seed
+Part 213.9.1 — Seed Import Preflight
+Part 213.9.2 — Seed Database Target Preflight
+Part 213.9.3 — First Seed Execution 🌱
+npm run seed
+Part 213.9.5 — Verify No Duplicate Seed Records
 |--------------------------------------------------------------------------
 
 info:
