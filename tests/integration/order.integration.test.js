@@ -79,6 +79,8 @@ import {
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 const adminProductUrl = "/api/v1/admin/products";
+const adminCollectionUrl = "/api/v1/admin/collections";
+const adminSizeGuideUrl = "/api/v1/admin/size-guides";
 
 let fixtureSequence = 0;
 
@@ -2591,6 +2593,418 @@ describe("POST /api/v1/orders", () => {
     expect(String(ledger.actor)).toBe(String(customer._id));
   });
 
+  it("rejects checkout when the Product Brand becomes inactive", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const brand = await createActiveBrandFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+      brand,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * Product was valid when created.
+     * Now disable its Brand before checkout.
+     */
+    brand.status = "inactive";
+
+    await brand.save();
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_PRODUCT_UNAVAILABLE");
+
+    /*
+     * Checkout failure must not create an Order.
+     */
+    expect(await Order.countDocuments()).toBe(0);
+
+    /*
+     * Checkout failure must not create Inventory Ledger entries.
+     */
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+
+    /*
+     * Inventory reservation must remain unchanged.
+     */
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock,
+    );
+  });
+
+  it("rejects checkout when the Product Brand is deleted", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const brand = await createActiveBrandFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+      brand,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * Soft-delete the Brand after the Product
+     * has already been created.
+     */
+    brand.deletedAt = new Date();
+
+    await brand.save();
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_PRODUCT_UNAVAILABLE");
+
+    /*
+     * No Order should be created.
+     */
+    expect(await Order.countDocuments()).toBe(0);
+
+    /*
+     * No inventory operation should occur.
+     */
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock,
+    );
+  });
+
+  it("rejects checkout when the Product Category becomes inactive", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * Product was valid when created.
+     * Disable its Category before checkout.
+     */
+    await Category.findByIdAndUpdate(category._id, {
+      status: "inactive",
+    });
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_PRODUCT_UNAVAILABLE");
+
+    /*
+     * Checkout failure must not create an Order.
+     */
+    expect(await Order.countDocuments()).toBe(0);
+
+    /*
+     * No inventory ledger entry should be created.
+     */
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+
+    /*
+     * No stock should be reserved.
+     */
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock,
+    );
+  });
+
+  it("rejects checkout when the Product Category is deleted", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * Soft-delete the Category after the Product
+     * has already been created.
+     */
+    await Category.findByIdAndUpdate(category._id, {
+      deletedAt: new Date(),
+    });
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(409);
+
+    expect(response.body.errorCode).toBe("ORDER_PRODUCT_UNAVAILABLE");
+
+    /*
+     * No Order should be created.
+     */
+    expect(await Order.countDocuments()).toBe(0);
+
+    /*
+     * No inventory ledger entry should be created.
+     */
+    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+
+    /*
+     * Inventory reservation must remain unchanged.
+     */
+    const unchangedProduct = await Product.findById(product._id).lean();
+
+    const unchangedVariant = findProductVariant(unchangedProduct, variant._id);
+
+    expect(unchangedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock,
+    );
+  });
+
+  it("allows checkout when the Product Collection becomes inactive", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    fixtureSequence += 1;
+
+    const collectionResponse = await adminAgent
+      .post(adminCollectionUrl)
+      .send({
+        name: `Order Checkout Collection ${fixtureSequence}`,
+
+        slug: `order-checkout-collection-${fixtureSequence}`,
+
+        description: "Collection used to verify Order checkout behavior.",
+
+        status: "active",
+
+        isFeatured: false,
+
+        sortOrder: fixtureSequence,
+      })
+      .expect(201);
+
+    const collection = collectionResponse.body.data.collection;
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      collections: [collection.id],
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * Collection becomes inactive after Product creation.
+     *
+     * This must NOT make the Product unavailable for checkout.
+     */
+    await adminAgent
+      .patch(`${adminCollectionUrl}/${collection.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+
+        variantId: variant._id,
+
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+
+    expect(response.body.data.order).toBeDefined();
+
+    /*
+     * Successful checkout must create the Order.
+     */
+    const createdOrder = await Order.findById(
+      response.body.data.order.id,
+    ).lean();
+
+    expect(createdOrder).toBeTruthy();
+
+    /*
+     * Inventory must still be reserved normally.
+     */
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    expect(updatedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock + 1,
+    );
+  });
+
+  it("allows checkout when the Product SizeGuide becomes inactive", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    fixtureSequence += 1;
+
+    /*
+     * Create an active generic SizeGuide.
+     *
+     * category:null means it can be used by any Product Category.
+     */
+    const sizeGuideResponse = await adminAgent
+      .post(adminSizeGuideUrl)
+      .send({
+        name: `Order Checkout Size Guide ${fixtureSequence}`,
+
+        slug: `order-checkout-size-guide-${fixtureSequence}`,
+
+        category: null,
+
+        unit: "cm",
+
+        columns: [
+          {
+            key: "chest",
+            label: "Chest",
+            sortOrder: 1,
+          },
+        ],
+
+        rows: [
+          {
+            size: "M",
+
+            measurements: [
+              {
+                key: "chest",
+                value: "100",
+              },
+            ],
+
+            sortOrder: 1,
+          },
+        ],
+
+        status: "active",
+
+        sortOrder: fixtureSequence,
+      })
+      .expect(201);
+
+    const sizeGuide = sizeGuideResponse.body.data.sizeGuide;
+
+    /*
+     * Create an active Product using the SizeGuide.
+     */
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      sizeGuide: sizeGuide.id,
+    });
+
+    const variant = product.variants[0];
+
+    /*
+     * SizeGuide becomes inactive after Product creation.
+     *
+     * This must NOT block checkout.
+     */
+    await adminAgent
+      .patch(`${adminSizeGuideUrl}/${sizeGuide.id}`)
+      .send({
+        status: "inactive",
+      })
+      .expect(200);
+
+    const response = await customerAgent.post("/api/v1/orders").send(
+      createOrderRequestBody({
+        productId: product._id,
+
+        variantId: variant._id,
+
+        quantity: 1,
+      }),
+    );
+
+    expect(response.status).toBe(201);
+
+    /*
+     * Order must be created normally.
+     */
+    expect(response.body.data.order).toBeDefined();
+
+    const createdOrder = await Order.findById(
+      response.body.data.order.id,
+    ).lean();
+
+    expect(createdOrder).toBeTruthy();
+
+    /*
+     * Inventory reservation must still happen normally.
+     */
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    expect(updatedVariant.inventory.reservedStock).toBe(
+      variant.inventory.reservedStock + 1,
+    );
+  });
+
   /*
     |--------------------------------------------------------------------------
     | Duplicate Variant Request
@@ -2909,6 +3323,137 @@ describe("POST /api/v1/orders", () => {
     expect(await Order.countDocuments()).toBe(0);
 
     expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+  });
+
+  it("prevents concurrent Order creation from overselling Product inventory", async () => {
+    const { agent: firstCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const { agent: secondCustomerAgent } =
+      await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+
+      variants: [
+        {
+          sku: "CONCURRENT-BLK-M",
+
+          size: "M",
+
+          color: {
+            name: "Black",
+
+            code: "#000000",
+          },
+
+          pricing: {
+            buyingPrice: 300,
+
+            sellingPrice: 799,
+
+            discountPrice: 699,
+
+            currency: "INR",
+          },
+
+          inventory: {
+            stock: 1,
+
+            reservedStock: 0,
+
+            lowStockThreshold: 1,
+          },
+
+          shipping: {
+            weightInGrams: 250,
+          },
+
+          isActive: true,
+        },
+      ],
+    });
+
+    const variant = product.variants[0];
+
+    const requestBody = createOrderRequestBody({
+      productId: product._id,
+
+      variantId: variant._id,
+
+      quantity: 1,
+    });
+
+    /*
+     * Both customers attempt to reserve the only
+     * available unit concurrently.
+     */
+    const [firstResponse, secondResponse] = await Promise.all([
+      firstCustomerAgent.post("/api/v1/orders").send(requestBody),
+
+      secondCustomerAgent.post("/api/v1/orders").send(requestBody),
+    ]);
+
+    const responses = [firstResponse, secondResponse];
+
+    const successfulResponses = responses.filter(
+      (response) => response.status === 201,
+    );
+
+    const rejectedResponses = responses.filter(
+      (response) => response.status === 409,
+    );
+
+    /*
+     * Exactly one checkout may reserve the
+     * only available unit.
+     */
+    expect(successfulResponses).toHaveLength(1);
+
+    expect(rejectedResponses).toHaveLength(1);
+
+    expect([
+      "ORDER_INSUFFICIENT_AVAILABLE_STOCK",
+      "ORDER_INVENTORY_RESERVATION_CONFLICT",
+    ]).toContain(rejectedResponses[0].body.errorCode);
+
+    /*
+     * Only one Order may exist.
+     */
+    expect(await Order.countDocuments()).toBe(1);
+
+    /*
+     * Product inventory must never oversell.
+     */
+    const updatedProduct = await Product.findById(product._id).lean();
+
+    const updatedVariant = findProductVariant(updatedProduct, variant._id);
+
+    expect(updatedVariant.inventory.stock).toBe(1);
+
+    expect(updatedVariant.inventory.reservedStock).toBe(1);
+
+    expect(
+      updatedVariant.inventory.stock - updatedVariant.inventory.reservedStock,
+    ).toBe(0);
+
+    /*
+     * Only the successful reservation
+     * may create a Ledger entry.
+     */
+    const ledgerEntries = await ProductInventoryLedger.find({
+      product: product._id,
+
+      variantId: variant._id,
+
+      operation: "reserve",
+    }).lean();
+
+    expect(ledgerEntries).toHaveLength(1);
+
+    expect(ledgerEntries[0].quantity).toBe(1);
   });
 });
 

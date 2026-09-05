@@ -9254,6 +9254,50 @@ Inactive Collection does not invalidate a Product. Deleted Collection does.
 |--------------------------------------------------------------------------
 Part 212.11.5 — Full Product Regression Checkpoint
 |--------------------------------------------------------------------------
+Part 212 — Product Dependency Migration
+|--------------------------------------------------------------------------
+Part 212.12.1 — Order Regression Baseline
+npx vitest run tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism
+|--------------------------------------------------------------------------
+Part 212.12.3 — Order Snapshot Brand Compatibility
+Select-String -Path "src/modules/orders/*.js" -Pattern "brand"
+|--------------------------------------------------------------------------
+Part 212.12.4.1 — Inactive Brand Must Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.4.2 — Deleted Brand Must Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.4.3 — Inactive Category Must Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.4.4 — Deleted Category Must Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.4.5 — Inactive Collection Must NOT Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.4.6 — Inactive SizeGuide Must NOT Block Checkout
+|--------------------------------------------------------------------------
+Part 212.12.5 — Inventory Reservation Regression
+|--------------------------------------------------------------------------
+Part 212.12.6 — Order Lifecycle Regression
+|--------------------------------------------------------------------------
+Part 212.13.1 — Payment Regression Baseline
+|--------------------------------------------------------------------------
+Part 212.14.1 — Master Data + Commerce Full Regression
+|--------------------------------------------------------------------------
+Part 212.15.1 — Legacy Brand Usage Audit
+|--------------------------------------------------------------------------
+Part 212.15.2 — Seed / Sample File Audit
+|--------------------------------------------------------------------------
+Part 212.16.1 — API Documentation / Product Payload Audit
+|--------------------------------------------------------------------------
+Part 212.16.2 — Check for Product API Documentation Files
+|--------------------------------------------------------------------------
+Part 212.17.1 — Final Migration Script Audit
+Part 212.17.2 — Verify Migration npm Scripts
+Part 212.17.3 — Verify Product Master-Data Indexes
+Part 212.17.3.1 — Verify Text Index Fields
+Part 212.17.4 — Final Product Master-Data Schema Check
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
 info:
 The easiest way to remember is:
