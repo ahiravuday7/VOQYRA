@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import app from "../../src/app.js";
 
@@ -14,6 +14,31 @@ import Product from "../../src/modules/products/product.model.js";
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../src/shared/constants/product-inventory.constants.js";
 
 import { createActiveBrandFixture } from "../helpers/product-brand-test.helper.js";
+
+/*
+|--------------------------------------------------------------------------
+| Image Storage Mock
+|--------------------------------------------------------------------------
+|
+| Product integration tests must not upload real files to Cloudinary.
+|--------------------------------------------------------------------------
+*/
+
+const imageStorageMocks = vi.hoisted(() => {
+  return {
+    uploadImage: vi.fn(),
+
+    deleteImage: vi.fn(),
+  };
+});
+
+vi.mock("../../src/services/image-storage.service.js", () => {
+  return {
+    uploadImage: imageStorageMocks.uploadImage,
+
+    deleteImage: imageStorageMocks.deleteImage,
+  };
+});
 
 const adminCategoryUrl = "/api/v1/admin/categories";
 
@@ -8959,5 +8984,663 @@ describe("Product master-data dependencies", () => {
       .expect(200);
 
     expect(detailsResponse.body.data.product.isDeleted).toBe(true);
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Product Image Upload
+|--------------------------------------------------------------------------
+*/
+
+describe("Product image upload", () => {
+  it("uploads the first Product image and automatically makes it primary", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Product Category
+    |--------------------------------------------------------------------------
+    */
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Draft Product Without Images
+    |--------------------------------------------------------------------------
+    */
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Image Upload Product ${suffix}`,
+
+          slug: `image-upload-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.images).toEqual([]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mock Cloudinary Upload Result
+    |--------------------------------------------------------------------------
+    */
+
+    imageStorageMocks.uploadImage.mockResolvedValueOnce({
+      url: "https://res.cloudinary.com/test/image/upload/product-image-1.webp",
+
+      publicId: "clothing-commerce/products/test/product-image-1",
+
+      width: 1200,
+
+      height: 1200,
+
+      format: "webp",
+
+      bytes: 1024,
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Upload Product Image
+    |--------------------------------------------------------------------------
+    |
+    | Multipart fields arrive as strings.
+    |
+    | isPrimary=false is intentional:
+    |
+    | because this is the first Product image,
+    | the service must still make it primary.
+    |--------------------------------------------------------------------------
+    */
+
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .field("altText", "Black cotton T-shirt")
+      .field("sortOrder", "4")
+      .field("isPrimary", "false")
+      .attach(
+        "image",
+
+        Buffer.from("fake-product-image"),
+
+        {
+          filename: "product.jpg",
+
+          contentType: "image/jpeg",
+        },
+      )
+      .expect(201);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Product image uploaded successfully");
+
+    const updatedProduct = response.body.data.product;
+
+    expect(updatedProduct.images).toHaveLength(1);
+
+    const uploadedImage = updatedProduct.images[0];
+
+    expect(uploadedImage.id).toBeTruthy();
+
+    expect(uploadedImage.url).toBe(
+      "https://res.cloudinary.com/test/image/upload/product-image-1.webp",
+    );
+
+    expect(uploadedImage.publicId).toBe(
+      "clothing-commerce/products/test/product-image-1",
+    );
+
+    expect(uploadedImage.altText).toBe("Black cotton T-shirt");
+
+    /*
+     * "4" from multipart/form-data
+     * must become number 4.
+     */
+    expect(uploadedImage.sortOrder).toBe(4);
+
+    /*
+     * Even though the request sent:
+     *
+     * isPrimary=false
+     *
+     * the first Product image must
+     * automatically become primary.
+     */
+    expect(uploadedImage.isPrimary).toBe(true);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify Storage Call
+    |--------------------------------------------------------------------------
+    */
+
+    expect(imageStorageMocks.uploadImage).toHaveBeenCalledTimes(1);
+
+    const uploadArguments = imageStorageMocks.uploadImage.mock.calls[0][0];
+
+    expect(Buffer.isBuffer(uploadArguments.buffer)).toBe(true);
+
+    expect(uploadArguments.folder).toBe(
+      `clothing-commerce/products/${product.id}`,
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Verify MongoDB
+    |--------------------------------------------------------------------------
+    */
+
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(1);
+
+    expect(storedProduct.images[0].publicId).toBe(
+      "clothing-commerce/products/test/product-image-1",
+    );
+
+    expect(storedProduct.images[0].isPrimary).toBe(true);
+  });
+
+  it("rejects Product image upload when the image file is missing", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Missing Image Product ${suffix}`,
+
+          slug: `missing-image-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    /*
+     * Clear previous mock call history so this
+     * test can prove storage was never called.
+     */
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Send multipart metadata but deliberately
+     * do NOT attach an "image" file.
+     */
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .field("altText", "Missing image test")
+      .expect(400);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_REQUIRED");
+
+    /*
+     * Cloudinary/storage must never be called.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    /*
+     * Product must remain unchanged.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(0);
+  });
+
+  it("rejects Product image upload when the file type is unsupported", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Unsupported Image Type Product ${suffix}`,
+
+          slug: `unsupported-image-type-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Deliberately attach a PDF.
+     */
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .attach(
+        "image",
+
+        Buffer.from("fake-pdf-content"),
+
+        {
+          filename: "document.pdf",
+
+          contentType: "application/pdf",
+        },
+      )
+      .expect(415);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_UNSUPPORTED_TYPE");
+
+    /*
+     * Storage must never be called for
+     * a rejected MIME type.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    /*
+     * Product remains unchanged.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(0);
+  });
+
+  it("rejects Product image upload when the file exceeds 5 MB", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Oversized Image Product ${suffix}`,
+
+          slug: `oversized-image-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * 5 MB limit means this buffer is
+     * deliberately one byte too large.
+     */
+    const oversizedImageBuffer = Buffer.alloc(5 * 1024 * 1024 + 1, 1);
+
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .attach(
+        "image",
+
+        oversizedImageBuffer,
+
+        {
+          filename: "oversized.jpg",
+
+          contentType: "image/jpeg",
+        },
+      )
+      .expect(413);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_TOO_LARGE");
+
+    /*
+     * Storage must never be called for
+     * a rejected oversized file.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    /*
+     * Product must remain unchanged.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(0);
+  });
+
+  it("rejects Product image upload when multipart metadata is invalid", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Invalid Image Metadata Product ${suffix}`,
+
+          slug: `invalid-image-metadata-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Invalid values:
+     *
+     * sortOrder = "abc"
+     * isPrimary = "yes"
+     *
+     * Both must be rejected by Zod.
+     */
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .field("sortOrder", "abc")
+      .field("isPrimary", "yes")
+      .attach(
+        "image",
+
+        Buffer.from("fake-product-image"),
+
+        {
+          filename: "product.jpg",
+
+          contentType: "image/jpeg",
+        },
+      )
+      .expect(400);
+
+    /*
+     * The exact validation errorCode may be your
+     * existing generic request-validation code.
+     *
+     * Most importantly, the request must fail
+     * before storage or MongoDB mutation.
+     */
+    expect(response.body.success).toBe(false);
+
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(0);
+  });
+
+  it("rejects Product image upload when the Product already contains 12 images", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    /*
+  |--------------------------------------------------------------------------
+  | Create Exactly 12 Existing Images
+  |--------------------------------------------------------------------------
+  */
+
+    const existingImages = Array.from(
+      {
+        length: 12,
+      },
+      (_, index) => {
+        return {
+          url: `https://example.com/products/image-limit-${suffix}-${index + 1}.jpg`,
+
+          publicId: `products/image-limit-${suffix}-${index + 1}`,
+
+          altText: `Product image ${index + 1}`,
+
+          sortOrder: index,
+
+          /*
+           * Exactly one primary image.
+           */
+          isPrimary: index === 0,
+        };
+      },
+    );
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Image Limit Product ${suffix}`,
+
+          slug: `image-limit-product-${suffix}`,
+
+          category: category.id,
+
+          images: existingImages,
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.images).toHaveLength(12);
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+  |--------------------------------------------------------------------------
+  | Attempt 13th Image
+  |--------------------------------------------------------------------------
+  */
+
+    const response = await adminAgent
+      .post(`${adminProductUrl}/${product.id}/images`)
+      .attach(
+        "image",
+
+        Buffer.from("thirteenth-image"),
+
+        {
+          filename: "image-13.jpg",
+
+          contentType: "image/jpeg",
+        },
+      )
+      .expect(409);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_LIMIT_EXCEEDED");
+
+    /*
+     * Limit is checked before storage upload.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    /*
+     * MongoDB must still contain exactly 12 images.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(12);
+  });
+
+  it("deletes the uploaded storage image when Product persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Image Persistence Failure Product ${suffix}`,
+
+          slug: `image-persistence-failure-product-${suffix}`,
+
+          category: category.id,
+
+          images: [],
+
+          status: "draft",
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    imageStorageMocks.uploadImage.mockResolvedValueOnce({
+      url: "https://res.cloudinary.com/test/image/upload/orphan-test.webp",
+
+      publicId: "clothing-commerce/products/test/orphan-test",
+
+      width: 1000,
+
+      height: 1000,
+
+      format: "webp",
+
+      bytes: 1024,
+    });
+
+    imageStorageMocks.deleteImage.mockResolvedValueOnce({
+      deleted: true,
+
+      alreadyMissing: false,
+    });
+
+    /*
+     * Product has already been created.
+     *
+     * From this point onward, force the next
+     * Product document save to fail.
+     */
+    const saveSpy = vi
+      .spyOn(Product.prototype, "save")
+      .mockRejectedValueOnce(new Error("Forced Product persistence failure"));
+
+    try {
+      const response = await adminAgent
+        .post(`${adminProductUrl}/${product.id}/images`)
+        .attach(
+          "image",
+
+          Buffer.from("fake-product-image"),
+
+          {
+            filename: "product.jpg",
+
+            contentType: "image/jpeg",
+          },
+        );
+
+      /*
+       * Product persistence failed, so the
+       * endpoint itself must fail.
+       */
+      expect(response.status).toBe(500);
+
+      /*
+       * Storage upload happened first.
+       */
+      expect(imageStorageMocks.uploadImage).toHaveBeenCalledTimes(1);
+
+      /*
+       * Compensation cleanup must remove the
+       * newly uploaded storage asset.
+       */
+      expect(imageStorageMocks.deleteImage).toHaveBeenCalledTimes(1);
+
+      expect(imageStorageMocks.deleteImage).toHaveBeenCalledWith(
+        "clothing-commerce/products/test/orphan-test",
+      );
+
+      /*
+       * MongoDB must still contain no Product images.
+       */
+      const storedProduct = await Product.findById(product.id).lean();
+
+      expect(storedProduct.images).toHaveLength(0);
+    } finally {
+      saveSpy.mockRestore();
+    }
   });
 });

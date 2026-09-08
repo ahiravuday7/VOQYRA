@@ -3,6 +3,7 @@ import { Router } from "express";
 import authenticate from "../../middlewares/authenticate.middleware.js";
 import authorizeRoles from "../../middlewares/authorize.middleware.js";
 import validateRequest from "../../middlewares/validate-request.middleware.js";
+import { uploadSingleProductImage } from "../../middlewares/image-upload.middleware.js";
 
 import { USER_ROLES } from "../../shared/constants/user.constants.js";
 
@@ -16,6 +17,7 @@ import {
   releaseProductInventoryRequestSchema,
   reserveProductInventoryRequestSchema,
   adminProductInventoryLedgerListRequestSchema,
+  uploadProductImageRequestSchema,
 } from "./product.validation.js";
 
 import {
@@ -29,6 +31,7 @@ import {
   commitProductInventoryController,
   releaseProductInventoryController,
   reserveProductInventoryController,
+  uploadProductImageController,
 } from "./product.controller.js";
 import { getAdminProductInventoryLedgerController } from "./product-inventory-ledger.controller.js";
 
@@ -153,6 +156,32 @@ router.post(
   validateRequest(commitProductInventoryRequestSchema),
   commitProductInventoryController,
 );
+
+/*
+|--------------------------------------------------------------------------
+| Upload Product Image
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/images
+|
+| IMPORTANT:
+|
+| Multer must run before Zod validation because multipart/form-data
+| fields are populated into request.body by Multer.
+|--------------------------------------------------------------------------
+*/
+
+router.post(
+  "/:productId/images",
+
+  uploadSingleProductImage,
+
+  validateRequest(uploadProductImageRequestSchema),
+
+  uploadProductImageController,
+);
+
 /*
 |--------------------------------------------------------------------------
 | Get Product by ID

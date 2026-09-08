@@ -11,6 +11,7 @@ import {
   commitProductVariantInventory,
   releaseProductVariantInventory,
   reserveProductVariantInventory,
+  uploadProductImage,
 } from "./product.service.js";
 
 import {
@@ -206,6 +207,60 @@ export const updateProductController = async (request, response) => {
     success: true,
 
     message: "Product updated successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Upload Product Image
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/images
+|--------------------------------------------------------------------------
+*/
+
+export const uploadProductImageController = async (request, response) => {
+  const { productId } = request.validated.params;
+
+  const imageData = request.validated.body;
+
+  const imageFile = request.file;
+
+  const actorUserId = request.user._id;
+
+  const product = await uploadProductImage(
+    productId,
+    imageFile,
+    imageData,
+    actorUserId,
+  );
+
+  /*
+   * uploadProductImage() appends the newly-created
+   * image subdocument to Product.images.
+   */
+  const uploadedImage = product.images.at(-1);
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      imageId: uploadedImage?._id ?? null,
+
+      actorUserId,
+    },
+    "Product image uploaded",
+  );
+
+  return response.status(201).json({
+    success: true,
+
+    message: "Product image uploaded successfully",
 
     data: {
       product: toAdminProduct(product),

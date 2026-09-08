@@ -104,6 +104,8 @@ const collectionIdSchema = createObjectIdSchema("Product collection ID");
 
 const variantIdSchema = createObjectIdSchema("Product variant ID");
 
+const imageIdSchema = createObjectIdSchema("Product image ID");
+
 const actorIdSchema = createObjectIdSchema("Actor ID");
 
 /*
@@ -485,6 +487,145 @@ const productImagesSchema = z
       });
     }
   });
+
+/*
+|--------------------------------------------------------------------------
+| Product Image Multipart Values
+|--------------------------------------------------------------------------
+|
+| multipart/form-data text fields arrive from Multer as strings.
+|
+| Examples:
+|
+| sortOrder="2"   → 2
+| isPrimary="true" → true
+|
+*/
+
+const productImageMultipartSortOrderSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value === "string") {
+      const normalizedValue = value.trim();
+
+      /*
+       * An omitted/empty optional field is
+       * treated as undefined.
+       */
+      if (normalizedValue === "") {
+        return undefined;
+      }
+
+      if (!/^\d+$/.test(normalizedValue)) {
+        return Number.NaN;
+      }
+
+      return Number(normalizedValue);
+    }
+
+    return value;
+  },
+
+  z
+    .number({
+      error: "Image sort order must be a number",
+    })
+    .int({
+      error: "Image sort order must be a whole number",
+    })
+    .min(0, {
+      error: "Image sort order cannot be negative",
+    })
+    .optional(),
+);
+
+const productImageMultipartBooleanSchema = z.preprocess(
+  (value) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value === "string") {
+      const normalizedValue = value.trim().toLowerCase();
+
+      if (normalizedValue === "") {
+        return undefined;
+      }
+
+      if (normalizedValue === "true") {
+        return true;
+      }
+
+      if (normalizedValue === "false") {
+        return false;
+      }
+    }
+
+    return value;
+  },
+
+  z
+    .boolean({
+      error: "Image primary status must be true or false",
+    })
+    .optional(),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Product Image Metadata Body
+|--------------------------------------------------------------------------
+*/
+
+const productImageMetadataBodySchema = z.strictObject({
+  altText: z
+    .string({
+      error: "Product image alt text must be a string",
+    })
+    .trim()
+    .max(150, {
+      error: "Product image alt text cannot exceed 150 characters",
+    })
+    .optional(),
+
+  sortOrder: productImageMultipartSortOrderSchema,
+
+  isPrimary: productImageMultipartBooleanSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Upload Product Image Body
+|--------------------------------------------------------------------------
+|
+| Every metadata field is optional.
+|
+| The actual file is validated separately by Multer.
+|
+*/
+
+const uploadProductImageBodySchema = productImageMetadataBodySchema;
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Image Metadata Body
+|--------------------------------------------------------------------------
+|
+| PATCH requires at least one metadata field.
+|
+*/
+
+const updateProductImageBodySchema = productImageMetadataBodySchema.refine(
+  (body) => {
+    return Object.keys(body).length > 0;
+  },
+  {
+    error: "At least one Product image field must be provided",
+  },
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -947,6 +1088,18 @@ const productVariantParamsSchema = z.strictObject({
   productId: productIdSchema,
 
   variantId: variantIdSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Product Image Parameters
+|--------------------------------------------------------------------------
+*/
+
+const productImageParamsSchema = z.strictObject({
+  productId: productIdSchema,
+
+  imageId: imageIdSchema,
 });
 
 /*
@@ -1718,4 +1871,85 @@ export const adminProductInventoryLedgerListRequestSchema = z.strictObject({
   params: emptyObjectSchema,
 
   query: adminProductInventoryLedgerListQuerySchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Upload Product Image Request
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/images
+|
+| The image file itself lives in:
+|
+| request.file
+|
+| and is validated by Multer.
+|--------------------------------------------------------------------------
+*/
+
+export const uploadProductImageRequestSchema = z.strictObject({
+  body: uploadProductImageBodySchema,
+
+  params: productIdParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Image Metadata Request
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+export const updateProductImageRequestSchema = z.strictObject({
+  body: updateProductImageBodySchema,
+
+  params: productImageParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Replace Product Image File Request
+|--------------------------------------------------------------------------
+|
+| PUT
+| /api/v1/admin/products/:productId/images/:imageId/file
+|
+| No metadata is accepted here.
+| The new image is supplied through request.file.
+|--------------------------------------------------------------------------
+*/
+
+export const replaceProductImageFileRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: productImageParamsSchema,
+
+  query: emptyObjectSchema,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Delete Product Image Request
+|--------------------------------------------------------------------------
+|
+| DELETE
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+export const deleteProductImageRequestSchema = z.strictObject({
+  body: emptyObjectSchema,
+
+  params: productImageParamsSchema,
+
+  query: emptyObjectSchema,
 });

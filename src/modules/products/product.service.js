@@ -2,7 +2,10 @@ import mongoose from "mongoose";
 
 import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
-import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
+import {
+  PRODUCT_STATUSES,
+  PRODUCT_LIMITS,
+} from "../../shared/constants/product.constants.js";
 
 import AppError from "../../shared/errors/app-error.js";
 
@@ -42,6 +45,11 @@ import { findSizeGuideById } from "../size-guides/size-guide.repository.js";
 
 import { findCollectionsByIds } from "../collections/collection.repository.js";
 
+import {
+  deleteImage,
+  uploadImage,
+} from "../../services/image-storage.service.js";
+
 /*
 |--------------------------------------------------------------------------
 | Product Errors
@@ -64,6 +72,26 @@ const createProductNotFoundError = () => {
   return new AppError("Product was not found", 404, {
     errorCode: "PRODUCT_NOT_FOUND",
   });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Product Image Errors
+|--------------------------------------------------------------------------
+*/
+
+const createProductImageLimitError = () => {
+  return new AppError(
+    `Product cannot contain more than ${PRODUCT_LIMITS.MAX_IMAGES} images`,
+    409,
+    {
+      errorCode: "PRODUCT_IMAGE_LIMIT_EXCEEDED",
+
+      details: {
+        maxImages: PRODUCT_LIMITS.MAX_IMAGES,
+      },
+    },
+  );
 };
 
 /*
@@ -1220,6 +1248,170 @@ export const updateProduct = async (productId, updateData, actorUserId) => {
   });
 
   return saveProductDocument(product);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Upload Product Image
+|--------------------------------------------------------------------------
+|
+| POST
+| /api/v1/admin/products/:productId/images
+|
+| Flow:
+|
+| 1. Find Product.
+| 2. Check Product image limit.
+| 3. Upload image to storage.
+| 4. Add image metadata to Product.
+| 5. Save Product.
+| 6. If MongoDB save fails, delete the newly-uploaded image.
+|--------------------------------------------------------------------------
+*/
+
+export const uploadProductImage = async (
+  productId,
+  imageFile,
+  imageData,
+  actorUserId,
+) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product
+  |--------------------------------------------------------------------------
+  */
+
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  const existingImages = product.images ?? [];
+
+  /*
+  |--------------------------------------------------------------------------
+  | Enforce Product Image Limit
+  |--------------------------------------------------------------------------
+  |
+  | Check before uploading to Cloudinary so we do not upload an asset
+  | that the Product cannot accept.
+  |--------------------------------------------------------------------------
+  */
+
+  if (existingImages.length >= PRODUCT_LIMITS.MAX_IMAGES) {
+    throw createProductImageLimitError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Determine Primary Image
+  |--------------------------------------------------------------------------
+  |
+  | First image:
+  | → always primary.
+  |
+  | Later image with isPrimary:true:
+  | → becomes the only primary image.
+  |--------------------------------------------------------------------------
+  */
+
+  const shouldBePrimary =
+    existingImages.length === 0 || imageData.isPrimary === true;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Determine Default Sort Order
+  |--------------------------------------------------------------------------
+  |
+  | If the caller does not provide sortOrder,
+  | append the image after the current highest sort order.
+  |--------------------------------------------------------------------------
+  */
+
+  const nextSortOrder =
+    existingImages.reduce((highestSortOrder, image) => {
+      return Math.max(highestSortOrder, image.sortOrder ?? 0);
+    }, -1) + 1;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Upload to Image Storage
+  |--------------------------------------------------------------------------
+  */
+
+  const storedImage = await uploadImage({
+    buffer: imageFile.buffer,
+
+    folder: `clothing-commerce/products/${product._id}`,
+  });
+
+  try {
+    /*
+    |--------------------------------------------------------------------------
+    | Normalize Existing Primary Image
+    |--------------------------------------------------------------------------
+    */
+
+    if (shouldBePrimary) {
+      for (const image of existingImages) {
+        image.isPrimary = false;
+      }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Add Product Image
+    |--------------------------------------------------------------------------
+    */
+
+    product.images.push({
+      url: storedImage.url,
+
+      publicId: storedImage.publicId,
+
+      altText: imageData.altText ?? product.name,
+
+      sortOrder: imageData.sortOrder ?? nextSortOrder,
+
+      isPrimary: shouldBePrimary,
+    });
+
+    product.updatedBy = actorUserId;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Save Product
+    |--------------------------------------------------------------------------
+    */
+
+    return await saveProductDocument(product);
+  } catch (error) {
+    /*
+    |--------------------------------------------------------------------------
+    | Compensation Cleanup
+    |--------------------------------------------------------------------------
+    |
+    | Cloudinary succeeded but MongoDB failed.
+    |
+    | Remove the newly-uploaded asset so we do not leave
+    | an orphan file in storage.
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+      await deleteImage(storedImage.publicId);
+    } catch {
+      /*
+       * Preserve the original Product persistence error.
+       *
+       * Storage cleanup hardening/logging will be tested
+       * separately during the image regression phase.
+       */
+    }
+
+    throw error;
+  }
 };
 
 /*

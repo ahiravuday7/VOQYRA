@@ -37,6 +37,27 @@ const environmentSchema = z.object({
     message: "ADMIN_URL must be a valid URL",
   }),
 
+  /*
+  |--------------------------------------------------------------------------
+  | Cloudinary
+  |--------------------------------------------------------------------------
+  */
+
+  CLOUDINARY_CLOUD_NAME: z
+    .string()
+    .trim()
+    .min(1, "CLOUDINARY_CLOUD_NAME is required"),
+
+  CLOUDINARY_API_KEY: z
+    .string()
+    .trim()
+    .min(1, "CLOUDINARY_API_KEY is required"),
+
+  CLOUDINARY_API_SECRET: z
+    .string()
+    .trim()
+    .min(1, "CLOUDINARY_API_SECRET is required"),
+
   JWT_ACCESS_SECRET: z
     .string()
     .min(64, "JWT_ACCESS_SECRET must contain at least 64 characters"),

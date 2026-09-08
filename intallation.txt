@@ -9324,6 +9324,172 @@ Part 213.9.3 — First Seed Execution 🌱
 npm run seed
 Part 213.9.5 — Verify No Duplicate Seed Records
 |--------------------------------------------------------------------------
+Part 214.1 — Product Image Upload Design 📸
+Upload architecture
+
+We'll use:
+
+Admin
+  ↓
+multipart/form-data
+  ↓
+Express route
+  ↓
+Authentication
+  ↓
+Admin authorization
+  ↓
+Multer
+  ↓
+File validation
+  ↓
+Cloudinary
+  ↓
+Cloudinary returns:
+  secure_url
+  public_id
+  ↓
+Product Service
+  ↓
+Product.images[]
+  ↓
+MongoDB
+
+Technology:
+Multer
+→ receives the uploaded file
+
+Cloudinary
+→ stores the actual image
+
+MongoDB
+→ stores only image metadata
+
+Planned file structure
+
+We'll likely add:
+
+src/
+├── config/
+│   └── cloudinary.js
+│
+├── middlewares/
+│   └── image-upload.middleware.js
+│
+├── services/
+│   └── image-storage.service.js
+│
+└── modules/
+    └── products/
+        ├── product.routes.js
+        ├── product.controller.js
+        ├── product.service.js
+        ├── product.repository.js
+        └── product.validation.js
+Result ✅
+
+Final design:
+
+Multer memory upload
+       ↓
+Validate JPEG / PNG / WebP
+       ↓
+Max 5 MB
+       ↓
+Cloudinary
+       ↓
+Storage abstraction
+       ↓
+Existing Product.images[]
+       ↓
+URL + publicId + metadata
+|--------------------------------------------------------------------------
+Part 214.2 — Install Image Upload Dependencies 📦
+
+Now we make the first actual project change for Product image upload.
+
+1. Run this command
+
+From:
+
+cd "E:\uday\Projects\MERN Project\Cloathing\backend"
+
+run:
+
+npm install multer cloudinary
+|--------------------------------------------------------------------------
+Part 214.3.1 — Add Cloudinary Environment Variables
+
+Cloudinary’s current Node SDK requires the backend configuration values cloud_name, api_key, and api_secret. The API secret must remain server-side and should never be committed to source control.
+|--------------------------------------------------------------------------
+Part 214.3.2 — Create Cloudinary Config
+
+Cloudinary’s current Node SDK recommends importing the v2 API and configuring cloud_name, api_key, and api_secret on the server.
+|--------------------------------------------------------------------------
+Part 214.4 — Multer Image Upload Middleware
+Part 214.5 — Image Storage Service ☁️
+Part 214.6.1 — Product Image Request Validation 🧪
+
+Now we add Zod validation only.
+Part 214.6.2 — Product Repository Image Operations
+Part 214.6.3 — Product Image Service: Upload Image
+Part 214.6.4 — Product Image Controller: Upload
+Part 214.6.5 — Add Product Image Upload Route
+
+What the endpoint now accepts
+POST
+/api/v1/admin/products/:productId/images
+
+Content type:
+
+multipart/form-data
+
+Fields:
+
+image       required file
+altText     optional
+sortOrder   optional
+isPrimary   optional
+
+Example:
+
+image       black-shirt.jpg
+altText     Black cotton shirt
+sortOrder   2
+isPrimary   true
+What happens now
+Request
+  ↓
+Admin authenticated ✅
+  ↓
+JPEG/PNG/WebP validation
+  ↓
+≤ 5 MB
+  ↓
+Zod metadata validation
+  ↓
+Find Product
+  ↓
+Check < 12 images
+  ↓
+Cloudinary upload
+  ↓
+Product.images.push(...)
+  ↓
+MongoDB save
+  ↓
+201 Created ✅
+Part 214.6.6 — Upload Endpoint Integration Test
+
+Next: Part 214.6.7 — Upload Validation Regression
+Part 214.6.7.1 — Reject Missing Image
+Part 214.6.7.2 — Reject Unsupported File Type
+Part 214.6.7.3 — Reject Image Larger Than 5 MB
+Part 214.6.7.4 — Reject Invalid Multipart Metadata
+Part 214.6.7.5 — Reject the 13th Product Image
+Part 214.6.7.6 — Cleanup Cloudinary Image When Product Save Fails
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 
 info:
 The easiest way to remember is:
