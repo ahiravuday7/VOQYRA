@@ -9669,6 +9669,8 @@ Part 215.5.6 — Cart Mapper: Price, Stock, Availability & Subtotal
 Part 215.5.7 — Update Cart Item Quantity Service
 Part 215.5.8 — Delete Single Cart Item Service
 Part 215.5.9 — Clear Entire Cart Service
+
+Part 215.6 — Cart Controller 🛒
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
