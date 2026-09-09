@@ -9633,6 +9633,16 @@ Get-ChildItem .\src\modules -Directory | Select-Object -ExpandProperty Name
 Send me that output. Then we'll do only Part 215.2 — Create the Cart Model.
 |--------------------------------------------------------------------------
 Part 215.2 — Create Cart Model 🛒
+Part 215.3 — Cart Constants + Validation
+For this step we’ll add only the Cart limits and Zod request schemas.
+
+We’ll use:
+
+Maximum distinct Cart items: 50
+Maximum quantity per Cart item: 99
+Minimum quantity: 1
+
+Stock availability itself will be checked later in the Cart service, not in Zod.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
