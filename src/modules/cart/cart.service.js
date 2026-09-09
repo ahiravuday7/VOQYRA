@@ -9,6 +9,7 @@ import { CART_LIMITS } from "./cart.constants.js";
 import {
   findOrCreateCartByUserId,
   saveCartDocument,
+  findCartByUserId,
 } from "./cart.repository.js";
 
 /*
@@ -315,10 +316,45 @@ const addCartItem = async (userId, { productId, variantId, quantity }) => {
   return saveCartDocument(cart);
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Cart
+|--------------------------------------------------------------------------
+|
+| Reading a Cart must NOT fail merely because a Product or Variant became
+| unavailable after it was added.
+|
+| The mapper will later mark those items unavailable.
+|--------------------------------------------------------------------------
+*/
+
+const getCart = async (userId) => {
+  const cart = await findCartByUserId(userId, {
+    populateProducts: true,
+  });
+
+  /*
+    |--------------------------------------------------------------------------
+    | No Cart Yet
+    |--------------------------------------------------------------------------
+    |
+    | GET should not create database state just because the customer opened
+    | the Cart page.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!cart) {
+    return null;
+  }
+
+  return cart;
+};
+
 export {
   findAndValidateCartVariant,
   resolveCartProductVariant,
   validateCartProduct,
   validateCartQuantityAgainstStock,
   addCartItem,
+  getCart,
 };

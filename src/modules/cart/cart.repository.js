@@ -6,10 +6,44 @@ import Cart from "./cart.model.js";
 |--------------------------------------------------------------------------
 */
 
-const findCartByUserId = async (userId) => {
-  return Cart.findOne({
+const findCartByUserId = async (userId, options = {}) => {
+  const { populateProducts = false } = options;
+
+  let query = Cart.findOne({
     user: userId,
   });
+
+  /*
+  |--------------------------------------------------------------------------
+  | Populate Current Product Data
+  |--------------------------------------------------------------------------
+  |
+  | Cart itself stores only:
+  |
+  | product
+  | variantId
+  | quantity
+  |
+  | Current Product/Variant data is loaded when the Cart is read.
+  |--------------------------------------------------------------------------
+  */
+
+  if (populateProducts) {
+    query = query.populate({
+      path: "items.product",
+
+      select: {
+        name: 1,
+        slug: 1,
+        status: 1,
+        deletedAt: 1,
+        images: 1,
+        variants: 1,
+      },
+    });
+  }
+
+  return query;
 };
 
 /*
