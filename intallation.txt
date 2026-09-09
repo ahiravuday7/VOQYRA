@@ -9643,6 +9643,7 @@ Maximum quantity per Cart item: 99
 Minimum quantity: 1
 
 Stock availability itself will be checked later in the Cart service, not in Zod.
+Part 215.4 — Cart Repository
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
