@@ -9515,7 +9515,124 @@ Part 214.9.1 — Full Product Image + Product Regression
 Part 214.9.1 — Full Product Regression.
 Part 214.9.2 — Real Cloudinary Smoke Test
 |--------------------------------------------------------------------------
+Part 215.1 — Cart Module Design
+
+Next roadmap item: Cart 🛒
+
+For this step, no code changes yet.
+
+Proposed Cart architecture
+
+One authenticated user will have at most one active Cart.
+
+User
+ ↓
+Cart
+ ├─ Item 1 → Product + Variant
+ ├─ Item 2 → Product + Variant
+ └─ Item 3 → Product + Variant
+
+A Cart item should reference:
+
+{
+  product: ObjectId,
+  variantId: ObjectId,
+  quantity: Number
+}
+Important rule
+
+We should not store permanent price totals in Cart.
+
+For example, avoid making this the source of truth:
+
+{
+  price: 999,
+  discountPrice: 799,
+  total: 1598
+}
+
+because Product prices can change.
+
+Instead:
+
+Cart stores:
+Product ID
+Variant ID
+Quantity
+
+When Cart is fetched:
+        ↓
+load current Product
+        ↓
+load current Variant
+        ↓
+calculate current price
+        ↓
+calculate subtotal
+
+The Order will still take the final historical price snapshot during checkout.
+
+Cart operations we will build
+GET    /api/v1/cart
+POST   /api/v1/cart/items
+PATCH  /api/v1/cart/items/:itemId
+DELETE /api/v1/cart/items/:itemId
+DELETE /api/v1/cart
+
+Behavior:
+
+POST item
+Product + same Variant already exists
+        ↓
+increase quantity
+
+Otherwise
+        ↓
+add new Cart item
+
+We will also validate stock, but adding to Cart will NOT reserve inventory.
+
+Inventory reservation remains at Order creation/checkout:
+
+Add to Cart
+    ↓
+No reservation
+
+Checkout
+    ↓
+Atomic inventory reservation ✅
+
+That prevents customers from locking stock simply by leaving products in carts.
+
+Planned Cart files
+
+Later we'll create:
+
+src/modules/cart/
+├── cart.model.js
+├── cart.validation.js
+├── cart.repository.js
+├── cart.service.js
+├── cart.mapper.js
+├── cart.controller.js
+└── cart.routes.js
+
+and:
+
+tests/integration/cart.integration.test.js
+Part 215.1 code changes
+
+None. ✅
+
+Verification command
+
+Let's first make sure a Cart module does not already exist:
+
+Get-ChildItem .\src\modules -Directory | Select-Object -ExpandProperty Name
+
+Send me that output. Then we'll do only Part 215.2 — Create the Cart Model.
 |--------------------------------------------------------------------------
+Part 215.2 — Create Cart Model 🛒
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
