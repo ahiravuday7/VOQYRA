@@ -9665,6 +9665,7 @@ Final quantity > available stock
 Adding to Cart
 → does NOT reserve stock
 Part 215.5.5 — Get Cart + Current Product Data Foundation
+Part 215.5.6 — Cart Mapper: Price, Stock, Availability & Subtotal
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
