@@ -6,6 +6,11 @@ import { findProductById } from "../products/product.repository.js";
 
 import { CART_LIMITS } from "./cart.constants.js";
 
+import {
+  findOrCreateCartByUserId,
+  saveCartDocument,
+} from "./cart.repository.js";
+
 /*
 |--------------------------------------------------------------------------
 | Cart Errors
@@ -52,6 +57,16 @@ const createCartInsufficientStockError = (
     details: {
       requestedQuantity,
       availableStock,
+    },
+  });
+};
+
+const createCartItemLimitExceededError = () => {
+  return new AppError("Cart item limit has been reached", 409, {
+    errorCode: "CART_ITEM_LIMIT_EXCEEDED",
+
+    details: {
+      maxItems: CART_LIMITS.MAX_ITEMS,
     },
   });
 };
@@ -190,9 +205,120 @@ const resolveCartProductVariant = async (productId, variantId) => {
   };
 };
 
+/*
+|--------------------------------------------------------------------------
+| Add Cart Item
+|--------------------------------------------------------------------------
+|
+| Same Product + same Variant:
+|   increase quantity.
+|
+| Different Product/Variant:
+|   create another Cart item.
+|
+| Important:
+|   Cart does NOT reserve Product inventory.
+|--------------------------------------------------------------------------
+*/
+
+const addCartItem = async (userId, { productId, variantId, quantity }) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Resolve Product + Variant
+    |--------------------------------------------------------------------------
+    */
+
+  const { product, variant } = await resolveCartProductVariant(
+    productId,
+    variantId,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Find/Create User Cart
+    |--------------------------------------------------------------------------
+    */
+
+  const cart = await findOrCreateCartByUserId(userId);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Existing Cart Item
+    |--------------------------------------------------------------------------
+    |
+    | Product + Variant combination identifies the same purchasable item.
+    |--------------------------------------------------------------------------
+    */
+
+  const existingItem = cart.items.find(
+    (item) =>
+      item.product.toString() === product._id.toString() &&
+      item.variantId.toString() === variant._id.toString(),
+  );
+
+  if (existingItem) {
+    const nextQuantity = existingItem.quantity + quantity;
+
+    /*
+      |--------------------------------------------------------------------------
+      | Validate FINAL Quantity
+      |--------------------------------------------------------------------------
+      |
+      | Example:
+      |
+      | Existing Cart quantity = 3
+      | New request            = 2
+      |
+      | Validate 5, not only 2.
+      |--------------------------------------------------------------------------
+      */
+
+    validateCartQuantityAgainstStock(variant, nextQuantity);
+
+    existingItem.quantity = nextQuantity;
+
+    return saveCartDocument(cart);
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Distinct Item Limit
+    |--------------------------------------------------------------------------
+    */
+
+  if (cart.items.length >= CART_LIMITS.MAX_ITEMS) {
+    throw createCartItemLimitExceededError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Requested Quantity
+    |--------------------------------------------------------------------------
+    */
+
+  validateCartQuantityAgainstStock(variant, quantity);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Add New Item
+    |--------------------------------------------------------------------------
+    */
+
+  cart.items.push({
+    product: product._id,
+
+    variantId: variant._id,
+
+    quantity,
+  });
+
+  return saveCartDocument(cart);
+};
+
 export {
   findAndValidateCartVariant,
   resolveCartProductVariant,
   validateCartProduct,
   validateCartQuantityAgainstStock,
+  addCartItem,
 };

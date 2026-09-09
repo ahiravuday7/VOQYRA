@@ -9647,6 +9647,23 @@ Part 215.4 — Cart Repository
 Part 215.5.1 — Inspect Product APIs Used by Cart
 Part 215.5.2 — Cart Service Product + Variant Validation Foundation
 Part 215.5.3 — Cart Stock + Quantity Validation
+Part 215.5.4 — Add Cart Item Service
+Rules for this part:
+
+Same Product + same Variant
+→ increase existing quantity
+
+Different Variant
+→ new Cart item
+
+New distinct item when Cart already has 50
+→ reject
+
+Final quantity > available stock
+→ reject
+
+Adding to Cart
+→ does NOT reserve stock
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
