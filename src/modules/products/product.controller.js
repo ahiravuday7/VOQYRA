@@ -12,6 +12,7 @@ import {
   releaseProductVariantInventory,
   reserveProductVariantInventory,
   uploadProductImage,
+  updateProductImageMetadata,
 } from "./product.service.js";
 
 import {
@@ -261,6 +262,55 @@ export const uploadProductImageController = async (request, response) => {
     success: true,
 
     message: "Product image uploaded successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Image Metadata
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+export const updateProductImageMetadataController = async (
+  request,
+  response,
+) => {
+  const { productId, imageId } = request.validated.params;
+
+  const imageData = request.validated.body;
+
+  const actorUserId = request.user._id;
+
+  const product = await updateProductImageMetadata(
+    productId,
+    imageId,
+    imageData,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      imageId,
+
+      actorUserId,
+    },
+    "Product image metadata updated",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product image updated successfully",
 
     data: {
       product: toAdminProduct(product),
