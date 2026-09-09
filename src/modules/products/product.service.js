@@ -94,6 +94,18 @@ const createProductImageLimitError = () => {
   );
 };
 
+const createProductImageNotFoundError = () => {
+  return new AppError("Product image not found", 404, {
+    errorCode: "PRODUCT_IMAGE_NOT_FOUND",
+  });
+};
+
+const createProductPrimaryImageRequiredError = () => {
+  return new AppError("A Product with images must have a primary image", 409, {
+    errorCode: "PRODUCT_PRIMARY_IMAGE_REQUIRED",
+  });
+};
+
 /*
 |--------------------------------------------------------------------------
 | Product Inventory Errors
@@ -1412,6 +1424,140 @@ export const uploadProductImage = async (
 
     throw error;
   }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Image Metadata
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/images/:imageId
+|
+| Updates only:
+|
+| - altText
+| - sortOrder
+| - isPrimary
+|
+| The actual image file is not changed.
+|--------------------------------------------------------------------------
+*/
+
+export const updateProductImageMetadata = async (
+  productId,
+  imageId,
+  imageData,
+  actorUserId,
+) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product
+  |--------------------------------------------------------------------------
+  */
+
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product Image
+  |--------------------------------------------------------------------------
+  |
+  | Product.images is a Mongoose subdocument array.
+  |
+  | .id() finds the image by its generated MongoDB _id.
+  |--------------------------------------------------------------------------
+  */
+
+  const image = product.images.id(imageId);
+
+  if (!image) {
+    throw createProductImageNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Update Alt Text
+  |--------------------------------------------------------------------------
+  */
+
+  if (imageData.altText !== undefined) {
+    image.altText = imageData.altText;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Update Sort Order
+  |--------------------------------------------------------------------------
+  */
+
+  if (imageData.sortOrder !== undefined) {
+    image.sortOrder = imageData.sortOrder;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Update Primary Image
+  |--------------------------------------------------------------------------
+  */
+
+  if (imageData.isPrimary === true) {
+    /*
+     * New primary:
+     *
+     * every other image becomes non-primary.
+     */
+    for (const productImage of product.images) {
+      productImage.isPrimary = productImage._id.equals(image._id);
+    }
+  }
+
+  if (imageData.isPrimary === false && image.isPrimary) {
+    /*
+     * Do not allow the current only primary image
+     * to simply become non-primary.
+     *
+     * Admin should instead set another image as
+     * isPrimary=true.
+     */
+    const anotherPrimaryImage = product.images.find((productImage) => {
+      return (
+        !productImage._id.equals(image._id) && productImage.isPrimary === true
+      );
+    });
+
+    if (!anotherPrimaryImage) {
+      throw createProductPrimaryImageRequiredError();
+    }
+
+    image.isPrimary = false;
+  } else if (imageData.isPrimary === false) {
+    /*
+     * Setting an already non-primary image
+     * to false is harmless.
+     */
+    image.isPrimary = false;
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Audit
+  |--------------------------------------------------------------------------
+  */
+
+  product.updatedBy = actorUserId;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Save
+  |--------------------------------------------------------------------------
+  */
+
+  return saveProductDocument(product);
 };
 
 /*
