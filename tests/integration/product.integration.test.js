@@ -10234,4 +10234,247 @@ describe("Product image upload", () => {
       saveSpy.mockRestore();
     }
   });
+
+  it("deletes a Product image, removes its storage asset and promotes the lowest-sort-order remaining image to primary", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Delete Product Image ${suffix}`,
+
+          slug: `delete-product-image-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: `https://example.com/delete-image-${suffix}-primary.jpg`,
+
+              publicId: `products/delete-image-${suffix}-primary`,
+
+              altText: "Current primary image",
+
+              sortOrder: 5,
+
+              isPrimary: true,
+            },
+
+            {
+              url: `https://example.com/delete-image-${suffix}-second.jpg`,
+
+              publicId: `products/delete-image-${suffix}-second`,
+
+              altText: "Second image",
+
+              sortOrder: 3,
+
+              isPrimary: false,
+            },
+
+            {
+              url: `https://example.com/delete-image-${suffix}-third.jpg`,
+
+              publicId: `products/delete-image-${suffix}-third`,
+
+              altText: "Third image",
+
+              sortOrder: 1,
+
+              isPrimary: false,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.images).toHaveLength(3);
+
+    const primaryImage = product.images.find(
+      (image) => image.isPrimary === true,
+    );
+
+    const expectedNextPrimary = product.images.find(
+      (image) => image.sortOrder === 1,
+    );
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockResolvedValueOnce({
+      deleted: true,
+
+      alreadyMissing: false,
+    });
+
+    const response = await adminAgent
+      .delete(`${adminProductUrl}/${product.id}/images/${primaryImage.id}`)
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Product image deleted successfully");
+
+    const updatedProduct = response.body.data.product;
+
+    /*
+     * One image removed.
+     */
+    expect(updatedProduct.images).toHaveLength(2);
+
+    /*
+     * Deleted image must no longer exist.
+     */
+    expect(
+      updatedProduct.images.some((image) => image.id === primaryImage.id),
+    ).toBe(false);
+
+    /*
+     * Lowest sortOrder remaining image
+     * becomes primary.
+     */
+    const updatedPrimaryImages = updatedProduct.images.filter(
+      (image) => image.isPrimary === true,
+    );
+
+    expect(updatedPrimaryImages).toHaveLength(1);
+
+    expect(updatedPrimaryImages[0].id).toBe(expectedNextPrimary.id);
+
+    /*
+     * Storage cleanup must delete the
+     * removed image's old publicId.
+     */
+    expect(imageStorageMocks.deleteImage).toHaveBeenCalledTimes(1);
+
+    expect(imageStorageMocks.deleteImage).toHaveBeenCalledWith(
+      `products/delete-image-${suffix}-primary`,
+    );
+
+    /*
+     * Delete flow must not upload anything.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    /*
+     * Verify MongoDB.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(2);
+
+    const storedPrimaryImages = storedProduct.images.filter(
+      (image) => image.isPrimary === true,
+    );
+
+    expect(storedPrimaryImages).toHaveLength(1);
+
+    expect(storedPrimaryImages[0]._id.toString()).toBe(expectedNextPrimary.id);
+  });
+
+  it("preserves the Product image and does not delete storage when image deletion persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const imageUrl = `https://example.com/delete-failure-${suffix}.jpg`;
+
+    const imagePublicId = `products/delete-failure-${suffix}`;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Delete Failure Product ${suffix}`,
+
+          slug: `delete-failure-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: imageUrl,
+
+              publicId: imagePublicId,
+
+              altText: "Image that must survive failed deletion",
+
+              sortOrder: 0,
+
+              isPrimary: true,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const image = product.images[0];
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Force Product persistence failure.
+     */
+    const saveSpy = vi
+      .spyOn(Product.prototype, "save")
+      .mockRejectedValueOnce(
+        new Error("Forced Product image deletion persistence failure"),
+      );
+
+    try {
+      const response = await adminAgent.delete(
+        `${adminProductUrl}/${product.id}/images/${image.id}`,
+      );
+
+      expect(response.status).toBe(500);
+
+      /*
+       * Storage deletion must NOT occur,
+       * because MongoDB never committed
+       * the Product image removal.
+       */
+      expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+      expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+      /*
+       * MongoDB still contains the original image.
+       */
+      const storedProduct = await Product.findById(product.id).lean();
+
+      expect(storedProduct.images).toHaveLength(1);
+
+      expect(storedProduct.images[0]._id.toString()).toBe(image.id);
+
+      expect(storedProduct.images[0].url).toBe(imageUrl);
+
+      expect(storedProduct.images[0].publicId).toBe(imagePublicId);
+
+      expect(storedProduct.images[0].isPrimary).toBe(true);
+    } finally {
+      saveSpy.mockRestore();
+    }
+  });
 });

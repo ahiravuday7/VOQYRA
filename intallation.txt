@@ -9508,6 +9508,8 @@ Part 214.8.5 — Replacement Save Failure Must Preserve Old Image
 Part 214.8.6 — Delete Product Image Service
 Part 214.8.7 — Delete Product Image Controller
 Part 214.8.8 — Add DELETE Product Image Route
+Part 214.8.9 — Delete Product Image Integration Test
+Part 214.8.10 — Delete Save Failure Must Not Delete Storage Asset
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
