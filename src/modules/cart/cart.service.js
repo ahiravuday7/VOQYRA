@@ -72,6 +72,12 @@ const createCartItemLimitExceededError = () => {
   });
 };
 
+const createCartItemNotFoundError = () => {
+  return new AppError("Cart item was not found", 404, {
+    errorCode: "CART_ITEM_NOT_FOUND",
+  });
+};
+
 /*
 |--------------------------------------------------------------------------
 | Validate Cart Product
@@ -318,6 +324,80 @@ const addCartItem = async (userId, { productId, variantId, quantity }) => {
 
 /*
 |--------------------------------------------------------------------------
+| Update Cart Item Quantity
+|--------------------------------------------------------------------------
+|
+| PATCH changes the quantity to the requested FINAL quantity.
+|
+| Example:
+|
+| Current quantity = 2
+| PATCH quantity   = 5
+|
+| Final quantity becomes 5, not 7.
+|--------------------------------------------------------------------------
+*/
+
+const updateCartItemQuantity = async (userId, itemId, quantity) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Find User Cart
+    |--------------------------------------------------------------------------
+    */
+
+  const cart = await findCartByUserId(userId);
+
+  if (!cart) {
+    throw createCartItemNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Find Embedded Cart Item
+    |--------------------------------------------------------------------------
+    */
+
+  const item = cart.items.id(itemId);
+
+  if (!item) {
+    throw createCartItemNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Resolve Current Product + Variant
+    |--------------------------------------------------------------------------
+    |
+    | Product/Variant state may have changed since the item was added.
+    |--------------------------------------------------------------------------
+    */
+
+  const { variant } = await resolveCartProductVariant(
+    item.product,
+    item.variantId,
+  );
+
+  /*
+    |--------------------------------------------------------------------------
+    | Validate Final Quantity
+    |--------------------------------------------------------------------------
+    */
+
+  validateCartQuantityAgainstStock(variant, quantity);
+
+  /*
+    |--------------------------------------------------------------------------
+    | Update Quantity
+    |--------------------------------------------------------------------------
+    */
+
+  item.quantity = quantity;
+
+  return saveCartDocument(cart);
+};
+
+/*
+|--------------------------------------------------------------------------
 | Get Cart
 |--------------------------------------------------------------------------
 |
@@ -357,4 +437,5 @@ export {
   validateCartQuantityAgainstStock,
   addCartItem,
   getCart,
+  updateCartItemQuantity,
 };
