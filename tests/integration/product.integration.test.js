@@ -9643,4 +9643,290 @@ describe("Product image upload", () => {
       saveSpy.mockRestore();
     }
   });
+
+  it("updates Product image metadata and moves primary status to another image", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Image Metadata Product ${suffix}`,
+
+          slug: `image-metadata-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: `https://example.com/image-metadata-${suffix}-1.jpg`,
+
+              publicId: `products/image-metadata-${suffix}-1`,
+
+              altText: "Primary image",
+
+              sortOrder: 0,
+
+              isPrimary: true,
+            },
+
+            {
+              url: `https://example.com/image-metadata-${suffix}-2.jpg`,
+
+              publicId: `products/image-metadata-${suffix}-2`,
+
+              altText: "Secondary image",
+
+              sortOrder: 1,
+
+              isPrimary: false,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    expect(product.images).toHaveLength(2);
+
+    const firstImage = product.images[0];
+
+    const secondImage = product.images[1];
+
+    expect(firstImage.isPrimary).toBe(true);
+
+    expect(secondImage.isPrimary).toBe(false);
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Make the second image primary and
+     * update its metadata.
+     */
+    const response = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}/images/${secondImage.id}`)
+      .send({
+        altText: "Updated secondary image",
+
+        sortOrder: 5,
+
+        isPrimary: true,
+      })
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Product image updated successfully");
+
+    const updatedProduct = response.body.data.product;
+
+    expect(updatedProduct.images).toHaveLength(2);
+
+    const updatedFirstImage = updatedProduct.images.find(
+      (image) => image.id === firstImage.id,
+    );
+
+    const updatedSecondImage = updatedProduct.images.find(
+      (image) => image.id === secondImage.id,
+    );
+
+    expect(updatedFirstImage.isPrimary).toBe(false);
+
+    expect(updatedSecondImage.altText).toBe("Updated secondary image");
+
+    expect(updatedSecondImage.sortOrder).toBe(5);
+
+    expect(updatedSecondImage.isPrimary).toBe(true);
+
+    /*
+     * Metadata-only update must not touch storage.
+     */
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    /*
+     * Verify MongoDB as well.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    const storedFirstImage = storedProduct.images.find(
+      (image) => image._id.toString() === firstImage.id,
+    );
+
+    const storedSecondImage = storedProduct.images.find(
+      (image) => image._id.toString() === secondImage.id,
+    );
+
+    expect(storedFirstImage.isPrimary).toBe(false);
+
+    expect(storedSecondImage.isPrimary).toBe(true);
+
+    expect(storedSecondImage.sortOrder).toBe(5);
+  });
+
+  it("rejects removing primary status from the only primary Product image", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Primary Image Guard Product ${suffix}`,
+
+          slug: `primary-image-guard-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: `https://example.com/primary-guard-${suffix}-1.jpg`,
+
+              publicId: `products/primary-guard-${suffix}-1`,
+
+              altText: "Primary image",
+
+              sortOrder: 0,
+
+              isPrimary: true,
+            },
+
+            {
+              url: `https://example.com/primary-guard-${suffix}-2.jpg`,
+
+              publicId: `products/primary-guard-${suffix}-2`,
+
+              altText: "Secondary image",
+
+              sortOrder: 1,
+
+              isPrimary: false,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const primaryImage = product.images.find(
+      (image) => image.isPrimary === true,
+    );
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    const response = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}/images/${primaryImage.id}`)
+      .send({
+        isPrimary: false,
+      })
+      .expect(409);
+
+    expect(response.body.errorCode).toBe("PRODUCT_PRIMARY_IMAGE_REQUIRED");
+
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    const storedProduct = await Product.findById(product.id).lean();
+
+    const storedPrimaryImages = storedProduct.images.filter(
+      (image) => image.isPrimary === true,
+    );
+
+    expect(storedPrimaryImages).toHaveLength(1);
+
+    expect(storedPrimaryImages[0]._id.toString()).toBe(primaryImage.id);
+  });
+
+  it("rejects Product image metadata update when the image does not exist", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Missing Image Metadata Product ${suffix}`,
+
+          slug: `missing-image-metadata-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: `https://example.com/missing-image-${suffix}.jpg`,
+
+              publicId: `products/missing-image-${suffix}`,
+
+              altText: "Existing image",
+
+              sortOrder: 0,
+
+              isPrimary: true,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Valid MongoDB ObjectId format,
+     * but it does not belong to this Product.
+     */
+    const missingImageId = new mongoose.Types.ObjectId().toString();
+
+    const response = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}/images/${missingImageId}`)
+      .send({
+        altText: "Should not be saved",
+      })
+      .expect(404);
+
+    expect(response.body.errorCode).toBe("PRODUCT_IMAGE_NOT_FOUND");
+
+    expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+
+    expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(1);
+
+    expect(storedProduct.images[0].altText).toBe("Existing image");
+  });
 });
