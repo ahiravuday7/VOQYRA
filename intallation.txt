@@ -9644,6 +9644,8 @@ Minimum quantity: 1
 
 Stock availability itself will be checked later in the Cart service, not in Zod.
 Part 215.4 — Cart Repository
+Part 215.5.1 — Inspect Product APIs Used by Cart
+Part 215.5.2 — Cart Service Product + Variant Validation Foundation
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
