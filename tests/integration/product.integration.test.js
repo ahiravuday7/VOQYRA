@@ -9929,4 +9929,309 @@ describe("Product image upload", () => {
 
     expect(storedProduct.images[0].altText).toBe("Existing image");
   });
+
+  it("replaces a Product image file while preserving image metadata and deleting the old storage asset", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Replace Image Product ${suffix}`,
+
+          slug: `replace-image-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: `https://example.com/replace-image-${suffix}-old.jpg`,
+
+              publicId: `products/replace-image-${suffix}-old`,
+
+              altText: "Original Product image",
+
+              sortOrder: 7,
+
+              isPrimary: true,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const originalImage = product.images[0];
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * Mock replacement upload.
+     */
+    imageStorageMocks.uploadImage.mockResolvedValueOnce({
+      url: "https://res.cloudinary.com/test/image/upload/replacement-image.webp",
+
+      publicId: "clothing-commerce/products/test/replacement-image",
+
+      width: 1200,
+
+      height: 1200,
+
+      format: "webp",
+
+      bytes: 2048,
+    });
+
+    imageStorageMocks.deleteImage.mockResolvedValueOnce({
+      deleted: true,
+
+      alreadyMissing: false,
+    });
+
+    const response = await adminAgent
+      .put(`${adminProductUrl}/${product.id}/images/${originalImage.id}/file`)
+      .attach(
+        "image",
+
+        Buffer.from("replacement-product-image"),
+
+        {
+          filename: "replacement.jpg",
+
+          contentType: "image/jpeg",
+        },
+      )
+      .expect(200);
+
+    expect(response.body.success).toBe(true);
+
+    expect(response.body.message).toBe("Product image replaced successfully");
+
+    const updatedProduct = response.body.data.product;
+
+    expect(updatedProduct.images).toHaveLength(1);
+
+    const replacedImage = updatedProduct.images[0];
+
+    /*
+     * The Product image subdocument identity
+     * must remain unchanged.
+     */
+    expect(replacedImage.id).toBe(originalImage.id);
+
+    /*
+     * Storage values are replaced.
+     */
+    expect(replacedImage.url).toBe(
+      "https://res.cloudinary.com/test/image/upload/replacement-image.webp",
+    );
+
+    expect(replacedImage.publicId).toBe(
+      "clothing-commerce/products/test/replacement-image",
+    );
+
+    /*
+     * Product metadata is preserved.
+     */
+    expect(replacedImage.altText).toBe("Original Product image");
+
+    expect(replacedImage.sortOrder).toBe(7);
+
+    expect(replacedImage.isPrimary).toBe(true);
+
+    /*
+     * New image was uploaded.
+     */
+    expect(imageStorageMocks.uploadImage).toHaveBeenCalledTimes(1);
+
+    /*
+     * Old storage asset must be deleted
+     * only after Product persistence succeeds.
+     */
+    expect(imageStorageMocks.deleteImage).toHaveBeenCalledTimes(1);
+
+    expect(imageStorageMocks.deleteImage).toHaveBeenCalledWith(
+      `products/replace-image-${suffix}-old`,
+    );
+
+    /*
+     * Verify MongoDB.
+     */
+    const storedProduct = await Product.findById(product.id).lean();
+
+    expect(storedProduct.images).toHaveLength(1);
+
+    expect(storedProduct.images[0]._id.toString()).toBe(originalImage.id);
+
+    expect(storedProduct.images[0].publicId).toBe(
+      "clothing-commerce/products/test/replacement-image",
+    );
+
+    expect(storedProduct.images[0].altText).toBe("Original Product image");
+
+    expect(storedProduct.images[0].sortOrder).toBe(7);
+
+    expect(storedProduct.images[0].isPrimary).toBe(true);
+  });
+
+  it("cleans up the new storage image and preserves the old Product image when replacement persistence fails", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const oldUrl = `https://example.com/replace-failure-${suffix}-old.jpg`;
+
+    const oldPublicId = `products/replace-failure-${suffix}-old`;
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(
+        createProductPayload({
+          name: `Replace Failure Product ${suffix}`,
+
+          slug: `replace-failure-product-${suffix}`,
+
+          category: category.id,
+
+          status: "draft",
+
+          images: [
+            {
+              url: oldUrl,
+
+              publicId: oldPublicId,
+
+              altText: "Original Product image",
+
+              sortOrder: 3,
+
+              isPrimary: true,
+            },
+          ],
+        }),
+      )
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+
+    const originalImage = product.images[0];
+
+    imageStorageMocks.uploadImage.mockClear();
+
+    imageStorageMocks.deleteImage.mockClear();
+
+    /*
+     * New Cloudinary upload succeeds.
+     */
+    imageStorageMocks.uploadImage.mockResolvedValueOnce({
+      url: "https://res.cloudinary.com/test/image/upload/replacement-failure-new.webp",
+
+      publicId: "clothing-commerce/products/test/replacement-failure-new",
+
+      width: 1200,
+
+      height: 1200,
+
+      format: "webp",
+
+      bytes: 2048,
+    });
+
+    imageStorageMocks.deleteImage.mockResolvedValue({
+      deleted: true,
+
+      alreadyMissing: false,
+    });
+
+    /*
+     * Force Product persistence to fail
+     * after the new image has been uploaded.
+     */
+    const saveSpy = vi
+      .spyOn(Product.prototype, "save")
+      .mockRejectedValueOnce(
+        new Error("Forced Product replacement persistence failure"),
+      );
+
+    try {
+      const response = await adminAgent
+        .put(`${adminProductUrl}/${product.id}/images/${originalImage.id}/file`)
+        .attach(
+          "image",
+
+          Buffer.from("new-replacement-image"),
+
+          {
+            filename: "replacement.jpg",
+
+            contentType: "image/jpeg",
+          },
+        );
+
+      expect(response.status).toBe(500);
+
+      /*
+       * New image upload happened.
+       */
+      expect(imageStorageMocks.uploadImage).toHaveBeenCalledTimes(1);
+
+      /*
+       * Compensation must delete ONLY
+       * the newly-uploaded image.
+       */
+      expect(imageStorageMocks.deleteImage).toHaveBeenCalledTimes(1);
+
+      expect(imageStorageMocks.deleteImage).toHaveBeenCalledWith(
+        "clothing-commerce/products/test/replacement-failure-new",
+      );
+
+      /*
+       * The OLD storage image must not
+       * be deleted because MongoDB never
+       * successfully switched to the new one.
+       */
+      expect(imageStorageMocks.deleteImage).not.toHaveBeenCalledWith(
+        oldPublicId,
+      );
+
+      /*
+       * MongoDB must still contain the
+       * original image details.
+       */
+      const storedProduct = await Product.findById(product.id).lean();
+
+      expect(storedProduct.images).toHaveLength(1);
+
+      const storedImage = storedProduct.images[0];
+
+      expect(storedImage._id.toString()).toBe(originalImage.id);
+
+      expect(storedImage.url).toBe(oldUrl);
+
+      expect(storedImage.publicId).toBe(oldPublicId);
+
+      expect(storedImage.altText).toBe("Original Product image");
+
+      expect(storedImage.sortOrder).toBe(3);
+
+      expect(storedImage.isPrimary).toBe(true);
+    } finally {
+      saveSpy.mockRestore();
+    }
+  });
 });
