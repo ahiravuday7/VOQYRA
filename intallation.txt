@@ -9671,6 +9671,10 @@ Part 215.5.8 — Delete Single Cart Item Service
 Part 215.5.9 — Clear Entire Cart Service
 
 Part 215.6 — Cart Controller 🛒
+Part 215.7 — Cart Routes + Authentication Wiring.
+Part 215.7.1 — Inspect Existing Customer Route Style
+Part 215.7.2 — Cart Routes
+Part 215.7.3 — Mount Cart Routes in src/app.js
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
