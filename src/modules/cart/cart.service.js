@@ -4,6 +4,8 @@ import AppError from "../../shared/errors/app-error.js";
 
 import { findProductById } from "../products/product.repository.js";
 
+import { CART_LIMITS } from "./cart.constants.js";
+
 /*
 |--------------------------------------------------------------------------
 | Cart Errors
@@ -31,6 +33,26 @@ const createCartVariantNotFoundError = () => {
 const createCartVariantUnavailableError = () => {
   return new AppError("Product variant is not available for purchase", 409, {
     errorCode: "CART_VARIANT_UNAVAILABLE",
+  });
+};
+
+const createCartQuantityInvalidError = () => {
+  return new AppError("Cart item quantity is invalid", 400, {
+    errorCode: "CART_QUANTITY_INVALID",
+  });
+};
+
+const createCartInsufficientStockError = (
+  requestedQuantity,
+  availableStock,
+) => {
+  return new AppError("Requested quantity exceeds available stock", 409, {
+    errorCode: "CART_INSUFFICIENT_STOCK",
+
+    details: {
+      requestedQuantity,
+      availableStock,
+    },
   });
 };
 
@@ -84,6 +106,65 @@ const findAndValidateCartVariant = (product, variantId) => {
 
 /*
 |--------------------------------------------------------------------------
+| Validate Cart Quantity Against Stock
+|--------------------------------------------------------------------------
+|
+| Cart does NOT reserve inventory.
+|
+| We only check the current available quantity:
+|
+| stock - reservedStock
+|--------------------------------------------------------------------------
+*/
+
+const validateCartQuantityAgainstStock = (variant, quantity) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Defensive Quantity Validation
+    |--------------------------------------------------------------------------
+    |
+    | Zod already validates API requests, but the service may later be reused
+    | internally, so business-layer validation remains useful.
+    |--------------------------------------------------------------------------
+    */
+
+  if (
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > CART_LIMITS.MAX_QUANTITY_PER_ITEM
+  ) {
+    throw createCartQuantityInvalidError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Available Stock
+    |--------------------------------------------------------------------------
+    |
+    | Equivalent to Product's existing availableStock virtual:
+    |
+    | stock - reservedStock
+    |--------------------------------------------------------------------------
+    */
+
+  const stock = variant.inventory?.stock ?? 0;
+
+  const reservedStock = variant.inventory?.reservedStock ?? 0;
+
+  const availableStock = Math.max(stock - reservedStock, 0);
+
+  if (quantity > availableStock) {
+    throw createCartInsufficientStockError(quantity, availableStock);
+  }
+
+  return {
+    quantity,
+    availableStock,
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
 | Resolve Cart Product + Variant
 |--------------------------------------------------------------------------
 |
@@ -113,4 +194,5 @@ export {
   findAndValidateCartVariant,
   resolveCartProductVariant,
   validateCartProduct,
+  validateCartQuantityAgainstStock,
 };
