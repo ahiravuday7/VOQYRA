@@ -1734,6 +1734,145 @@ export const replaceProductImageFile = async (
 
 /*
 |--------------------------------------------------------------------------
+| Delete Product Image
+|--------------------------------------------------------------------------
+|
+| DELETE
+| /api/v1/admin/products/:productId/images/:imageId
+|
+| Safe flow:
+|
+| 1. Find Product.
+| 2. Find image.
+| 3. Remember storage publicId.
+| 4. Remove image from Product.
+| 5. If deleted image was primary, promote another image.
+| 6. Save Product.
+| 7. Delete storage asset.
+|--------------------------------------------------------------------------
+*/
+
+export const deleteProductImage = async (productId, imageId, actorUserId) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product
+  |--------------------------------------------------------------------------
+  */
+
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product Image
+  |--------------------------------------------------------------------------
+  */
+
+  const image = product.images.id(imageId);
+
+  if (!image) {
+    throw createProductImageNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Preserve Storage Information
+  |--------------------------------------------------------------------------
+  */
+
+  const publicId = image.publicId ?? null;
+
+  const wasPrimary = image.isPrimary === true;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Remove Image
+  |--------------------------------------------------------------------------
+  */
+
+  product.images.pull(image._id);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Promote New Primary Image
+  |--------------------------------------------------------------------------
+  |
+  | If the removed image was primary and other
+  | images remain, promote the lowest sortOrder.
+  |--------------------------------------------------------------------------
+  */
+
+  if (wasPrimary && product.images.length > 0) {
+    const nextPrimaryImage = [...product.images].sort(
+      (firstImage, secondImage) => {
+        return (firstImage.sortOrder ?? 0) - (secondImage.sortOrder ?? 0);
+      },
+    )[0];
+
+    for (const productImage of product.images) {
+      productImage.isPrimary = productImage._id.equals(nextPrimaryImage._id);
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Audit
+  |--------------------------------------------------------------------------
+  */
+
+  product.updatedBy = actorUserId;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Save Product First
+  |--------------------------------------------------------------------------
+  |
+  | If this fails, the Cloudinary image remains untouched.
+  |--------------------------------------------------------------------------
+  */
+
+  const savedProduct = await saveProductDocument(product);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Delete Storage Asset
+  |--------------------------------------------------------------------------
+  |
+  | MongoDB no longer references the image.
+  |
+  | If Cloudinary cleanup fails, Product data remains valid.
+  | Log the orphan asset for later cleanup.
+  |--------------------------------------------------------------------------
+  */
+
+  if (publicId) {
+    try {
+      await deleteImage(publicId);
+    } catch (cleanupError) {
+      logger.error(
+        {
+          err: cleanupError,
+
+          productId: product._id,
+
+          imageId,
+
+          publicId,
+        },
+
+        "Product image storage cleanup failed after deletion",
+      );
+    }
+  }
+
+  return savedProduct;
+};
+
+/*
+|--------------------------------------------------------------------------
 | Soft Delete Product
 |--------------------------------------------------------------------------
 |

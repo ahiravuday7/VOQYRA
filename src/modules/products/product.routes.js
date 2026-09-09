@@ -20,6 +20,7 @@ import {
   uploadProductImageRequestSchema,
   updateProductImageRequestSchema,
   replaceProductImageFileRequestSchema,
+  deleteProductImageRequestSchema,
 } from "./product.validation.js";
 
 import {
@@ -36,6 +37,7 @@ import {
   uploadProductImageController,
   updateProductImageMetadataController,
   replaceProductImageFileController,
+  deleteProductImageController,
 } from "./product.controller.js";
 import { getAdminProductInventoryLedgerController } from "./product-inventory-ledger.controller.js";
 
@@ -222,6 +224,24 @@ router.put(
   validateRequest(replaceProductImageFileRequestSchema),
 
   replaceProductImageFileController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Delete Product Image
+|--------------------------------------------------------------------------
+|
+| DELETE
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+router.delete(
+  "/:productId/images/:imageId",
+
+  validateRequest(deleteProductImageRequestSchema),
+
+  deleteProductImageController,
 );
 
 /*

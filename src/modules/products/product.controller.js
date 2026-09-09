@@ -14,6 +14,7 @@ import {
   uploadProductImage,
   updateProductImageMetadata,
   replaceProductImageFile,
+  deleteProductImage,
 } from "./product.service.js";
 
 import {
@@ -358,6 +359,45 @@ export const replaceProductImageFileController = async (request, response) => {
     success: true,
 
     message: "Product image replaced successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Delete Product Image
+|--------------------------------------------------------------------------
+|
+| DELETE
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+export const deleteProductImageController = async (request, response) => {
+  const { productId, imageId } = request.validated.params;
+
+  const actorUserId = request.user._id;
+
+  const product = await deleteProductImage(productId, imageId, actorUserId);
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      imageId,
+
+      actorUserId,
+    },
+    "Product image deleted",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product image deleted successfully",
 
     data: {
       product: toAdminProduct(product),
