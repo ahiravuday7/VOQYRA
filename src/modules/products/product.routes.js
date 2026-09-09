@@ -18,6 +18,7 @@ import {
   reserveProductInventoryRequestSchema,
   adminProductInventoryLedgerListRequestSchema,
   uploadProductImageRequestSchema,
+  updateProductImageRequestSchema,
 } from "./product.validation.js";
 
 import {
@@ -32,6 +33,7 @@ import {
   releaseProductInventoryController,
   reserveProductInventoryController,
   uploadProductImageController,
+  updateProductImageMetadataController,
 } from "./product.controller.js";
 import { getAdminProductInventoryLedgerController } from "./product-inventory-ledger.controller.js";
 
@@ -180,6 +182,24 @@ router.post(
   validateRequest(uploadProductImageRequestSchema),
 
   uploadProductImageController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Product Image Metadata
+|--------------------------------------------------------------------------
+|
+| PATCH
+| /api/v1/admin/products/:productId/images/:imageId
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/:productId/images/:imageId",
+
+  validateRequest(updateProductImageRequestSchema),
+
+  updateProductImageMetadataController,
 );
 
 /*
