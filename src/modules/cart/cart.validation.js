@@ -47,6 +47,7 @@ const quantitySchema = z
   );
 
 const emptyObjectSchema = z.object({}).strict();
+const optionalEmptyObjectSchema = emptyObjectSchema.optional();
 
 /*
 |--------------------------------------------------------------------------
@@ -55,7 +56,7 @@ const emptyObjectSchema = z.object({}).strict();
 */
 
 const getCartRequestSchema = z.object({
-  body: emptyObjectSchema,
+  body: optionalEmptyObjectSchema,
 
   params: emptyObjectSchema,
 
@@ -121,7 +122,7 @@ const updateCartItemRequestSchema = z.object({
 */
 
 const deleteCartItemRequestSchema = z.object({
-  body: emptyObjectSchema,
+  body: optionalEmptyObjectSchema,
 
   params: z
     .object({
@@ -139,7 +140,7 @@ const deleteCartItemRequestSchema = z.object({
 */
 
 const clearCartRequestSchema = z.object({
-  body: emptyObjectSchema,
+  body: optionalEmptyObjectSchema,
 
   params: emptyObjectSchema,
 

@@ -9675,6 +9675,9 @@ Part 215.7 — Cart Routes + Authentication Wiring.
 Part 215.7.1 — Inspect Existing Customer Route Style
 Part 215.7.2 — Cart Routes
 Part 215.7.3 — Mount Cart Routes in src/app.js
+
+Part 215.8 — Cart Integration Tests
+Part 215.8 — Complete Cart Integration Suite
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
