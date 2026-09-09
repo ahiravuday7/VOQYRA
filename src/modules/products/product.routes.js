@@ -19,6 +19,7 @@ import {
   adminProductInventoryLedgerListRequestSchema,
   uploadProductImageRequestSchema,
   updateProductImageRequestSchema,
+  replaceProductImageFileRequestSchema,
 } from "./product.validation.js";
 
 import {
@@ -34,6 +35,7 @@ import {
   reserveProductInventoryController,
   uploadProductImageController,
   updateProductImageMetadataController,
+  replaceProductImageFileController,
 } from "./product.controller.js";
 import { getAdminProductInventoryLedgerController } from "./product-inventory-ledger.controller.js";
 
@@ -200,6 +202,26 @@ router.patch(
   validateRequest(updateProductImageRequestSchema),
 
   updateProductImageMetadataController,
+);
+
+/*
+|--------------------------------------------------------------------------
+| Replace Product Image File
+|--------------------------------------------------------------------------
+|
+| PUT
+| /api/v1/admin/products/:productId/images/:imageId/file
+|--------------------------------------------------------------------------
+*/
+
+router.put(
+  "/:productId/images/:imageId/file",
+
+  uploadSingleProductImage,
+
+  validateRequest(replaceProductImageFileRequestSchema),
+
+  replaceProductImageFileController,
 );
 
 /*

@@ -13,6 +13,7 @@ import {
   reserveProductVariantInventory,
   uploadProductImage,
   updateProductImageMetadata,
+  replaceProductImageFile,
 } from "./product.service.js";
 
 import {
@@ -311,6 +312,52 @@ export const updateProductImageMetadataController = async (
     success: true,
 
     message: "Product image updated successfully",
+
+    data: {
+      product: toAdminProduct(product),
+    },
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replace Product Image File
+|--------------------------------------------------------------------------
+|
+| PUT
+| /api/v1/admin/products/:productId/images/:imageId/file
+|--------------------------------------------------------------------------
+*/
+
+export const replaceProductImageFileController = async (request, response) => {
+  const { productId, imageId } = request.validated.params;
+
+  const imageFile = request.file;
+
+  const actorUserId = request.user._id;
+
+  const product = await replaceProductImageFile(
+    productId,
+    imageId,
+    imageFile,
+    actorUserId,
+  );
+
+  request.log?.info(
+    {
+      productId: product._id,
+
+      imageId,
+
+      actorUserId,
+    },
+    "Product image file replaced",
+  );
+
+  return response.status(200).json({
+    success: true,
+
+    message: "Product image replaced successfully",
 
     data: {
       product: toAdminProduct(product),

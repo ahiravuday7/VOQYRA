@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 
+import logger from "../../config/logger.js";
+
 import { CATEGORY_STATUSES } from "../../shared/constants/category.constants.js";
 
 import {
@@ -1558,6 +1560,176 @@ export const updateProductImageMetadata = async (
   */
 
   return saveProductDocument(product);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Replace Product Image File
+|--------------------------------------------------------------------------
+|
+| PUT
+| /api/v1/admin/products/:productId/images/:imageId/file
+|
+| Safe flow:
+|
+| 1. Find Product and image.
+| 2. Upload new image.
+| 3. Replace url/publicId on existing image subdocument.
+| 4. Save Product.
+| 5. Delete old storage asset.
+|
+| If Product save fails:
+| → delete newly-uploaded asset
+| → preserve old Product image
+|--------------------------------------------------------------------------
+*/
+
+export const replaceProductImageFile = async (
+  productId,
+  imageId,
+  imageFile,
+  actorUserId,
+) => {
+  /*
+  |--------------------------------------------------------------------------
+  | Find Product
+  |--------------------------------------------------------------------------
+  */
+
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw createProductNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Find Image
+  |--------------------------------------------------------------------------
+  */
+
+  const image = product.images.id(imageId);
+
+  if (!image) {
+    throw createProductImageNotFoundError();
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Preserve Existing Storage Reference
+  |--------------------------------------------------------------------------
+  |
+  | Keep this before modifying the subdocument.
+  |--------------------------------------------------------------------------
+  */
+
+  const oldPublicId = image.publicId ?? null;
+
+  /*
+  |--------------------------------------------------------------------------
+  | Upload Replacement First
+  |--------------------------------------------------------------------------
+  |
+  | Never delete the old image before the new image
+  | has been uploaded and MongoDB safely points to it.
+  |--------------------------------------------------------------------------
+  */
+
+  const storedImage = await uploadImage({
+    buffer: imageFile.buffer,
+
+    folder: `clothing-commerce/products/${product._id}`,
+  });
+
+  try {
+    /*
+    |--------------------------------------------------------------------------
+    | Replace File Reference
+    |--------------------------------------------------------------------------
+    |
+    | Keep:
+    |
+    | - image._id
+    | - altText
+    | - sortOrder
+    | - isPrimary
+    |
+    | Replace only storage-specific values.
+    |--------------------------------------------------------------------------
+    */
+
+    image.url = storedImage.url;
+
+    image.publicId = storedImage.publicId;
+
+    product.updatedBy = actorUserId;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Save Product
+    |--------------------------------------------------------------------------
+    */
+
+    const savedProduct = await saveProductDocument(product);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Delete Previous Storage Asset
+    |--------------------------------------------------------------------------
+    |
+    | MongoDB already points to the new image.
+    |
+    | If old storage cleanup fails, do NOT roll back the
+    | working Product image. Log the orphan for cleanup.
+    |--------------------------------------------------------------------------
+    */
+
+    if (oldPublicId) {
+      try {
+        await deleteImage(oldPublicId);
+      } catch (cleanupError) {
+        logger.error(
+          {
+            err: cleanupError,
+
+            productId: product._id,
+
+            imageId: image._id,
+
+            oldPublicId,
+
+            newPublicId: storedImage.publicId,
+          },
+
+          "Old Product image storage cleanup failed after replacement",
+        );
+      }
+    }
+
+    return savedProduct;
+  } catch (error) {
+    /*
+    |--------------------------------------------------------------------------
+    | Compensation
+    |--------------------------------------------------------------------------
+    |
+    | New image uploaded, but Product persistence failed.
+    |
+    | Remove the NEW image and leave the old storage asset intact.
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+      await deleteImage(storedImage.publicId);
+    } catch {
+      /*
+       * Preserve and throw the original Product
+       * persistence error.
+       */
+    }
+
+    throw error;
+  }
 };
 
 /*

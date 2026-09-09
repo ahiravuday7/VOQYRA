@@ -9500,6 +9500,8 @@ Part 214.7.4 — Metadata Update Integration Test
 Part 214.7.5 — Reject Removing the Only Primary Image
 Part 214.7.6 — Reject Metadata Update for Missing Product Image
 Part 214.8.1 — Replace Product Image File Service
+Part 214.8.2 — Replace Product Image Controller
+Part 214.8.3 — Add Replace Image Route
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
