@@ -9510,6 +9510,10 @@ Part 214.8.7 — Delete Product Image Controller
 Part 214.8.8 — Add DELETE Product Image Route
 Part 214.8.9 — Delete Product Image Integration Test
 Part 214.8.10 — Delete Save Failure Must Not Delete Storage Asset
+
+Part 214.9.1 — Full Product Image + Product Regression
+Part 214.9.1 — Full Product Regression.
+Part 214.9.2 — Real Cloudinary Smoke Test
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

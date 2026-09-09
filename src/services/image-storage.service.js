@@ -143,44 +143,78 @@ const uploadImage = async ({
 |
 */
 
+/*
+|--------------------------------------------------------------------------
+| Delete Image
+|--------------------------------------------------------------------------
+*/
+
 const deleteImage = async (publicId) => {
-  if (typeof publicId !== "string" || !publicId.trim()) {
-    throw new AppError("Image public ID is required", 500, {
+  if (typeof publicId !== "string" || publicId.trim().length === 0) {
+    throw new AppError("Image public ID is required", 400, {
       errorCode: "IMAGE_STORAGE_PUBLIC_ID_REQUIRED",
     });
   }
 
   try {
-    const result = await cloudinary.uploader.destroy(
-      publicId.trim(),
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: "image",
 
-      {
-        resource_type: "image",
+      invalidate: true,
+    });
 
-        /*
-         * Ask Cloudinary to invalidate
-         * cached CDN copies as well.
-         */
-        invalidate: true,
-      },
-    );
+    /*
+    |--------------------------------------------------------------------------
+    | Successfully Deleted
+    |--------------------------------------------------------------------------
+    |
+    | Cloudinary destroy() returns:
+    |
+    | { result: "ok" }
+    |
+    | when the asset was successfully deleted.
+    |--------------------------------------------------------------------------
+    */
 
-    if (result?.result !== "ok" && result?.result !== "not found") {
-      throw new Error(
-        `Unexpected Cloudinary delete result: ${result?.result ?? "unknown"}`,
-      );
+    if (result?.result === "ok") {
+      return {
+        deleted: true,
+
+        alreadyMissing: false,
+      };
     }
 
-    return {
-      deleted: result.result === "ok",
-
-      alreadyMissing: result.result === "not found",
-    };
-  } catch (error) {
     /*
-     * Preserve an AppError created above rather
-     * than wrapping it a second time.
-     */
+    |--------------------------------------------------------------------------
+    | Asset Already Missing
+    |--------------------------------------------------------------------------
+    |
+    | Delete is intentionally idempotent.
+    |
+    | If Cloudinary says "not found",
+    | our desired final state is already true:
+    | the asset does not exist.
+    |--------------------------------------------------------------------------
+    */
+
+    if (result?.result === "not found") {
+      return {
+        deleted: false,
+
+        alreadyMissing: true,
+      };
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Unexpected Provider Response
+    |--------------------------------------------------------------------------
+    */
+
+    throw new Error(
+      `Unexpected Cloudinary delete result: ${result?.result ?? "unknown"}`,
+    );
+  } catch (error) {
     if (error instanceof AppError) {
       throw error;
     }
