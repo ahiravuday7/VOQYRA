@@ -398,6 +398,104 @@ const updateCartItemQuantity = async (userId, itemId, quantity) => {
 
 /*
 |--------------------------------------------------------------------------
+| Delete Cart Item
+|--------------------------------------------------------------------------
+|
+| Removing a Cart item does not require Product or Variant validation.
+|
+| Even if the Product was deleted or the Variant became unavailable,
+| the customer must still be able to remove the stale Cart item.
+|--------------------------------------------------------------------------
+*/
+
+const deleteCartItem = async (userId, itemId) => {
+  /*
+    |--------------------------------------------------------------------------
+    | Find User Cart
+    |--------------------------------------------------------------------------
+    */
+
+  const cart = await findCartByUserId(userId);
+
+  if (!cart) {
+    throw createCartItemNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Find Embedded Cart Item
+    |--------------------------------------------------------------------------
+    */
+
+  const item = cart.items.id(itemId);
+
+  if (!item) {
+    throw createCartItemNotFoundError();
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Remove Item
+    |--------------------------------------------------------------------------
+    */
+
+  cart.items.pull(item._id);
+
+  return saveCartDocument(cart);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Clear Cart
+|--------------------------------------------------------------------------
+|
+| Removes all Cart items but keeps the Cart document.
+|
+| Important:
+|   No Product validation is required.
+|   No inventory reservation/release occurs.
+|--------------------------------------------------------------------------
+*/
+
+const clearCart = async (userId) => {
+  const cart = await findCartByUserId(userId);
+
+  /*
+    |--------------------------------------------------------------------------
+    | No Existing Cart
+    |--------------------------------------------------------------------------
+    |
+    | Clearing an already-empty/nonexistent Cart is treated as successful.
+    |--------------------------------------------------------------------------
+    */
+
+  if (!cart) {
+    return null;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Already Empty
+    |--------------------------------------------------------------------------
+    */
+
+  if (cart.items.length === 0) {
+    return cart;
+  }
+
+  /*
+    |--------------------------------------------------------------------------
+    | Clear Items
+    |--------------------------------------------------------------------------
+    */
+
+  cart.items = [];
+
+  return saveCartDocument(cart);
+};
+
+/*
+|--------------------------------------------------------------------------
 | Get Cart
 |--------------------------------------------------------------------------
 |
@@ -438,4 +536,6 @@ export {
   addCartItem,
   getCart,
   updateCartItemQuantity,
+  deleteCartItem,
+  clearCart,
 };
