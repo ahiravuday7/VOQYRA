@@ -102,27 +102,4 @@ const saveCartDocument = async (cart) => {
   return cart.save();
 };
 
-/*
-|--------------------------------------------------------------------------
-| Delete Cart By User
-|--------------------------------------------------------------------------
-|
-| This physically removes the Cart document.
-|
-| We may use this later if we decide DELETE /cart should completely
-| remove the document instead of only setting items: [].
-|--------------------------------------------------------------------------
-*/
-
-const deleteCartByUserId = async (userId) => {
-  return Cart.findOneAndDelete({
-    user: userId,
-  });
-};
-
-export {
-  deleteCartByUserId,
-  findCartByUserId,
-  findOrCreateCartByUserId,
-  saveCartDocument,
-};
+export { findCartByUserId, findOrCreateCartByUserId, saveCartDocument };

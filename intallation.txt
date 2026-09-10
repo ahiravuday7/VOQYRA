@@ -9678,6 +9678,10 @@ Part 215.7.3 — Mount Cart Routes in src/app.js
 
 Part 215.8 — Cart Integration Tests
 Part 215.8 — Complete Cart Integration Suite
+Part 215.9.1 — Cart Final Regression Baseline
+npx vitest run tests/integration/cart.integration.test.js tests/integration/product.integration.test.js tests/integration/order.integration.test.js --testTimeout=120000 --no-file-parallelism
+Part 215.9.2 — Cart Source Cleanup Audit
+Part 215.9.2.1 — Focused Cart Cleanup Audit
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
