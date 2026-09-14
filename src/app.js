@@ -31,6 +31,7 @@ import adminOrderRoutes from "./modules/orders/order.admin.routes.js";
 
 import cartRoutes from "./modules/cart/cart.routes.js";
 import wishlistRoutes from "./modules/wishlist/wishlist.routes.js";
+import recentlyViewedRoutes from "./modules/recently-viewed/recently-viewed.routes.js";
 
 import productRoutes from "./modules/products/product.routes.js";
 import publicProductRoutes from "./modules/products/product.public.routes.js";
@@ -168,6 +169,7 @@ app.use("/api/v1/collections", publicCollectionRoutes);
 app.use("/api/v1/products", publicProductRoutes);
 app.use("/api/v1/cart", cartRoutes);
 app.use("/api/v1/wishlist", wishlistRoutes);
+app.use("/api/v1/recently-viewed", recentlyViewedRoutes);
 app.use("/api/v1/orders", orderRoutes);
 
 /*

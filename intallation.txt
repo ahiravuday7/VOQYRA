@@ -9843,7 +9843,119 @@ Part 216.11 — Wishlist Integration Tests
 Part 216.12 — Wishlist + Product Regression
 Part 216.13 — Cleanup & Final Check
 |--------------------------------------------------------------------------
+Part 217.1 — Recently Viewed Architecture & Business Rules
+1. Model shape
+
+One document per customer:
+
+RecentlyViewed
+  _id
+  user          → User ObjectId; required, unique, immutable
+  items[]
+    product     → Product ObjectId; required
+    viewedAt    → Date; required
+  createdAt
+  updatedAt
+
+Each item stores only its Product reference and latest viewing time. Item _id values are unnecessary because removal uses productId.
+
+2. Recording a view
+
+The frontend explicitly records a view after successfully opening a Product detail page:
+
+POST /api/v1/recently-viewed/:productId
+
+The backend generates viewedAt. Customers cannot supply timestamps or another customer’s ID.
+
+Situation	Behavior
+First valid view	Create the customer’s history and add the Product
+View a different Product	Add it as the most recent entry
+View an existing Product again	Update its viewedAt; keep one entry
+View an out-of-stock Product	Allow it
+Record a missing or publicly unavailable Product	Return 404 without changing history
+Record an existing entry that is now unavailable	Reject; preserve its previous viewing time
+
+Public Product GET requests will not automatically write history.
+
+3. Bounded history
+
+Use:
+
+MAX_ITEMS = 50
+
+When a new Product takes history above 50 entries, remove the oldest entry.
+
+Unlike Wishlist’s capacity rule, Recently Viewed should automatically make room for newer views.
+
+Repeated views do not increase the item count.
+Unavailable entries count toward the limit.
+Return entries by viewedAt descending.
+Use Product ID as a deterministic tie-breaker when timestamps match.
+
+4. Current Product data and stale entries
+
+Reuse the same public Product lookup and summary mapper used by Wishlist.
+
+This keeps publication, Brand, Category, pricing, image, and stock behavior consistent.
+
+If a saved Product becomes unavailable:
+
+productId: preserved
+viewedAt: preserved
+isAvailable: false
+product: null
+
+GET keeps the stored entry unchanged. If the Product becomes publicly available again, its current details reappear with the original viewing time.
+
+An out-of-stock Product remains visible with:
+
+isAvailable: true
+product.availability.isInStock: false
+
+5. Read, removal, and clearing rules
+
+Empty GET returns an empty response without creating a document.
+Removing an entry uses productId and does not require the Product to exist.
+Removing an unsaved Product succeeds without changing history.
+Clearing keeps the existing history document.
+Clearing nonexistent history succeeds without creating a document.
+GET never refreshes viewing times.
+
+All operations use the authenticated customer’s ID and the same customer-role restriction as Cart and Wishlist.
+
+6. Endpoints
+
+Method	Endpoint	Purpose
+GET	/api/v1/recently-viewed	Read current history
+POST	/api/v1/recently-viewed/:productId	Record or refresh a view
+DELETE	/api/v1/recently-viewed/:productId	Remove one entry
+DELETE	/api/v1/recently-viewed	Clear history
+
+Successful operations return 200 with the project’s existing response envelope.
+
+7. Module boundaries
+
+Recently Viewed does not store price snapshots, select variants, or change stock or reservedStock. Cart and Order retain their existing responsibilities.
+
+Planned module directory:
+
+E:\uday\Projects\MERN Project\Cloathing\backend\src\modules\recently-viewed
+
+It will contain constants, model, validation, repository, service, mapper, controller, and routes.
+
+Integration test file:
+
+E:\uday\Projects\MERN Project\Cloathing\backend\tests\integration\recently-viewed.integration.test.js
+
+Tests will cover authentication, isolation, visibility, repeated views, ordering, automatic eviction, stale entries, current Product data, removal, clearing, inventory preservation, and customer uniqueness. Simultaneous-request hardening remains in Part 219.
 |--------------------------------------------------------------------------
+Part 217.2 — Recently Viewed Model & Constant
+Part 217.3 — Recently Viewed Validation
+Part 217.4 — Recently Viewed Repository
+Part 217.5 — Recently Viewed Service
+Part 217.6 — Recently Viewed Mapper
+Part 217.7 — Recently Viewed Controller
+Part 217.8 — Recently Viewed Routes
 |--------------------------------------------------------------------------
 
 info:
