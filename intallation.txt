@@ -9683,7 +9683,162 @@ npx vitest run tests/integration/cart.integration.test.js tests/integration/prod
 Part 215.9.2 — Cart Source Cleanup Audit
 Part 215.9.2.1 — Focused Cart Cleanup Audit
 |--------------------------------------------------------------------------
+Part 216.1 — Wishlist Architecture & Business Rules
+1. Wishlist model shape
+
+One Wishlist document per customer:
+
+Wishlist
+  _id
+  user          → User ObjectId; required; unique
+  items[]
+    product     → Product ObjectId; required
+    addedAt     → Date
+  createdAt
+  updatedAt
+
+Decisions:
+
+user has a unique index to enforce one Wishlist per customer.
+Each item stores a Product reference and its addition time.
+Items do not need separate _id values: removal uses productId.
+An empty GET returns an empty Wishlist without creating a database document.
+The first successful addition creates the Wishlist.
+Removing the final item or clearing the Wishlist keeps the existing document.
+
+The unique user index enforces document ownership uniqueness. Duplicate Products inside the array need separate write logic.
+
+2. Save Products, not variants
+
+Wishlist stores Product references only.
+
+A customer saves a shirt they like. They choose its size, color, and quantity when adding it to Cart.
+
+Therefore, Wishlist does not store:
+
+variantId
+Quantity
+Price snapshots
+Stock snapshots
+
+Different variants of the same Product remain one Wishlist entry.
+
+3. Business rules
+
+Situation	Decided behavior
+Add an active, publicly available Product	Add it once
+Add an already saved Product	Return success without adding another entry or changing addedAt
+Add an out-of-stock Product	Allow it; customers may save it for later
+Add a missing, deleted, or inactive Product	Reject using existing Product availability/error conventions
+Saved Product becomes inactive or deleted	Keep its reference and return an unavailable entry
+Saved Product becomes available again	Show its current details automatically
+Remove a Product that is not saved	Return success; nothing changes
+Clear an empty or nonexistent Wishlist	Return success without creating a document
+Read Wishlist	Return newest additions first
+Read stale entries	Do not silently delete them
+
+For an existing saved Product, adding it again remains a successful no-op, even if it has since become unavailable.
+
+4. Stale and unavailable entries
+
+An unavailable entry should still expose its stored productId and addedAt, so the customer can remove it.
+
+Its response should indicate:
+
+isAvailable: false
+product: null
+
+This prevents missing Product references from crashing the response and avoids exposing inactive Product details.
+
+GET must preserve the stored reference even when a Product lookup returns nothing.
+
+5. Current pricing and inventory
+
+Product remains the source of truth.
+
+Read current public Product details and pricing when fetching Wishlist.
+Reuse existing Product pricing/summary conventions.
+Do not select an arbitrary variant price or invent separate pricing calculations.
+Keep Product availability separate from stock availability: an active Product can be out of stock and still appear in Wishlist.
+Wishlist never changes stock or reservedStock.
+Cart and Order continue performing their own validation when the customer proceeds.
+
+6. Maximum size and customer isolation
+
+Use:
+
+MAX_ITEMS = 100
+The limit includes unavailable entries.
+Adding a new Product at the limit fails.
+Adding an already saved Product at the limit remains successful.
+Customers can remove unavailable entries to free space.
+
+All operations derive the customer ID from existing authentication middleware. Never accept a target userId from the request.
+
+Use the same customer authorization policy as Cart.
+
+7. REST endpoints
+
+Method	Endpoint	Purpose
+GET	/api/v1/wishlist	Read the authenticated customer’s Wishlist
+POST	/api/v1/wishlist/items	Add a Product using { "productId": "..." }
+DELETE	/api/v1/wishlist/items/:productId	Remove a saved Product
+DELETE	/api/v1/wishlist	Clear Wishlist
+
+No PATCH endpoint is needed because there are no quantities or variant selections to update.
+
+Response envelopes and exact error codes will follow existing Cart conventions.
+
+8. Planned files
+
+Base directory:
+
+E:\uday\Projects\MERN Project\Cloathing\backend
+
+Planned paths relative to that directory:
+
+src/modules/wishlist/wishlist.constants.js
+src/modules/wishlist/wishlist.model.js
+src/modules/wishlist/wishlist.validation.js
+src/modules/wishlist/wishlist.repository.js
+src/modules/wishlist/wishlist.service.js
+src/modules/wishlist/wishlist.mapper.js
+src/modules/wishlist/wishlist.controller.js
+src/modules/wishlist/wishlist.routes.js
+
+tests/integration/wishlist.integration.test.js
+
+Existing route registration file:
+
+src/app.js
+
+We’ll confirm filenames and exports against Cart before implementation.
+
+9. Planned integration coverage
+
+Authentication, customer authorization, and ownership isolation.
+Empty GET without document creation.
+First addition and duplicate addition.
+Multiple distinct Products and newest-first ordering.
+Invalid IDs, invalid bodies, and unavailable Products.
+Out-of-stock Product addition.
+Current Product details and price changes reflected on GET.
+Saved Products becoming inactive or deleted.
+Unavailable entries remaining removable.
+Single removal, repeated removal, and clearing.
+Limit enforcement, including duplicate addition at capacity.
+Inventory remaining unchanged.
+
 |--------------------------------------------------------------------------
+Part 216.2 — Wishlist Constants
+Part 216.3 — Wishlist Model
+Part 216.4 — Wishlist Validation
+Part 216.5 — Wishlist Repository
+Part 216.6 — Wishlist Service
+Part 216.7 — Wishlist Mapper
+Part 216.8 — Wishlist Controller
+Part 216.9 — Wishlist Routes
+Part 216.10 — Mount Wishlist Routes
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
