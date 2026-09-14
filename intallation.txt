@@ -9956,6 +9956,9 @@ Part 217.5 — Recently Viewed Service
 Part 217.6 — Recently Viewed Mapper
 Part 217.7 — Recently Viewed Controller
 Part 217.8 — Recently Viewed Routes
+
+Part 217.9— Recently Viewed Tests
+Part 217.10 — Regression Check
 |--------------------------------------------------------------------------
 
 info:
