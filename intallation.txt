@@ -9839,6 +9839,9 @@ Part 216.7 — Wishlist Mapper
 Part 216.8 — Wishlist Controller
 Part 216.9 — Wishlist Routes
 Part 216.10 — Mount Wishlist Routes
+Part 216.11 — Wishlist Integration Tests
+Part 216.12 — Wishlist + Product Regression
+Part 216.13 — Cleanup & Final Check
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

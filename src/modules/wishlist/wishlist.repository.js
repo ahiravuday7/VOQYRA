@@ -4,37 +4,16 @@ import Wishlist from "./wishlist.model.js";
 |--------------------------------------------------------------------------
 | Find Wishlist By User
 |--------------------------------------------------------------------------
+| Returns an unpopulated document.
+| The service resolves current public Product data separately.
 | Reading does not create a Wishlist document.
-| Populate current Product data only when requested.
 |--------------------------------------------------------------------------
 */
 
-const findWishlistByUserId = async (userId, options = {}) => {
-  const { populateProducts = false } = options;
-
-  let query = Wishlist.findOne({
+const findWishlistByUserId = async (userId) => {
+  return Wishlist.findOne({
     user: userId,
   });
-
-  if (populateProducts) {
-    query = query.populate({
-      path: "items.product",
-
-      select: {
-        name: 1,
-        slug: 1,
-        status: 1,
-        deletedAt: 1,
-        images: 1,
-        variants: 1,
-      },
-
-      // Preserve the reference when the Product no longer exists.
-      transform: (product, originalId) => product ?? originalId,
-    });
-  }
-
-  return query;
 };
 
 /*
