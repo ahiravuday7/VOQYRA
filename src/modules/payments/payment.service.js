@@ -1052,6 +1052,15 @@ export const prepareCustomerOnlinePayment = async ({
     |--------------------------------------------------------------------------
     */
 
+  /*
+   * Read the latest attempt before checking for an active payment.
+   *
+   * If another request creates an attempt after these reads, the
+   * unique Order + attemptNumber index prevents duplicate creation,
+   * and the existing duplicate-key handler reuses that attempt.
+   */
+  const latestPayment = await findLatestPaymentTransactionForOrder(order._id);
+
   const activePayment = await findActivePaymentTransactionForOrder(order._id);
 
   if (activePayment) {
@@ -1095,8 +1104,6 @@ export const prepareCustomerOnlinePayment = async ({
     | New Attempt
     |--------------------------------------------------------------------------
     */
-
-  const latestPayment = await findLatestPaymentTransactionForOrder(order._id);
 
   const attemptNumber = buildNextPaymentAttemptNumber(latestPayment);
 

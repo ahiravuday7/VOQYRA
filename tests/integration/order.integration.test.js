@@ -2,7 +2,7 @@ import env from "../../src/config/environment.js";
 
 import mongoose from "mongoose";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import request from "supertest";
 
@@ -27,6 +27,8 @@ import OrderReturnRequest from "../../src/modules/orders/order-return.model.js";
 import OrderReturnReplacement from "../../src/modules/orders/order-return-replacement.model.js";
 
 import OrderReturnRefundAudit from "../../src/modules/orders/order-return-refund-audit.model.js";
+
+import * as paymentRepository from "../../src/modules/payments/payment.repository.js";
 
 import PaymentTransaction, {
   PAYMENT_RECONCILIATION_RECORD_STATUSES,
@@ -40670,5 +40672,99 @@ describe("Paid Payment reconciliation recovery", () => {
         operation: "release",
       }),
     ).toBe(0);
+  });
+});
+
+describe("Payment initiation race regression", () => {
+  it("reuses a Payment created between active and latest attempt reads", async () => {
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const order = await createOnlinePaymentOrderFixture({
+      customerAgent,
+      product,
+    });
+
+    const url = `/api/v1/orders/${order.id}/payments`;
+
+    const originalFindActive =
+      paymentRepository.findActivePaymentTransactionForOrder;
+
+    let competingResponse;
+    let observedEmptyActiveRead = false;
+
+    const activeReadSpy = vi
+      .spyOn(paymentRepository, "findActivePaymentTransactionForOrder")
+      .mockImplementationOnce(async (...args) => {
+        // The first request reads "no active payment".
+        const activePayment = await originalFindActive(...args);
+
+        observedEmptyActiveRead = activePayment === null;
+
+        // Complete another real request before the first request
+        // continues to its latest-attempt lookup.
+        competingResponse = await customerAgent.post(url).send({
+          provider: "razorpay",
+        });
+
+        return activePayment;
+      });
+
+    try {
+      const resumedResponse = await customerAgent.post(url).send({
+        provider: "razorpay",
+      });
+
+      expect(observedEmptyActiveRead).toBe(true);
+      expect(competingResponse).toBeDefined();
+
+      const storedPayments = await PaymentTransaction.find({
+        order: order.id,
+      })
+        .sort({ attemptNumber: 1 })
+        .lean();
+
+      const summarizeResponse = (response) => ({
+        status: response.status,
+        action: response.body.data?.action,
+        attemptNumber: response.body.data?.payment?.attemptNumber,
+      });
+
+      expect({
+        competing: summarizeResponse(competingResponse),
+        resumed: summarizeResponse(resumedResponse),
+
+        storedAttempts: storedPayments.map((payment) => payment.attemptNumber),
+      }).toEqual({
+        competing: {
+          status: 201,
+          action: "create",
+          attemptNumber: 1,
+        },
+
+        resumed: {
+          status: 200,
+          action: "reuse",
+          attemptNumber: 1,
+        },
+
+        storedAttempts: [1],
+      });
+
+      expect(resumedResponse.body.data.payment.id).toBe(
+        competingResponse.body.data.payment.id,
+      );
+
+      expect(resumedResponse.body.data.payment.providerReference.orderId).toBe(
+        competingResponse.body.data.payment.providerReference.orderId,
+      );
+    } finally {
+      activeReadSpy.mockRestore();
+    }
   });
 });
