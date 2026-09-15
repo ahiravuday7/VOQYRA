@@ -926,3 +926,20 @@ export const claimOrderReservationForExpiry = ({
     },
   );
 };
+
+export const findOrderByCheckoutIdempotencyKey = (
+  customerId,
+  key,
+  { session = null } = {},
+) => {
+  const query = Order.findOne({
+    customer: customerId,
+    "checkoutIdempotency.key": key,
+  }).read("primary");
+
+  if (session) {
+    query.session(session);
+  }
+
+  return query;
+};

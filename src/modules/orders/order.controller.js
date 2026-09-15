@@ -6,7 +6,7 @@ import {
 } from "./order.mapper.js";
 
 import {
-  createCustomerOrder,
+  createCustomerOrderSubmission,
   getCustomerOrderById,
   getCustomerOrders,
   cancelCustomerOrder,
@@ -30,36 +30,40 @@ import {
 
 export const createCustomerOrderController = async (request, response) => {
   const orderData = request.validated.body;
-
   const customerId = request.user._id;
 
-  const order = await createCustomerOrder(orderData, customerId);
+  const { action, order } = await createCustomerOrderSubmission(
+    orderData,
+    customerId,
+    {
+      idempotencyKey: request.get("Idempotency-Key"),
+    },
+  );
 
   const mappedOrder = toCustomerOrder(order);
 
   request.log?.info(
     {
+      action,
       orderId: mappedOrder.id,
-
       orderNumber: mappedOrder.orderNumber,
-
       customerId: String(customerId),
-
       itemCount: mappedOrder.items.length,
-
       grandTotal: mappedOrder.totals.grandTotal,
-
       paymentMethod: mappedOrder.payment.method,
-
       inventoryStatus: mappedOrder.inventoryStatus,
     },
-    "Customer Order created",
+    "Customer checkout request completed",
   );
 
-  return response.status(201).json({
+  const created = action === "create";
+
+  return response.status(created ? 201 : 200).json({
     success: true,
 
-    message: "Order created successfully",
+    message: created
+      ? "Order created successfully"
+      : "Existing Order retrieved successfully",
 
     data: {
       order: mappedOrder,

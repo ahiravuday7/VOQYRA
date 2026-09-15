@@ -1,5 +1,5 @@
 import env from "../../config/environment.js";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import mongoose from "mongoose";
 
@@ -62,6 +62,7 @@ import {
   findOrderForInventoryReservationExpiry,
   claimOrderReservationForExpiry,
   claimOrderReservationForPaymentFinalization,
+  findOrderByCheckoutIdempotencyKey,
 } from "./order.repository.js";
 
 import { createOrderRefundAuditEntry } from "./order-refund-audit.repository.js";
@@ -4782,74 +4783,150 @@ const buildNewOrderDocumentData = ({
 
 /*
 |--------------------------------------------------------------------------
-| Execute Atomic Order Creation
+| Checkout Request Fingerprint
 |--------------------------------------------------------------------------
 |
-| This function performs one complete transaction attempt.
+| Object property order does not affect the fingerprint.
+| Array order remains significant.
+|
+| Input comes from the existing validated Order request body.
 |--------------------------------------------------------------------------
 */
 
-const executeAtomicOrderCreation = async (orderData, customerId) => {
+const canonicalizeCheckoutValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeCheckoutValue);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .filter((key) => value[key] !== undefined)
+        .sort()
+        .map((key) => [key, canonicalizeCheckoutValue(value[key])]),
+    );
+  }
+
+  return value;
+};
+
+const buildCheckoutIdempotencyContext = (orderData, rawKey) => {
+  if (rawKey === undefined) {
+    return null;
+  }
+
+  const key = typeof rawKey === "string" ? rawKey.trim() : "";
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(key)) {
+    throw new AppError(
+      "Idempotency-Key must contain 16 to 128 letters, numbers, dots, underscores, colons, or hyphens and start with a letter or number.",
+      400,
+      {
+        errorCode: "ORDER_IDEMPOTENCY_KEY_INVALID",
+      },
+    );
+  }
+
+  const canonicalRequest = JSON.stringify(canonicalizeCheckoutValue(orderData));
+
+  return {
+    key,
+
+    requestHash: createHash("sha256")
+      .update(`checkout-v1:${canonicalRequest}`)
+      .digest("hex"),
+  };
+};
+
+const reuseCheckoutOrder = (order, checkoutIdempotency) => {
+  if (
+    order.checkoutIdempotency?.requestHash !== checkoutIdempotency.requestHash
+  ) {
+    throw new AppError(
+      "This Idempotency-Key was already used for a different checkout request.",
+      409,
+      {
+        errorCode: "ORDER_IDEMPOTENCY_KEY_REUSED",
+      },
+    );
+  }
+
+  return {
+    action: "reuse",
+    order,
+  };
+};
+
+const isDuplicateCheckoutIdempotencyKeyError = (error) => {
+  if (error?.code !== 11000) {
+    return false;
+  }
+
+  return Boolean(
+    error.keyPattern?.["checkoutIdempotency.key"] ||
+    error.keyValue?.["checkoutIdempotency.key"],
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| Execute Atomic Order Creation
+|--------------------------------------------------------------------------
+|
+| Check the checkout key before validating current Product state
+| or reserving inventory.
+|
+| A completed checkout can therefore be retrieved even if its
+| Products or inventory have changed since the original request.
+|--------------------------------------------------------------------------
+*/
+
+const executeAtomicOrderCreation = async (
+  orderData,
+  customerId,
+  checkoutIdempotency = null,
+) => {
   const session = await mongoose.startSession();
 
   try {
-    let createdOrder;
+    let result;
 
     await session.withTransaction(
       async () => {
-        /*
-          |--------------------------------------------------------------------------
-          | Generate Order Reference
-          |--------------------------------------------------------------------------
-          */
+        // The driver may execute this callback again.
+        result = undefined;
+
+        if (checkoutIdempotency) {
+          const existingOrder = await findOrderByCheckoutIdempotencyKey(
+            customerId,
+            checkoutIdempotency.key,
+            { session },
+          );
+
+          if (existingOrder) {
+            result = reuseCheckoutOrder(existingOrder, checkoutIdempotency);
+
+            return;
+          }
+        }
 
         const orderNumber = await generateUniqueOrderNumber({
           session,
         });
 
-        /*
-          |--------------------------------------------------------------------------
-          | Build Trusted Checkout Snapshot
-          |--------------------------------------------------------------------------
-          |
-          | Product names, images, SKUs, variants and prices
-          | are loaded from the database.
-          |--------------------------------------------------------------------------
-          */
-
         const checkoutSnapshot = await buildOrderCheckoutSnapshot(
           orderData.items,
-          {
-            session,
-          },
+          { session },
         );
-
-        /*
-          |--------------------------------------------------------------------------
-          | Reserve Every Order Item
-          |--------------------------------------------------------------------------
-          |
-          | This also creates one Inventory Ledger entry
-          | for every successful reservation.
-          |--------------------------------------------------------------------------
-          */
 
         const reservedItems = await reserveOrderItemsInventoryInTransaction(
           checkoutSnapshot.items,
           {
             referenceId: orderNumber,
-
             actorUserId: customerId,
-
             session,
           },
         );
-
-        /*
-          |--------------------------------------------------------------------------
-          | Build Trusted Order Data
-          |--------------------------------------------------------------------------
-          */
 
         const newOrderData = buildNewOrderDocumentData({
           orderNumber,
@@ -4859,17 +4936,19 @@ const executeAtomicOrderCreation = async (orderData, customerId) => {
           reservedItems,
         });
 
-        /*
-          |--------------------------------------------------------------------------
-          | Create Order
-          |--------------------------------------------------------------------------
-          */
+        if (checkoutIdempotency) {
+          newOrderData.checkoutIdempotency = checkoutIdempotency;
+        }
 
-        createdOrder = await createOrderDocument(newOrderData, {
+        const order = await createOrderDocument(newOrderData, {
           session,
         });
-      },
 
+        result = {
+          action: "create",
+          order,
+        };
+      },
       {
         readConcern: {
           level: "snapshot",
@@ -4883,7 +4962,7 @@ const executeAtomicOrderCreation = async (orderData, customerId) => {
       },
     );
 
-    return createdOrder;
+    return result;
   } finally {
     await session.endSession();
   }
@@ -4891,33 +4970,61 @@ const executeAtomicOrderCreation = async (orderData, customerId) => {
 
 /*
 |--------------------------------------------------------------------------
-| Create Customer Order
+| Submit Customer Checkout
 |--------------------------------------------------------------------------
 |
-| Retries only when the generated Order number collides
-| with the unique database index.
-|
-| MongoDB automatically handles transient transaction
-| retries inside session.withTransaction().
+| The unique customer + key index also protects competing
+| transactions that both initially find no matching Order.
 |--------------------------------------------------------------------------
 */
 
-export const createCustomerOrder = async (orderData, customerId) => {
+export const createCustomerOrderSubmission = async (
+  orderData,
+  customerId,
+  { idempotencyKey } = {},
+) => {
   if (!customerId) {
     throw new Error("Customer ID is required to create an Order");
   }
 
+  const checkoutIdempotency = buildCheckoutIdempotencyContext(
+    orderData,
+    idempotencyKey,
+  );
+
   for (let attempt = 1; attempt <= MAX_ORDER_CREATION_ATTEMPTS; attempt += 1) {
     try {
-      return await executeAtomicOrderCreation(orderData, customerId);
+      return await executeAtomicOrderCreation(
+        orderData,
+        customerId,
+        checkoutIdempotency,
+      );
     } catch (error) {
+      if (
+        checkoutIdempotency &&
+        isDuplicateCheckoutIdempotencyKeyError(error)
+      ) {
+        /*
+         * The rejected transaction has rolled back, including
+         * its inventory and ledger writes.
+         *
+         * Read the winning Order outside that transaction.
+         */
+        const existingOrder = await findOrderByCheckoutIdempotencyKey(
+          customerId,
+          checkoutIdempotency.key,
+        );
+
+        if (existingOrder) {
+          return reuseCheckoutOrder(existingOrder, checkoutIdempotency);
+        }
+
+        throw createOrderCreationConflictError();
+      }
+
       const duplicateOrderNumber = isDuplicateOrderNumberError(error);
 
       if (duplicateOrderNumber && attempt < MAX_ORDER_CREATION_ATTEMPTS) {
-        /*
-         * A new transaction and new Order number
-         * will be used on the next attempt.
-         */
         continue;
       }
 
@@ -4930,6 +5037,21 @@ export const createCustomerOrder = async (orderData, customerId) => {
   }
 
   throw createOrderCreationConflictError();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Existing Internal Order Creation Interface
+|--------------------------------------------------------------------------
+|
+| Existing callers continue receiving an Order document.
+|--------------------------------------------------------------------------
+*/
+
+export const createCustomerOrder = async (orderData, customerId) => {
+  const result = await createCustomerOrderSubmission(orderData, customerId);
+
+  return result.order;
 };
 /*
 |--------------------------------------------------------------------------

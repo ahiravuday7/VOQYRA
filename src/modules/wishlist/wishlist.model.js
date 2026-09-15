@@ -69,6 +69,7 @@ const wishlistSchema = new Schema(
   },
   {
     timestamps: true,
+    optimisticConcurrency: true,
   },
 );
 

@@ -40768,3 +40768,533 @@ describe("Payment initiation race regression", () => {
     }
   });
 });
+
+describe("Customer Order creation idempotency", () => {
+  it.each([
+    {
+      label: "reuses the Order when a completed checkout request is retried",
+      concurrent: false,
+    },
+    {
+      label:
+        "creates one Order when the same checkout is submitted concurrently",
+      concurrent: true,
+    },
+  ])("$label", async ({ concurrent }) => {
+    const { agent, user } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+    const quantity = 2;
+
+    const requestBody = createOrderRequestBody({
+      productId: product._id,
+      variantId: variant._id,
+      quantity,
+    });
+
+    const idempotencyKey = `checkout-${new mongoose.Types.ObjectId().toString()}`;
+
+    const submitCheckout = () => {
+      return agent
+        .post("/api/v1/orders")
+        .set("Idempotency-Key", idempotencyKey)
+        .send(requestBody);
+    };
+
+    let responses;
+
+    if (concurrent) {
+      responses = await Promise.all([submitCheckout(), submitCheckout()]);
+    } else {
+      const firstResponse = await submitCheckout();
+
+      expect(firstResponse.status).toBe(201);
+
+      const secondResponse = await submitCheckout();
+
+      responses = [firstResponse, secondResponse];
+    }
+
+    const storedOrders = await Order.find({
+      customer: user._id,
+    }).lean();
+
+    const refreshedProduct = await Product.findById(product._id).lean();
+
+    const refreshedVariant = refreshedProduct.variants.find(
+      (entry) => String(entry._id) === String(variant._id),
+    );
+
+    const reservationEntries = await ProductInventoryLedger.find({
+      product: product._id,
+      variantId: variant._id,
+      operation: "reserve",
+    }).lean();
+
+    const returnedOrderIds = responses.map(
+      (response) => response.body.data?.order?.id ?? null,
+    );
+
+    // Report API results, Orders, inventory, and ledger together.
+    expect({
+      statuses: responses
+        .map((response) => response.status)
+        .sort((first, second) => first - second),
+
+      errors: responses.map((response) => response.body.errorCode ?? null),
+
+      orderCount: storedOrders.length,
+
+      uniqueReturnedOrderCount: new Set(returnedOrderIds).size,
+
+      stock: refreshedVariant.inventory.stock,
+
+      reservedStock: refreshedVariant.inventory.reservedStock,
+
+      reservationEntryCount: reservationEntries.length,
+
+      totalReservedQuantity: reservationEntries.reduce(
+        (total, entry) => total + entry.quantity,
+        0,
+      ),
+    }).toEqual({
+      statuses: [200, 201],
+      errors: [null, null],
+
+      orderCount: 1,
+      uniqueReturnedOrderCount: 1,
+
+      stock: variant.inventory.stock,
+      reservedStock: variant.inventory.reservedStock + quantity,
+
+      reservationEntryCount: 1,
+      totalReservedQuantity: quantity,
+    });
+
+    const storedOrder = storedOrders[0];
+
+    for (const response of responses) {
+      expect(response.body.data.order.id).toBe(String(storedOrder._id));
+
+      expect(response.body.data.order.orderNumber).toBe(
+        storedOrder.orderNumber,
+      );
+    }
+
+    expect(storedOrder.items).toHaveLength(1);
+    expect(storedOrder.items[0].quantity).toBe(quantity);
+
+    expect(reservationEntries[0].referenceId).toBe(storedOrder.orderNumber);
+  });
+});
+
+describe("Customer Order creation idempotency boundaries", () => {
+  const createCheckoutFixture = async () => {
+    const { agent, user } = await createAuthenticatedCustomerAgent();
+
+    const category = await createActiveCategoryFixture();
+
+    const product = await createActiveProductFixture({
+      category: category._id,
+    });
+
+    const variant = product.variants[0];
+
+    return {
+      agent,
+      user,
+      product,
+      variant,
+
+      key: `checkout-${new mongoose.Types.ObjectId()}`,
+
+      body: createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 2,
+      }),
+    };
+  };
+
+  const submitCheckout = (
+    fixture,
+    { agent = fixture.agent, body = fixture.body, key = fixture.key } = {},
+  ) => {
+    const request = agent.post("/api/v1/orders");
+
+    // null explicitly means no Idempotency-Key header.
+    if (key !== null) {
+      request.set("Idempotency-Key", key);
+    }
+
+    return request.send(body);
+  };
+
+  const expectReservations = async (
+    fixture,
+    expectedQuantity,
+    expectedEntryCount,
+  ) => {
+    const product = await Product.findById(fixture.product._id).lean();
+
+    const variant = product.variants.find(
+      (entry) => String(entry._id) === String(fixture.variant._id),
+    );
+
+    const entries = await ProductInventoryLedger.find({
+      product: fixture.product._id,
+      variantId: fixture.variant._id,
+      operation: "reserve",
+    }).lean();
+
+    expect({
+      stock: variant.inventory.stock,
+      reservedStock: variant.inventory.reservedStock,
+      entryCount: entries.length,
+      reservedQuantity: entries.reduce(
+        (total, entry) => total + entry.quantity,
+        0,
+      ),
+    }).toEqual({
+      stock: fixture.variant.inventory.stock,
+      reservedStock: fixture.variant.inventory.reservedStock + expectedQuantity,
+      entryCount: expectedEntryCount,
+      reservedQuantity: expectedQuantity,
+    });
+  };
+
+  it.each([
+    {
+      label: "rejects reuse of a key with a different quantity",
+      change: "quantity",
+    },
+    {
+      label: "rejects reuse of a key with a different shipping address",
+      change: "address",
+    },
+    {
+      label: "rejects reuse of a key with a different payment method",
+      change: "payment",
+    },
+  ])("$label", async ({ change }) => {
+    const fixture = await createCheckoutFixture();
+
+    const first = await submitCheckout(fixture).expect(201);
+
+    const originalOrder = await Order.findById(first.body.data.order.id).lean();
+
+    const changedBody = JSON.parse(JSON.stringify(fixture.body));
+
+    if (change === "quantity") {
+      changedBody.items[0].quantity = 3;
+    } else if (change === "address") {
+      changedBody.shippingAddress.addressLine1 =
+        "Flat 202, Different Residency";
+    } else {
+      changedBody.paymentMethod = "online";
+    }
+
+    const response = await submitCheckout(fixture, {
+      body: changedBody,
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.errorCode).toBe("ORDER_IDEMPOTENCY_KEY_REUSED");
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(1);
+
+    expect(await Order.findById(originalOrder._id).lean()).toEqual(
+      originalOrder,
+    );
+
+    await expectReservations(fixture, 2, 1);
+  });
+
+  it("scopes the same checkout key to each customer", async () => {
+    const fixture = await createCheckoutFixture();
+
+    const secondCustomer = await createAuthenticatedCustomerAgent();
+
+    const first = await submitCheckout(fixture).expect(201);
+
+    const second = await submitCheckout(fixture, {
+      agent: secondCustomer.agent,
+    }).expect(201);
+
+    expect(second.body.data.order.id).not.toBe(first.body.data.order.id);
+
+    const firstOrder = await Order.findById(first.body.data.order.id).lean();
+
+    const secondOrder = await Order.findById(second.body.data.order.id).lean();
+
+    expect(String(firstOrder.customer)).toBe(String(fixture.user._id));
+
+    expect(String(secondOrder.customer)).toBe(String(secondCustomer.user._id));
+
+    expect(firstOrder.checkoutIdempotency.key).toBe(fixture.key);
+    expect(secondOrder.checkoutIdempotency.key).toBe(fixture.key);
+
+    const replay = await submitCheckout(fixture, {
+      agent: secondCustomer.agent,
+    }).expect(200);
+
+    expect(replay.body.data.order.id).toBe(second.body.data.order.id);
+
+    expect(
+      await Order.countDocuments({
+        customer: {
+          $in: [fixture.user._id, secondCustomer.user._id],
+        },
+      }),
+    ).toBe(2);
+
+    await expectReservations(fixture, 4, 2);
+  });
+
+  it.each([
+    {
+      label: "creates separate Orders when requests have no key",
+      useDifferentKeys: false,
+    },
+    {
+      label: "creates separate Orders for different checkout keys",
+      useDifferentKeys: true,
+    },
+  ])("$label", async ({ useDifferentKeys }) => {
+    const fixture = await createCheckoutFixture();
+
+    const firstKey = useDifferentKeys ? fixture.key : null;
+
+    const secondKey = useDifferentKeys
+      ? `checkout-${new mongoose.Types.ObjectId()}`
+      : null;
+
+    const first = await submitCheckout(fixture, {
+      key: firstKey,
+    }).expect(201);
+
+    const second = await submitCheckout(fixture, {
+      key: secondKey,
+    }).expect(201);
+
+    expect(second.body.data.order.id).not.toBe(first.body.data.order.id);
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(2);
+
+    await expectReservations(fixture, 4, 2);
+  });
+
+  it("enforces customer plus checkout-key uniqueness in MongoDB", async () => {
+    const fixture = await createCheckoutFixture();
+
+    const response = await submitCheckout(fixture).expect(201);
+
+    const storedOrder = await Order.findById(
+      response.body.data.order.id,
+    ).lean();
+
+    expect(storedOrder.checkoutIdempotency.key).toBe(fixture.key);
+
+    expect(storedOrder.checkoutIdempotency.requestHash).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+
+    /*
+     * Bypass the service and Mongoose validation deliberately:
+     * the database index itself must reject this duplicate key.
+     *
+     * Use a different Order number so its index is not the cause.
+     */
+    await expect(
+      Order.collection.insertOne({
+        ...storedOrder,
+        _id: new mongoose.Types.ObjectId(),
+        orderNumber: `${storedOrder.orderNumber}-DUP`,
+      }),
+    ).rejects.toMatchObject({
+      code: 11000,
+
+      keyPattern: {
+        customer: 1,
+        "checkoutIdempotency.key": 1,
+      },
+    });
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(1);
+
+    await expectReservations(fixture, 2, 1);
+  });
+
+  it("rolls back reservations and allows the same key after failed creation", async () => {
+    const fixture = await createCheckoutFixture();
+
+    let observedReservation;
+
+    const saveSpy = vi
+      .spyOn(Order.prototype, "save")
+      .mockImplementationOnce(async function (options) {
+        const session = options?.session;
+
+        if (!session?.inTransaction()) {
+          throw new Error("Expected an active Order transaction");
+        }
+
+        const product = await Product.findById(fixture.product._id)
+          .session(session)
+          .lean();
+
+        const variant = product.variants.find(
+          (entry) => String(entry._id) === String(fixture.variant._id),
+        );
+
+        const entries = await ProductInventoryLedger.find({
+          product: fixture.product._id,
+          variantId: fixture.variant._id,
+          operation: "reserve",
+          referenceId: this.orderNumber,
+        })
+          .session(session)
+          .lean();
+
+        observedReservation = {
+          reservedStock: variant.inventory.reservedStock,
+          entryCount: entries.length,
+          reservedQuantity: entries.reduce(
+            (total, entry) => total + entry.quantity,
+            0,
+          ),
+        };
+
+        throw new Error(
+          "Simulated Order save failure after inventory reservation",
+        );
+      });
+
+    try {
+      const failed = await submitCheckout(fixture);
+
+      expect(failed.status).toBe(500);
+      expect(failed.body.errorCode).toBe("INTERNAL_SERVER_ERROR");
+      expect(saveSpy).toHaveBeenCalledTimes(1);
+
+      // Prove that reservations existed inside the failed transaction.
+      expect(observedReservation).toEqual({
+        reservedStock: fixture.variant.inventory.reservedStock + 2,
+        entryCount: 1,
+        reservedQuantity: 2,
+      });
+
+      // Nothing from that transaction may remain committed.
+      expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(
+        0,
+      );
+
+      await expectReservations(fixture, 0, 0);
+    } finally {
+      saveSpy.mockRestore();
+    }
+
+    const retry = await submitCheckout(fixture).expect(201);
+
+    const replay = await submitCheckout(fixture).expect(200);
+
+    expect(replay.body.data.order.id).toBe(retry.body.data.order.id);
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(1);
+
+    await expectReservations(fixture, 2, 1);
+  });
+
+  it.each([
+    {
+      label: "rejects an empty checkout key",
+      key: "",
+    },
+    {
+      label: "rejects a checkout key shorter than 16 characters",
+      key: "too-short",
+    },
+    {
+      label: "rejects unsupported characters in a checkout key",
+      key: "checkout-key-with spaces",
+    },
+    {
+      label: "rejects a checkout key longer than 128 characters",
+      key: "x".repeat(129),
+    },
+  ])("$label", async ({ key }) => {
+    const fixture = await createCheckoutFixture();
+
+    const response = await submitCheckout(fixture, { key });
+
+    expect(response.status).toBe(400);
+    expect(response.body.errorCode).toBe("ORDER_IDEMPOTENCY_KEY_INVALID");
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(0);
+
+    await expectReservations(fixture, 0, 0);
+  });
+
+  it("reuses an Order when JSON object properties are reordered", async () => {
+    const fixture = await createCheckoutFixture();
+
+    const first = await submitCheckout(fixture).expect(201);
+
+    const reverseObjectProperties = (value) => {
+      if (Array.isArray(value)) {
+        return value.map(reverseObjectProperties);
+      }
+
+      if (value !== null && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value)
+            .reverse()
+            .map(([key, entry]) => [key, reverseObjectProperties(entry)]),
+        );
+      }
+
+      return value;
+    };
+
+    const replay = await submitCheckout(fixture, {
+      body: reverseObjectProperties(fixture.body),
+    }).expect(200);
+
+    expect(replay.body.data.order).toEqual(first.body.data.order);
+
+    expect(replay.body.data.order).not.toHaveProperty("checkoutIdempotency");
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(1);
+
+    await expectReservations(fixture, 2, 1);
+  });
+
+  it("replays an existing checkout after its Product becomes unavailable", async () => {
+    const fixture = await createCheckoutFixture();
+
+    const first = await submitCheckout(fixture).expect(201);
+
+    await Product.updateOne(
+      { _id: fixture.product._id },
+      {
+        $set: {
+          status: "inactive",
+        },
+      },
+    );
+
+    const replay = await submitCheckout(fixture).expect(200);
+
+    expect(replay.body.data.order).toEqual(first.body.data.order);
+
+    expect(await Order.countDocuments({ customer: fixture.user._id })).toBe(1);
+
+    await expectReservations(fixture, 2, 1);
+  });
+});

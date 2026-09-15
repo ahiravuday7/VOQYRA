@@ -897,6 +897,28 @@ const orderStatusHistorySchema = new mongoose.Schema(
   },
 );
 
+const orderCheckoutIdempotencySchema = new mongoose.Schema(
+  {
+    key: {
+      type: String,
+      required: true,
+      immutable: true,
+      minlength: 16,
+      maxlength: 128,
+    },
+
+    requestHash: {
+      type: String,
+      required: true,
+      immutable: true,
+      match: /^[a-f0-9]{64}$/,
+    },
+  },
+  {
+    _id: false,
+  },
+);
+
 /*
 |--------------------------------------------------------------------------
 | Order Schema
@@ -951,6 +973,12 @@ const orderSchema = new mongoose.Schema(
           message: `Order cannot contain more than ${MAX_ORDER_ITEMS} items`,
         },
       ],
+    },
+
+    checkoutIdempotency: {
+      type: orderCheckoutIdempotencySchema,
+      default: undefined,
+      immutable: true,
     },
 
     shippingAddress: {
@@ -1515,6 +1543,23 @@ orderSchema.index(
 
   {
     name: "order_online_inventory_reservation_expiry",
+  },
+);
+
+orderSchema.index(
+  {
+    customer: 1,
+    "checkoutIdempotency.key": 1,
+  },
+  {
+    name: "unique_customer_checkout_idempotency",
+    unique: true,
+
+    partialFilterExpression: {
+      "checkoutIdempotency.key": {
+        $type: "string",
+      },
+    },
   },
 );
 

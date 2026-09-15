@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import AppError from "../../shared/errors/app-error.js";
 
 import { findProductsForCheckout } from "../products/product.repository.js";
@@ -54,7 +56,7 @@ const sortRecentlyViewedItems = (items) => {
 |--------------------------------------------------------------------------
 */
 
-const recordRecentlyViewed = async (userId, productId) => {
+const recordRecentlyViewedOnce = async (userId, productId) => {
   // Reuse Product visibility rules without reserving inventory.
   const [product] = await findProductsForCheckout([productId]);
 
@@ -148,7 +150,7 @@ const getRecentlyViewed = async (userId) => {
 |--------------------------------------------------------------------------
 */
 
-const deleteRecentlyViewedItem = async (userId, productId) => {
+const deleteRecentlyViewedItemOnce = async (userId, productId) => {
   const history = await findRecentlyViewedByUserId(userId);
 
   if (!history) {
@@ -179,7 +181,7 @@ const deleteRecentlyViewedItem = async (userId, productId) => {
 |--------------------------------------------------------------------------
 */
 
-const clearRecentlyViewed = async (userId) => {
+const clearRecentlyViewedOnce = async (userId) => {
   const history = await findRecentlyViewedByUserId(userId);
 
   if (!history) {
@@ -193,6 +195,69 @@ const clearRecentlyViewed = async (userId) => {
   history.items = [];
 
   return saveRecentlyViewedDocument(history);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Retry Recently Viewed Version Conflicts
+|--------------------------------------------------------------------------
+|
+| Reload the history and repeat the complete operation after a
+| rejected stale save. Recording then recalculates viewedAt,
+| ordering, and eviction using the latest history.
+|--------------------------------------------------------------------------
+*/
+
+const RECENTLY_VIEWED_WRITE_MAX_ATTEMPTS = 5;
+
+const executeRecentlyViewedWriteWithRetry = async (operation) => {
+  for (
+    let attempt = 1;
+    attempt <= RECENTLY_VIEWED_WRITE_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof mongoose.Error.VersionError)) {
+        throw error;
+      }
+
+      if (attempt === RECENTLY_VIEWED_WRITE_MAX_ATTEMPTS) {
+        throw new AppError(
+          "Recently viewed history changed repeatedly while processing your request. Please try again.",
+          409,
+          {
+            errorCode: "RECENTLY_VIEWED_WRITE_CONFLICT",
+          },
+        );
+      }
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Recently Viewed Write Operations
+|--------------------------------------------------------------------------
+*/
+
+const recordRecentlyViewed = async (userId, productId) => {
+  return executeRecentlyViewedWriteWithRetry(() => {
+    return recordRecentlyViewedOnce(userId, productId);
+  });
+};
+
+const deleteRecentlyViewedItem = async (userId, productId) => {
+  return executeRecentlyViewedWriteWithRetry(() => {
+    return deleteRecentlyViewedItemOnce(userId, productId);
+  });
+};
+
+const clearRecentlyViewed = async (userId) => {
+  return executeRecentlyViewedWriteWithRetry(() => {
+    return clearRecentlyViewedOnce(userId);
+  });
 };
 
 export {

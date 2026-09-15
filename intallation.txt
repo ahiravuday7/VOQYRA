@@ -9964,7 +9964,23 @@ Part 218.1 — Cart → Order Checkout Review
 Part 218.2 — Cart → Order Integration Tests
 Part 218.3 — Combined Regression
 |--------------------------------------------------------------------------
-
+Part 219 — commerce concurrency hardening, starting with concurrent Cart updates, then Wishlist and Recently Viewed.
+Part 219.1 — reproduce concurrent Cart additions
+Part 219.2 — prevent stale Cart saves
+Part 219.3 — add 10 more Cart concurrency tests
+Part 219.4 — Wishlist concurrency, starting with duplicate additions and competing requests at the item limit.
+Part 219.4 — reproduce Wishlist concurrency issues
+Part 219.5 — protect Wishlist saves
+Part 219.6 — Wishlist concurrency tests for first creation, deletion, clearing, and retry error handling.
+Part 219.6 — add 8 more Wishlist concurrency tests
+Part 219.7 — Recently Viewed concurrency tests
+Part 219.8 — handle Recently Viewed version conflicts
+Part 219.9 — add 8 more Recently Viewed concurrency tests
+Part 219.10 — combined commerce regression
+Part 219.11 — Order creation idempotency review
+Part 219.12 — implement Order creation idempotency
+Part 219.13 — add 14 Order idempotency tests
+Part 219.14 — combined Order, Payment, and Cart → Order regression.
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

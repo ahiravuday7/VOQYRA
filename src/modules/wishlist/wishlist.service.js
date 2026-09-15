@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import AppError from "../../shared/errors/app-error.js";
 
 import { findProductsForCheckout } from "../products/product.repository.js";
@@ -56,7 +58,7 @@ const findWishlistItem = (wishlist, productId) => {
 |--------------------------------------------------------------------------
 */
 
-const addWishlistItem = async (userId, { productId }) => {
+const addWishlistItemOnce = async (userId, { productId }) => {
   let wishlist = await findWishlistByUserId(userId);
 
   if (wishlist && findWishlistItem(wishlist, productId)) {
@@ -151,7 +153,7 @@ const getWishlist = async (userId) => {
 |--------------------------------------------------------------------------
 */
 
-const deleteWishlistItem = async (userId, productId) => {
+const deleteWishlistItemOnce = async (userId, productId) => {
   const wishlist = await findWishlistByUserId(userId);
 
   if (!wishlist) {
@@ -180,7 +182,7 @@ const deleteWishlistItem = async (userId, productId) => {
 |--------------------------------------------------------------------------
 */
 
-const clearWishlist = async (userId) => {
+const clearWishlistOnce = async (userId) => {
   const wishlist = await findWishlistByUserId(userId);
 
   if (!wishlist) {
@@ -194,6 +196,66 @@ const clearWishlist = async (userId) => {
   wishlist.items = [];
 
   return saveWishlistDocument(wishlist);
+};
+
+/*
+|--------------------------------------------------------------------------
+| Retry Wishlist Version Conflicts
+|--------------------------------------------------------------------------
+|
+| A conflicting save did not apply its changes.
+|
+| Reload through the complete operation so duplicate detection,
+| Product validation, and the item limit use fresh Wishlist data.
+|--------------------------------------------------------------------------
+*/
+
+const WISHLIST_WRITE_MAX_ATTEMPTS = 5;
+
+const executeWishlistWriteWithRetry = async (operation) => {
+  for (let attempt = 1; attempt <= WISHLIST_WRITE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof mongoose.Error.VersionError)) {
+        throw error;
+      }
+
+      if (attempt === WISHLIST_WRITE_MAX_ATTEMPTS) {
+        throw new AppError(
+          "Wishlist changed repeatedly while processing your request. Please try again.",
+          409,
+          {
+            errorCode: "WISHLIST_WRITE_CONFLICT",
+          },
+        );
+      }
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Wishlist Write Operations
+|--------------------------------------------------------------------------
+*/
+
+const addWishlistItem = async (userId, input) => {
+  return executeWishlistWriteWithRetry(() => {
+    return addWishlistItemOnce(userId, input);
+  });
+};
+
+const deleteWishlistItem = async (userId, productId) => {
+  return executeWishlistWriteWithRetry(() => {
+    return deleteWishlistItemOnce(userId, productId);
+  });
+};
+
+const clearWishlist = async (userId) => {
+  return executeWishlistWriteWithRetry(() => {
+    return clearWishlistOnce(userId);
+  });
 };
 
 export { addWishlistItem, clearWishlist, deleteWishlistItem, getWishlist };

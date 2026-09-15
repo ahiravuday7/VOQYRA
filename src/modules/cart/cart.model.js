@@ -78,6 +78,7 @@ const cartSchema = new Schema(
   },
   {
     timestamps: true,
+    optimisticConcurrency: true,
   },
 );
 

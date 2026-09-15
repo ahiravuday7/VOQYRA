@@ -74,6 +74,7 @@ const recentlyViewedSchema = new Schema(
   },
   {
     timestamps: true,
+    optimisticConcurrency: true,
   },
 );
 

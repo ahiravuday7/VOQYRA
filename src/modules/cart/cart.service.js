@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import { PRODUCT_STATUSES } from "../../shared/constants/product.constants.js";
 
 import AppError from "../../shared/errors/app-error.js";
@@ -228,7 +230,7 @@ const resolveCartProductVariant = async (productId, variantId) => {
 |--------------------------------------------------------------------------
 */
 
-const addCartItem = async (userId, { productId, variantId, quantity }) => {
+const addCartItemOnce = async (userId, { productId, variantId, quantity }) => {
   /*
     |--------------------------------------------------------------------------
     | Resolve Product + Variant
@@ -338,7 +340,7 @@ const addCartItem = async (userId, { productId, variantId, quantity }) => {
 |--------------------------------------------------------------------------
 */
 
-const updateCartItemQuantity = async (userId, itemId, quantity) => {
+const updateCartItemQuantityOnce = async (userId, itemId, quantity) => {
   /*
     |--------------------------------------------------------------------------
     | Find User Cart
@@ -408,7 +410,7 @@ const updateCartItemQuantity = async (userId, itemId, quantity) => {
 |--------------------------------------------------------------------------
 */
 
-const deleteCartItem = async (userId, itemId) => {
+const deleteCartItemOnce = async (userId, itemId) => {
   /*
     |--------------------------------------------------------------------------
     | Find User Cart
@@ -457,7 +459,7 @@ const deleteCartItem = async (userId, itemId) => {
 |--------------------------------------------------------------------------
 */
 
-const clearCart = async (userId) => {
+const clearCartOnce = async (userId) => {
   const cart = await findCartByUserId(userId);
 
   /*
@@ -526,6 +528,72 @@ const getCart = async (userId) => {
   }
 
   return cart;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Retry Cart Version Conflicts
+|--------------------------------------------------------------------------
+|
+| A conflicting save did not apply its changes.
+|
+| Run the complete operation again so it reloads the Cart and repeats
+| the relevant Product, quantity, stock, and item-limit checks.
+|--------------------------------------------------------------------------
+*/
+
+const CART_WRITE_MAX_ATTEMPTS = 5;
+
+const executeCartWriteWithRetry = async (operation) => {
+  for (let attempt = 1; attempt <= CART_WRITE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof mongoose.Error.VersionError)) {
+        throw error;
+      }
+
+      if (attempt === CART_WRITE_MAX_ATTEMPTS) {
+        throw new AppError(
+          "Cart changed repeatedly while processing your request. Please try again.",
+          409,
+          {
+            errorCode: "CART_WRITE_CONFLICT",
+          },
+        );
+      }
+    }
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Public Cart Write Operations
+|--------------------------------------------------------------------------
+*/
+
+const addCartItem = async (userId, input) => {
+  return executeCartWriteWithRetry(() => {
+    return addCartItemOnce(userId, input);
+  });
+};
+
+const updateCartItemQuantity = async (userId, itemId, quantity) => {
+  return executeCartWriteWithRetry(() => {
+    return updateCartItemQuantityOnce(userId, itemId, quantity);
+  });
+};
+
+const deleteCartItem = async (userId, itemId) => {
+  return executeCartWriteWithRetry(() => {
+    return deleteCartItemOnce(userId, itemId);
+  });
+};
+
+const clearCart = async (userId) => {
+  return executeCartWriteWithRetry(() => {
+    return clearCartOnce(userId);
+  });
 };
 
 export {
