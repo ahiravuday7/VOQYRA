@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import AppError from "./shared/errors/app-error.js";
 
 import env from "./config/environment.js";
 
@@ -81,22 +82,31 @@ const allowedOrigins = [env.CLIENT_URL, env.ADMIN_URL];
 app.use(
   cors({
     origin(origin, callback) {
-      /*
-       * Requests without an Origin header include tools such as
-       * Postman, Bruno, curl and server-to-server requests.
-       */
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
-      return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+      return callback(
+        new AppError("Request origin is not allowed", 403, {
+          errorCode: "CORS_ORIGIN_FORBIDDEN",
+        }),
+      );
     },
 
     credentials: true,
 
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Idempotency-Key",
+      "X-Request-ID",
+    ],
+
+    exposedHeaders: ["X-Request-ID"],
+
+    optionsSuccessStatus: 204,
   }),
 );
 

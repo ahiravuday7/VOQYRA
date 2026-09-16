@@ -18,19 +18,27 @@ router.get("/", (request, response) => {
 
   const isHealthy = databaseStatus === "connected";
 
-  return response.status(isHealthy ? 200 : 503).json({
+  const responseBody = {
     success: isHealthy,
     message: isHealthy
       ? "Clothing Commerce API is healthy"
       : "Clothing Commerce API is unavailable",
-
+    requestId: request.id ?? null,
     data: {
       environment: env.NODE_ENV,
       database: databaseStatus,
       uptimeInSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     },
-  });
+  };
+
+  if (!isHealthy) {
+    responseBody.errorCode = "HEALTH_CHECK_FAILED";
+  }
+
+  response.set("Cache-Control", "no-store");
+
+  return response.status(isHealthy ? 200 : 503).json(responseBody);
 });
 
 export default router;

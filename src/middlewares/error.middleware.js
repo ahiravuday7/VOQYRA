@@ -3,9 +3,12 @@ import env from "../config/environment.js";
 
 // This function handles MongoDB duplicate key errors.
 const handleDuplicateKeyError = (error) => {
-  const duplicatedFields = Object.keys(error.keyValue ?? {});
-
-  const duplicatedValues = Object.values(error.keyValue ?? {});
+  const duplicatedFields = [
+    ...new Set([
+      ...Object.keys(error.keyPattern ?? {}),
+      ...Object.keys(error.keyValue ?? {}),
+    ]),
+  ];
 
   return {
     statusCode: 409,
@@ -13,10 +16,9 @@ const handleDuplicateKeyError = (error) => {
       ? `${duplicatedFields.join(", ")} already exists`
       : "A record with the same value already exists",
     errorCode: "DUPLICATE_RESOURCE",
-    details: duplicatedValues.length
+    details: duplicatedFields.length
       ? {
           fields: duplicatedFields,
-          values: duplicatedValues,
         }
       : null,
   };
@@ -24,34 +26,53 @@ const handleDuplicateKeyError = (error) => {
 
 // This function handles Mongoose schema validation failures.
 const handleMongooseValidationError = (error) => {
-  const errors = Object.values(error.errors).map((validationError) => ({
-    field: validationError.path,
-    message: validationError.message,
+  const errors = Object.values(error.errors ?? {}).map((validationError) => ({
+    field: validationError?.path ?? null,
+    message:
+      validationError?.kind === "required"
+        ? "This field is required"
+        : "Invalid value for this field",
   }));
 
   return {
     statusCode: 400,
     message: "Validation failed",
     errorCode: "VALIDATION_ERROR",
-    details: errors,
+    details: errors.length ? errors : null,
   };
 };
 
 // This handles Mongoose CastError errors.
 const handleCastError = (error) => {
+  const field = error.path ?? null;
+
   return {
     statusCode: 400,
-    message: `Invalid value for ${error.path}`,
+    message: field ? `Invalid value for ${field}` : "Invalid identifier",
     errorCode: "INVALID_IDENTIFIER",
-    details: {
-      field: error.path,
-      value: error.value,
-    },
+    details: field ? { field } : null,
   };
 };
 
 // This function converts different error types into one common structure.
 const normalizeError = (error) => {
+  if (error?.type === "entity.parse.failed") {
+    return {
+      statusCode: 400,
+      message: "Request body contains invalid JSON",
+      errorCode: "INVALID_JSON",
+      details: null,
+    };
+  }
+
+  if (error?.type === "entity.too.large") {
+    return {
+      statusCode: 413,
+      message: "Request body exceeds the allowed size",
+      errorCode: "REQUEST_BODY_TOO_LARGE",
+      details: null,
+    };
+  }
   if (error?.code === 11000) {
     return handleDuplicateKeyError(error);
   }
@@ -74,6 +95,9 @@ const normalizeError = (error) => {
 
 //Express global error middleware
 const errorMiddleware = (error, request, response, next) => {
+  if (response.headersSent) {
+    return next(error);
+  }
   const normalizedError = normalizeError(error);
 
   const isProduction = env.NODE_ENV === "production";
@@ -81,19 +105,23 @@ const errorMiddleware = (error, request, response, next) => {
   const isOperationalError =
     error.isOperational === true || normalizedError.statusCode < 500;
 
-  const safeMessage =
-    isProduction && !isOperationalError
-      ? "An unexpected error occurred"
-      : normalizedError.message;
+  const hideInternalDetails = isProduction && !isOperationalError;
 
   const responseBody = {
     success: false,
-    message: safeMessage,
-    errorCode: normalizedError.errorCode,
+
+    message: hideInternalDetails
+      ? "An unexpected error occurred"
+      : normalizedError.message,
+
+    errorCode: hideInternalDetails
+      ? "INTERNAL_SERVER_ERROR"
+      : normalizedError.errorCode,
+
     requestId: request.id ?? null,
   };
 
-  if (normalizedError.details) {
+  if (!hideInternalDetails && normalizedError.details != null) {
     responseBody.details = normalizedError.details;
   }
 

@@ -9982,7 +9982,27 @@ Part 219.12 — implement Order creation idempotency
 Part 219.13 — add 14 Order idempotency tests
 Part 219.14 — combined Order, Payment, and Cart → Order regression.
 |--------------------------------------------------------------------------
+Part 220 — Index / Database Integrity Audit
+Part 220.1 — audit the checkout idempotency index in your application database
+Part 220.2 — create the checkout idempotency index
+Part 220.3 — audit Cart, Wishlist, and Recently Viewed indexes and stored-data integrity.
+Part 220.4 — initialize customer-list collections and indexes
+Part 220.5 — compare all model indexes with VOQYRA
+Part 220.6 — initialize Address indexes
+Part 220.7 — audit Product inventory and catalog references
+Part 220.8 — Read-only Order and Payment integrity audit
+Part 220.9 — Read-only inventory reservation reconciliation
+Part 220.9.1 — Inspect the reservation history
 |--------------------------------------------------------------------------
+Part 221 — API Consistency & Error Audit
+Part 221.1 — Fix the rate-limit error response
+Part 221.2 — Handle parser errors and responses already started
+Part 221.3 — Hide unexpected server-error details in production
+Part 221.4 — Remove values from database error responses
+Part 221.5 — Verify authentication and authorization responses
+Part 221.6 — Check protection on the actual application routes
+Part 221.8 — Final response consistency review, covering unmatched routes and health-check responses.
+
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 

@@ -23,15 +23,12 @@ const apiRateLimiter = rateLimit({
     return env.NODE_ENV === "test";
   },
 
-  handler: (request, response, options) => {
+  handler: (request, response, next, options) => {
     return response.status(options.statusCode).json({
       success: false,
-
       message: "Too many requests. Please try again later.",
-
       errorCode: "TOO_MANY_REQUESTS",
-
-      requestId: request.id,
+      requestId: request.id ?? null,
     });
   },
 });
