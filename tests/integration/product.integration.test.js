@@ -1,9 +1,10 @@
 import mongoose from "mongoose";
-import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import request from "../helpers/api-request.helper.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import app from "../../src/app.js";
 
+import { TEST_JPEG_BUFFER } from "../helpers/image-fixtures.helper.js";
 import { createAuthenticatedAgent as createBaseAuthenticatedAgent } from "../helpers/auth-test.helper.js";
 import { USER_ROLES } from "../../src/shared/constants/user.constants.js";
 import Category from "../../src/modules/categories/category.model.js";
@@ -8994,6 +8995,10 @@ describe("Product master-data dependencies", () => {
 */
 
 describe("Product image upload", () => {
+  beforeEach(() => {
+    imageStorageMocks.uploadImage.mockReset();
+    imageStorageMocks.deleteImage.mockReset();
+  });
   it("uploads the first Product image and automatically makes it primary", async () => {
     const { agent: adminAgent } = await createAuthenticatedAdminAgent();
 
@@ -9078,7 +9083,7 @@ describe("Product image upload", () => {
       .attach(
         "image",
 
-        Buffer.from("fake-product-image"),
+        TEST_JPEG_BUFFER,
 
         {
           filename: "product.jpg",
@@ -9407,7 +9412,7 @@ describe("Product image upload", () => {
       .attach(
         "image",
 
-        Buffer.from("fake-product-image"),
+        TEST_JPEG_BUFFER,
 
         {
           filename: "product.jpg",
@@ -9508,7 +9513,7 @@ describe("Product image upload", () => {
       .attach(
         "image",
 
-        Buffer.from("thirteenth-image"),
+        TEST_JPEG_BUFFER,
 
         {
           filename: "image-13.jpg",
@@ -9603,7 +9608,7 @@ describe("Product image upload", () => {
         .attach(
           "image",
 
-          Buffer.from("fake-product-image"),
+          TEST_JPEG_BUFFER,
 
           {
             filename: "product.jpg",
@@ -10004,7 +10009,7 @@ describe("Product image upload", () => {
       .attach(
         "image",
 
-        Buffer.from("replacement-product-image"),
+        TEST_JPEG_BUFFER,
 
         {
           filename: "replacement.jpg",
@@ -10174,7 +10179,7 @@ describe("Product image upload", () => {
         .attach(
           "image",
 
-          Buffer.from("new-replacement-image"),
+          TEST_JPEG_BUFFER,
 
           {
             filename: "replacement.jpg",

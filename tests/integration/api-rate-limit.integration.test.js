@@ -1,5 +1,5 @@
 import express from "express";
-import request from "supertest";
+import request from "../helpers/api-request.helper.js";
 
 import { describe, expect, it, vi } from "vitest";
 

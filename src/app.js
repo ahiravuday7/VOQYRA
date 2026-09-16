@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import csrfProtection from "./middlewares/csrf.middleware.js";
 import cookieParser from "cookie-parser";
 import AppError from "./shared/errors/app-error.js";
 
@@ -102,6 +103,7 @@ app.use(
       "Authorization",
       "Idempotency-Key",
       "X-Request-ID",
+      "X-CSRF-Protection",
     ],
 
     exposedHeaders: ["X-Request-ID"],
@@ -121,11 +123,9 @@ app.use(
 |--------------------------------------------------------------------------
 */
 
-app.use(
-  "/api/v1/webhooks/payments",
+app.use("/api/v1/webhooks/payments", paymentWebhookRoutes);
 
-  paymentWebhookRoutes,
-);
+app.use("/api", csrfProtection);
 
 /*
 | Request Parsing Middleware

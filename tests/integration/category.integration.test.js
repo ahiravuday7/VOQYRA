@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "../helpers/api-request.helper.js";
 
 import Category from "../../src/modules/categories/category.model.js";
 

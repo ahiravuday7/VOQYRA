@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import express from "express";
-import request from "supertest";
+import request from "../helpers/api-request.helper.js";
 import env from "../../src/config/environment.js";
 import logger from "../../src/config/logger.js";
 

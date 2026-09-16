@@ -10002,7 +10002,19 @@ Part 221.4 — Remove values from database error responses
 Part 221.5 — Verify authentication and authorization responses
 Part 221.6 — Check protection on the actual application routes
 Part 221.8 — Final response consistency review, covering unmatched routes and health-check responses.
-
+|--------------------------------------------------------------------------
+Part 222 — Security Hardening Review
+Part 222.1 — Authentication cookie settings
+Part 222.2 — Login rate limiting
+Part 222.3 — Add a CSRF request guard
+Part 222.4 — Activate CSRF protection
+Part 222.5 — Product image upload security review
+Part 222.5.1 — Restrict storage formats and remove provider error details
+Part 222.5.2 — Check image content before Cloudinary upload
+Part 222.5.3 — Upload authorization and cleanup failures
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
+|--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 

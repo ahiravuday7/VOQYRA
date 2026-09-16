@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import request from "supertest";
+import request from "../helpers/api-request.helper.js";
 
 import { describe, expect, it, vi } from "vitest";
 

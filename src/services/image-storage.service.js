@@ -61,6 +61,8 @@ const uploadImage = async ({
         {
           resource_type: "image",
 
+          allowed_formats: ["jpg", "jpeg", "png", "webp"],
+
           folder: folder.trim(),
 
           /*
@@ -118,8 +120,6 @@ const uploadImage = async ({
 
       details: {
         provider: "cloudinary",
-
-        providerMessage: error?.message ?? "Unknown Cloudinary upload error",
       },
     });
   }
@@ -224,8 +224,6 @@ const deleteImage = async (publicId) => {
 
       details: {
         provider: "cloudinary",
-
-        providerMessage: error?.message ?? "Unknown Cloudinary delete error",
       },
     });
   }

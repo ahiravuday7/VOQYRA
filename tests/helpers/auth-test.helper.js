@@ -1,4 +1,4 @@
-import request from "supertest";
+import request from "./api-request.helper.js";
 
 import app from "../../src/app.js";
 

@@ -1,5 +1,5 @@
 import multer from "multer";
-
+import { fileTypeFromBuffer } from "file-type";
 import AppError from "../shared/errors/app-error.js";
 
 /*
@@ -182,6 +182,40 @@ const normalizeMulterError = (error) => {
   }
 };
 
+const validateProductImageContent = async (file) => {
+  const invalidContentError = () =>
+    new AppError("File content must be a JPEG, PNG or WebP image", 415, {
+      errorCode: "PRODUCT_IMAGE_INVALID_CONTENT",
+    });
+
+  if (!Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
+    throw invalidContentError();
+  }
+
+  let detectedType;
+
+  try {
+    detectedType = await fileTypeFromBuffer(file.buffer);
+  } catch {
+    // Incomplete file headers may cause the detector to throw.
+    throw invalidContentError();
+  }
+
+  if (!detectedType || !ALLOWED_IMAGE_MIME_TYPES.has(detectedType.mime)) {
+    throw invalidContentError();
+  }
+
+  if (detectedType.mime !== file.mimetype) {
+    throw new AppError(
+      "Image content does not match its declared file type",
+      415,
+      {
+        errorCode: "PRODUCT_IMAGE_TYPE_MISMATCH",
+      },
+    );
+  }
+};
+
 /*
 |--------------------------------------------------------------------------
 | Single Product Image Middleware
@@ -196,12 +230,6 @@ const uploadSingleProductImage = (request, response, next) => {
       return next(normalizeMulterError(error));
     }
 
-    /*
-     * .single() does not fail when the
-     * request contains no file.
-     *
-     * Our Product image endpoint requires one.
-     */
     if (!request.file) {
       return next(
         new AppError("Product image file is required", 400, {
@@ -210,7 +238,10 @@ const uploadSingleProductImage = (request, response, next) => {
       );
     }
 
-    return next();
+    void validateProductImageContent(request.file).then(
+      () => next(),
+      (validationError) => next(validationError),
+    );
   });
 };
 

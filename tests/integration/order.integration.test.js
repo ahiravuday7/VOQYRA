@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 
 import { describe, expect, it, vi } from "vitest";
 
-import request from "supertest";
+import request from "../helpers/api-request.helper.js";
 
 import app from "../../src/app.js";
 

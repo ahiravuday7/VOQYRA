@@ -14,11 +14,7 @@ import { durationToMilliseconds } from "../../shared/utilities/duration.utility.
 const commonCookieOptions = Object.freeze({
   httpOnly: true,
 
-  /*
-   * Secure cookies are enabled automatically
-   * in production.
-   */
-  secure: env.NODE_ENV === "production",
+  secure: env.NODE_ENV === "production" || env.AUTH_COOKIE_SAME_SITE === "none",
 
   sameSite: env.AUTH_COOKIE_SAME_SITE,
 });
