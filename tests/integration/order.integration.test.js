@@ -2351,47 +2351,87 @@ describe("POST /api/v1/orders", () => {
     |--------------------------------------------------------------------------
     */
 
-  it("rejects customer-provided pricing and Order status fields", async () => {
-    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+  it.each([
+    ["customer ownership", "customer", "507f1f77bcf86cd799439011"],
+    ["audit actor", "createdBy", "507f1f77bcf86cd799439011"],
+    ["order totals", "totals", { grandTotal: 1 }],
+    ["order status", "status", "delivered"],
+    ["payment state", "payment", { method: "online", status: "paid" }],
+    ["inventory state", "inventoryStatus", "committed"],
+    [
+      "stored idempotency metadata",
+      "checkoutIdempotency",
+      {
+        key: "client-supplied-checkout-key",
+        requestHash: "client-supplied-hash",
+      },
+    ],
+    ["item pricing snapshot", "items.0.pricing", { unitFinalPrice: 1 }],
+    [
+      "item inventory snapshot",
+      "items.0.inventory",
+      { status: "committed", reservedQuantity: 0 },
+    ],
+    ["Product ID operator", "items.0.productId", { $ne: null }],
+    ["quantity operator", "items.0.quantity", { $gt: 0 }],
+    [
+      "shipping address ownership",
+      "shippingAddress.user",
+      "507f1f77bcf86cd799439011",
+    ],
+  ])(
+    "rejects checkout input tampering: %s",
+    async (label, fieldPath, value) => {
+      const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
 
-    const category = await createActiveCategoryFixture();
+      const category = await createActiveCategoryFixture();
 
-    const product = await createActiveProductFixture({
-      category: category._id,
-    });
+      const product = await createActiveProductFixture({
+        category: category._id,
+      });
 
-    const variant = product.variants[0];
+      const variant = product.variants[0];
 
-    const requestBody = createOrderRequestBody({
-      productId: product._id,
+      const requestBody = createOrderRequestBody({
+        productId: product._id,
+        variantId: variant._id,
+        quantity: 2,
+      });
 
-      variantId: variant._id,
-    });
+      // Change exactly one field in an otherwise valid request.
+      const segments = fieldPath.split(".");
+      const lastSegment = segments.pop();
 
-    /*
-     * These fields must be rejected by strict Zod
-     * request validation.
-     */
-    requestBody.status = "delivered";
+      let target = requestBody;
 
-    requestBody.totals = {
-      grandTotal: 1,
-    };
+      for (const segment of segments) {
+        target = target[segment];
+      }
 
-    requestBody.items[0].unitFinalPrice = 1;
+      target[lastSegment] = structuredClone(value);
 
-    const response = await customerAgent
-      .post("/api/v1/orders")
-      .send(requestBody);
+      const beforeProduct = await Product.findById(product._id).lean();
 
-    expect(response.status).toBe(400);
+      const response = await customerAgent
+        .post("/api/v1/orders")
+        .send(requestBody);
 
-    expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+      expect(response.status).toBe(400);
 
-    expect(await Order.countDocuments()).toBe(0);
+      expect(response.body).toMatchObject({
+        success: false,
+        errorCode: "REQUEST_VALIDATION_FAILED",
+      });
 
-    expect(await ProductInventoryLedger.countDocuments()).toBe(0);
-  });
+      expect(await Order.countDocuments()).toBe(0);
+      expect(await PaymentTransaction.countDocuments()).toBe(0);
+      expect(await ProductInventoryLedger.countDocuments()).toBe(0);
+
+      const afterProduct = await Product.findById(product._id).lean();
+
+      expect(afterProduct).toEqual(beforeProduct);
+    },
+  );
 
   /*
     |--------------------------------------------------------------------------
@@ -41297,4 +41337,134 @@ describe("Customer Order creation idempotency boundaries", () => {
 
     await expectReservations(fixture, 2, 1);
   });
+});
+
+describe("Customer Return quantity input protection", () => {
+  const createReturnInputFixture = async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const { agent: customerAgent } = await createAuthenticatedCustomerAgent();
+
+    const fixture = await createDeliveredOrderReturnFixture({
+      adminAgent,
+      customerAgent,
+      quantity: 2,
+    });
+
+    return {
+      ...fixture,
+      customerAgent,
+    };
+  };
+
+  const createReturnBody = (orderItem, quantity) => ({
+    requestedResolution: "refund",
+
+    items: [
+      {
+        orderItemId: String(orderItem._id),
+        quantity,
+        reason: "defective",
+        details: "The stitching near the sleeve is damaged.",
+      },
+    ],
+  });
+
+  it.each([
+    ["boolean", true],
+    ["number array", [1]],
+    ["string array", ["1"]],
+    ["operator object", { $ne: null }],
+  ])(
+    "rejects a %s quantity without changing return or inventory state",
+    async (label, quantity) => {
+      const fixture = await createReturnInputFixture();
+
+      const beforeOrder = await Order.findById(fixture.createdOrder.id)
+        .select("+returnRequestVersion")
+        .lean();
+
+      const beforeProduct = await Product.findById(fixture.product._id).lean();
+
+      const beforeLedger = await ProductInventoryLedger.find({})
+        .sort({ _id: 1 })
+        .lean();
+
+      const response = await fixture.customerAgent
+        .post(`/api/v1/orders/${fixture.createdOrder.id}/returns`)
+        .send(createReturnBody(fixture.orderItem, quantity));
+
+      expect(response.status).toBe(400);
+
+      expect(response.body.errorCode).toBe("REQUEST_VALIDATION_FAILED");
+
+      expect(response.body.details).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: "body",
+            field: "items.0.quantity",
+          }),
+        ]),
+      );
+
+      expect(await OrderReturnRequest.countDocuments()).toBe(0);
+
+      const afterOrder = await Order.findById(fixture.createdOrder.id)
+        .select("+returnRequestVersion")
+        .lean();
+
+      const afterProduct = await Product.findById(fixture.product._id).lean();
+
+      const afterLedger = await ProductInventoryLedger.find({})
+        .sort({ _id: 1 })
+        .lean();
+
+      expect(afterOrder).toEqual(beforeOrder);
+      expect(afterProduct).toEqual(beforeProduct);
+      expect(afterLedger).toEqual(beforeLedger);
+    },
+  );
+
+  it.each([
+    ["number", 1],
+    ["numeric string", "1"],
+  ])(
+    "accepts a valid %s quantity and stores a number",
+    async (label, quantity) => {
+      const fixture = await createReturnInputFixture();
+
+      const beforeProduct = await Product.findById(fixture.product._id).lean();
+
+      const beforeLedger = await ProductInventoryLedger.find({})
+        .sort({ _id: 1 })
+        .lean();
+
+      const response = await fixture.customerAgent
+        .post(`/api/v1/orders/${fixture.createdOrder.id}/returns`)
+        .send(createReturnBody(fixture.orderItem, quantity));
+
+      expect(response.status).toBe(201);
+
+      const returnedRequest = response.body.data.returnRequest;
+
+      expect(returnedRequest.items[0].quantity).toBe(1);
+
+      const storedRequest = await OrderReturnRequest.findById(
+        returnedRequest.id,
+      ).lean();
+
+      expect(storedRequest.items[0].quantity).toBe(1);
+      expect(await OrderReturnRequest.countDocuments()).toBe(1);
+
+      const afterProduct = await Product.findById(fixture.product._id).lean();
+
+      const afterLedger = await ProductInventoryLedger.find({})
+        .sort({ _id: 1 })
+        .lean();
+
+      // Requesting a return does not itself restock inventory.
+      expect(afterProduct).toEqual(beforeProduct);
+      expect(afterLedger).toEqual(beforeLedger);
+    },
+  );
 });

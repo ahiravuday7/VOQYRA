@@ -868,48 +868,24 @@ const validateProductMasterDataDependencies = async (
 ) => {
   const { session = null } = options;
 
-  /*
-    |--------------------------------------------------------------------------
-    | Category First
-    |--------------------------------------------------------------------------
-    |
-    | SizeGuide compatibility depends on the resolved
-    | Product Category and its ancestor path.
-    |--------------------------------------------------------------------------
-    */
-
   const category = await validateProductCategory(
     productData.category,
     productData.status,
-    {
-      session,
-    },
+    { session },
   );
 
-  /*
-    |--------------------------------------------------------------------------
-    | Other Dependencies
-    |--------------------------------------------------------------------------
-    */
+  await validateProductBrand(productData.brand, productData.status, {
+    session,
+  });
 
-  await Promise.all([
-    validateProductBrand(productData.brand, productData.status, {
-      session,
-    }),
+  await validateProductSizeGuide(
+    productData.sizeGuide,
+    category,
+    productData.status,
+    { session },
+  );
 
-    validateProductSizeGuide(
-      productData.sizeGuide,
-      category,
-      productData.status,
-      {
-        session,
-      },
-    ),
-
-    validateProductCollections(productData.collections ?? [], {
-      session,
-    }),
-  ]);
+  await validateProductCollections(productData.collections ?? [], { session });
 
   return category;
 };
@@ -1126,6 +1102,107 @@ export const getPublicProductBySlug = async (slug) => {
   return product;
 };
 
+const buildSafeProductVariantUpdates = (currentVariants, incomingVariants) => {
+  const normalizeSku = (sku) => sku.trim().toUpperCase();
+
+  const currentBySku = new Map(
+    currentVariants.map((variant) => [normalizeSku(variant.sku), variant]),
+  );
+
+  const incomingSkus = new Set(
+    incomingVariants.map((variant) => normalizeSku(variant.sku)),
+  );
+
+  const removedSkus = [...currentBySku.keys()].filter(
+    (sku) => !incomingSkus.has(sku),
+  );
+
+  if (removedSkus.length > 0) {
+    throw new AppError(
+      "Existing variant SKUs cannot be removed or renamed through Product updates; deactivate the variant instead",
+      409,
+      {
+        errorCode: "PRODUCT_VARIANT_REMOVAL_FORBIDDEN",
+        details: {
+          skus: removedSkus,
+        },
+      },
+    );
+  }
+
+  return incomingVariants.map((incomingVariant) => {
+    const sku = normalizeSku(incomingVariant.sku);
+    const existingVariant = currentBySku.get(sku);
+
+    /*
+     * A new variant may have initial physical stock.
+     * Reservations must be created through inventory operations.
+     */
+    if (!existingVariant) {
+      if ((incomingVariant.inventory?.reservedStock ?? 0) !== 0) {
+        throw new AppError(
+          "New variants must start with zero reserved stock",
+          409,
+          {
+            errorCode: "PRODUCT_VARIANT_INITIAL_RESERVATION_FORBIDDEN",
+            details: { sku },
+          },
+        );
+      }
+
+      return {
+        ...incomingVariant,
+        sku,
+      };
+    }
+
+    const currentInventory = existingVariant.inventory;
+    const suppliedInventory = incomingVariant.inventory;
+
+    /*
+     * Accept unchanged counters for compatibility with full forms.
+     * Changes must use the dedicated inventory endpoints.
+     */
+    if (
+      suppliedInventory &&
+      ((suppliedInventory.stock !== undefined &&
+        suppliedInventory.stock !== currentInventory.stock) ||
+        (suppliedInventory.reservedStock !== undefined &&
+          suppliedInventory.reservedStock !== currentInventory.reservedStock))
+    ) {
+      throw new AppError(
+        "Stock and reserved stock must be changed through inventory operations",
+        409,
+        {
+          errorCode: "PRODUCT_VARIANT_INVENTORY_UPDATE_FORBIDDEN",
+          details: { sku },
+        },
+      );
+    }
+
+    return {
+      ...existingVariant,
+      ...incomingVariant,
+
+      _id: existingVariant._id,
+      sku: existingVariant.sku,
+
+      pricing: {
+        ...existingVariant.pricing,
+        ...incomingVariant.pricing,
+      },
+
+      inventory: {
+        ...currentInventory,
+
+        lowStockThreshold:
+          suppliedInventory?.lowStockThreshold ??
+          currentInventory.lowStockThreshold,
+      },
+    };
+  });
+};
+
 /*
 |--------------------------------------------------------------------------
 | Update Product
@@ -1136,132 +1213,101 @@ export const getPublicProductBySlug = async (slug) => {
 */
 
 export const updateProduct = async (productId, updateData, actorUserId) => {
-  /*
-    |--------------------------------------------------------------------------
-    | Find Existing Product
-    |--------------------------------------------------------------------------
-    |
-    | Deleted Products cannot be updated through the normal update endpoint.
-    |--------------------------------------------------------------------------
-    */
+  const savedProduct = await mongoose.connection.transaction(
+    async (session) => {
+      /*
+       * Read inside the transaction callback.
+       * A transaction retry must reload the current inventory.
+       */
+      const product = await findProductById(productId, {
+        session,
+      });
 
-  const product = await findProductById(productId);
+      if (!product) {
+        throw createProductNotFoundError();
+      }
 
-  if (!product) {
-    throw createProductNotFoundError();
-  }
+      const currentProduct = product.toObject({
+        virtuals: false,
+      });
 
-  /*
-    |--------------------------------------------------------------------------
-    | Build Resulting Product State
-    |--------------------------------------------------------------------------
-    |
-    | PATCH updates only the fields provided by the administrator.
-    |
-    | Arrays such as variants and images are replaced completely when present.
-    |--------------------------------------------------------------------------
-    */
+      const requestedVariants =
+        updateData.variants ?? currentProduct.variants ?? [];
 
-  const currentProduct = product.toObject({
-    virtuals: false,
-  });
+      /*
+       * Preserve existing slug and duplicate-SKU error behavior.
+       */
+      await ensureProductSlugIsAvailable(updateData.slug ?? product.slug, {
+        excludeProductId: product._id,
+        session,
+      });
 
-  const resultingProductData = {
-    ...currentProduct,
-    ...updateData,
+      await ensureProductSkusAreAvailable(requestedVariants, {
+        excludeProductId: product._id,
+        session,
+      });
 
-    status: updateData.status ?? product.status,
+      const safeUpdateData = {
+        ...updateData,
+      };
 
-    category: updateData.category ?? product.category,
+      if (updateData.variants !== undefined) {
+        safeUpdateData.variants = buildSafeProductVariantUpdates(
+          currentProduct.variants ?? [],
+          updateData.variants,
+        );
+      }
 
-    slug: updateData.slug ?? product.slug,
+      const resultingProductData = {
+        ...currentProduct,
+        ...safeUpdateData,
 
-    variants: updateData.variants ?? currentProduct.variants ?? [],
+        status: safeUpdateData.status ?? product.status,
+        category: safeUpdateData.category ?? product.category,
+        slug: safeUpdateData.slug ?? product.slug,
 
-    images: updateData.images ?? currentProduct.images ?? [],
-  };
+        variants: safeUpdateData.variants ?? currentProduct.variants ?? [],
 
-  /*
-    |--------------------------------------------------------------------------
-    | Validate Slug
-    |--------------------------------------------------------------------------
-    */
+        images: safeUpdateData.images ?? currentProduct.images ?? [],
+      };
 
-  await ensureProductSlugIsAvailable(resultingProductData.slug, {
-    excludeProductId: product._id,
-  });
+      await validateProductMasterDataDependencies(resultingProductData, {
+        session,
+      });
 
-  /*
-    |--------------------------------------------------------------------------
-    | Validate Variant SKUs
-    |--------------------------------------------------------------------------
-    |
-    | The current Product is excluded so its existing SKUs do not conflict
-    | with itself.
-    |--------------------------------------------------------------------------
-    */
+      validateActiveProductRequirements(resultingProductData);
 
-  await ensureProductSkusAreAvailable(resultingProductData.variants, {
-    excludeProductId: product._id,
-  });
+      let publishedAt = product.publishedAt;
 
-  /*
-|--------------------------------------------------------------------------
-| Validate Master-Data Dependencies
-|--------------------------------------------------------------------------
-*/
+      if (resultingProductData.status === PRODUCT_STATUSES.ACTIVE) {
+        if (
+          product.status !== PRODUCT_STATUSES.ACTIVE ||
+          !product.publishedAt
+        ) {
+          publishedAt = new Date();
+        }
+      } else {
+        publishedAt = null;
+      }
 
-  await validateProductMasterDataDependencies(resultingProductData);
+      product.set({
+        ...safeUpdateData,
+        publishedAt,
+        updatedBy: actorUserId,
+      });
 
-  /*
-    |--------------------------------------------------------------------------
-    | Validate Active Product Requirements
-    |--------------------------------------------------------------------------
-    */
+      return saveProductDocument(product, {
+        session,
+      });
+    },
+    {
+      readPreference: "primary",
+    },
+  );
 
-  validateActiveProductRequirements(resultingProductData);
+  savedProduct.$session(null);
 
-  /*
-    |--------------------------------------------------------------------------
-    | Manage Publication Date
-    |--------------------------------------------------------------------------
-    |
-    | Remaining active:
-    | Keep the existing publishedAt date.
-    |
-    | Becoming active:
-    | Set publishedAt to the current date.
-    |
-    | Becoming non-active:
-    | Clear publishedAt.
-    |--------------------------------------------------------------------------
-    */
-
-  let publishedAt = product.publishedAt;
-
-  if (resultingProductData.status === PRODUCT_STATUSES.ACTIVE) {
-    if (product.status !== PRODUCT_STATUSES.ACTIVE || !product.publishedAt) {
-      publishedAt = new Date();
-    }
-  } else {
-    publishedAt = null;
-  }
-
-  /*
-    |--------------------------------------------------------------------------
-    | Apply Allowed Updates
-    |--------------------------------------------------------------------------
-    */
-
-  product.set({
-    ...updateData,
-
-    publishedAt,
-
-    updatedBy: actorUserId,
-  });
-
-  return saveProductDocument(product);
+  return savedProduct;
 };
 
 /*
@@ -1415,13 +1461,15 @@ export const uploadProductImage = async (
 
     try {
       await deleteImage(storedImage.publicId);
-    } catch {
-      /*
-       * Preserve the original Product persistence error.
-       *
-       * Storage cleanup hardening/logging will be tested
-       * separately during the image regression phase.
-       */
+    } catch (cleanupError) {
+      logger.error(
+        {
+          err: cleanupError,
+          productId: product._id,
+          publicId: storedImage.publicId,
+        },
+        "Product image compensation cleanup failed after upload",
+      );
     }
 
     throw error;
@@ -1721,11 +1769,17 @@ export const replaceProductImageFile = async (
 
     try {
       await deleteImage(storedImage.publicId);
-    } catch {
-      /*
-       * Preserve and throw the original Product
-       * persistence error.
-       */
+    } catch (cleanupError) {
+      logger.error(
+        {
+          err: cleanupError,
+          productId: product._id,
+          imageId,
+          publicId: storedImage.publicId,
+          oldPublicId,
+        },
+        "Product image compensation cleanup failed after replacement",
+      );
     }
 
     throw error;

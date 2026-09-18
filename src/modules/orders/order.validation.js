@@ -885,19 +885,25 @@ const createOrderBodySchema = z.strictObject({
 const customerOrderReturnItemSchema = z.strictObject({
   orderItemId: objectIdSchema,
 
-  quantity: z.coerce
-    .number({
-      error: "Return quantity must be a number",
-    })
-    .int({
-      error: "Return quantity must be a whole number",
-    })
-    .min(1, {
-      error: "Return quantity must be at least 1",
-    })
-    .max(MAX_ORDER_ITEM_QUANTITY, {
-      error: `Return quantity cannot exceed ${MAX_ORDER_ITEM_QUANTITY}`,
-    }),
+  quantity: z.preprocess(
+    (value) => {
+      return typeof value === "string" ? Number(value) : value;
+    },
+
+    z
+      .number({
+        error: "Return quantity must be a number",
+      })
+      .int({
+        error: "Return quantity must be a whole number",
+      })
+      .min(1, {
+        error: "Return quantity must be at least 1",
+      })
+      .max(MAX_ORDER_ITEM_QUANTITY, {
+        error: `Return quantity cannot exceed ${MAX_ORDER_ITEM_QUANTITY}`,
+      }),
+  ),
 
   reason: z.enum(ORDER_RETURN_REASON_VALUES, {
     error: "Invalid return reason",

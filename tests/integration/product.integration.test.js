@@ -11,6 +11,12 @@ import Category from "../../src/modules/categories/category.model.js";
 
 import ProductInventoryLedger from "../../src/modules/products/product-inventory-ledger.model.js";
 import Product from "../../src/modules/products/product.model.js";
+import logger from "../../src/config/logger.js";
+
+import {
+  uploadProductImage,
+  replaceProductImageFile,
+} from "../../src/modules/products/product.service.js";
 
 import { PRODUCT_INVENTORY_OPERATIONS } from "../../src/shared/constants/product-inventory.constants.js";
 
@@ -10478,6 +10484,577 @@ describe("Product image upload", () => {
       expect(storedProduct.images[0].publicId).toBe(imagePublicId);
 
       expect(storedProduct.images[0].isPrimary).toBe(true);
+    } finally {
+      saveSpy.mockRestore();
+    }
+  });
+});
+
+describe("Product image security and compensation", () => {
+  beforeEach(() => {
+    imageStorageMocks.uploadImage.mockReset();
+    imageStorageMocks.deleteImage.mockReset();
+  });
+
+  it.each([
+    ["guest", "post", 401, "AUTHENTICATION_REQUIRED"],
+    ["guest", "put", 401, "AUTHENTICATION_REQUIRED"],
+    ["customer", "post", 403, "ACCESS_FORBIDDEN"],
+    ["customer", "put", 403, "ACCESS_FORBIDDEN"],
+  ])(
+    "rejects %s %s requests before upload validation",
+    async (role, method, expectedStatus, expectedCode) => {
+      const productId = new mongoose.Types.ObjectId().toString();
+      const imageId = new mongoose.Types.ObjectId().toString();
+
+      let client = request(app);
+
+      if (role === "customer") {
+        const { agent } = await createAuthenticatedAgent({
+          role: USER_ROLES.CUSTOMER,
+        });
+
+        client = agent;
+      }
+
+      const url =
+        method === "post"
+          ? `${adminProductUrl}/${productId}/images`
+          : `${adminProductUrl}/${productId}/images/${imageId}/file`;
+
+      // Multer would reject this as 415 if it ran before authorization.
+      const response = await client[method](url).attach(
+        "image",
+        Buffer.from("%PDF-1.7\nnot an allowed image"),
+        {
+          filename: "document.pdf",
+          contentType: "application/pdf",
+        },
+      );
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body.errorCode).toBe(expectedCode);
+
+      expect(imageStorageMocks.uploadImage).not.toHaveBeenCalled();
+      expect(imageStorageMocks.deleteImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["upload", "replacement"])(
+    "logs failed %s compensation while preserving the original error and stored image",
+    async (operation) => {
+      const { agent: adminAgent, user: adminUser } =
+        await createAuthenticatedAdminAgent();
+
+      const category = await createProductDependencyCategory(adminAgent);
+
+      productDependencyFixtureSequence += 1;
+
+      const suffix = productDependencyFixtureSequence;
+      const oldPublicId = `clothing-commerce/products/test/compensation-old-${suffix}`;
+
+      const createResponse = await adminAgent
+        .post(adminProductUrl)
+        .send(
+          createProductPayload({
+            name: `Compensation Security Product ${suffix}`,
+            slug: `compensation-security-product-${suffix}`,
+            category: category.id,
+            status: "draft",
+            images: [
+              {
+                url: `https://example.com/compensation-old-${suffix}.jpg`,
+                publicId: oldPublicId,
+                altText: "Original image",
+                sortOrder: 0,
+                isPrimary: true,
+              },
+            ],
+          }),
+        )
+        .expect(201);
+
+      const product = createResponse.body.data.product;
+      const originalImage = product.images[0];
+
+      const beforeProduct = await Product.findById(product.id).lean();
+
+      const newPublicId = `clothing-commerce/products/test/compensation-new-${suffix}`;
+
+      imageStorageMocks.uploadImage.mockResolvedValueOnce({
+        url: `https://example.com/compensation-new-${suffix}.jpg`,
+        publicId: newPublicId,
+        width: 1,
+        height: 1,
+        format: "jpg",
+        bytes: TEST_JPEG_BUFFER.length,
+      });
+
+      const persistenceError = new Error(
+        `Forced ${operation} persistence failure`,
+      );
+
+      const cleanupError = new Error(`Forced ${operation} cleanup failure`);
+
+      imageStorageMocks.deleteImage.mockRejectedValueOnce(cleanupError);
+
+      const saveSpy = vi
+        .spyOn(Product.prototype, "save")
+        .mockRejectedValueOnce(persistenceError);
+
+      const logSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+      try {
+        const imageFile = {
+          buffer: TEST_JPEG_BUFFER,
+          mimetype: "image/jpeg",
+        };
+
+        // Call the service directly to verify the exact error object survives.
+        const pendingOperation =
+          operation === "upload"
+            ? uploadProductImage(
+                product.id,
+                imageFile,
+                {
+                  altText: "New image",
+                  isPrimary: true,
+                },
+                adminUser._id,
+              )
+            : replaceProductImageFile(
+                product.id,
+                originalImage.id,
+                imageFile,
+                adminUser._id,
+              );
+
+        await expect(pendingOperation).rejects.toBe(persistenceError);
+
+        expect(imageStorageMocks.uploadImage).toHaveBeenCalledTimes(1);
+
+        expect(imageStorageMocks.deleteImage).toHaveBeenCalledTimes(1);
+        expect(imageStorageMocks.deleteImage).toHaveBeenCalledWith(newPublicId);
+        expect(imageStorageMocks.deleteImage).not.toHaveBeenCalledWith(
+          oldPublicId,
+        );
+
+        const expectedMessage =
+          operation === "upload"
+            ? "Product image compensation cleanup failed after upload"
+            : "Product image compensation cleanup failed after replacement";
+
+        expect(logSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            err: cleanupError,
+            productId: new mongoose.Types.ObjectId(product.id),
+            publicId: newPublicId,
+          }),
+          expectedMessage,
+        );
+
+        const afterProduct = await Product.findById(product.id).lean();
+
+        expect(afterProduct.images).toEqual(beforeProduct.images);
+      } finally {
+        saveSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    },
+  );
+});
+
+describe("Product variant update integrity", () => {
+  it("preserves variant identity and reserved inventory during a pricing-only update", async () => {
+    const { agent: adminAgent } = await createAuthenticatedAdminAgent();
+
+    const category = await createProductDependencyCategory(adminAgent);
+
+    productDependencyFixtureSequence += 1;
+
+    const suffix = productDependencyFixtureSequence;
+
+    const payload = createProductPayload({
+      name: `Variant Integrity Product ${suffix}`,
+      slug: `variant-integrity-product-${suffix}`,
+      category: category.id,
+      status: "active",
+      images: [
+        {
+          url: `https://example.com/variant-integrity-${suffix}.jpg`,
+          altText: "Product image",
+          isPrimary: true,
+        },
+      ],
+    });
+
+    payload.variants[0].sku = `VARIANT-INTEGRITY-${suffix}`;
+
+    payload.variants[0].inventory = {
+      stock: 20,
+      reservedStock: 0,
+      lowStockThreshold: 5,
+    };
+
+    const createResponse = await adminAgent
+      .post(adminProductUrl)
+      .send(payload)
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+    const originalVariant = product.variants[0];
+
+    // Reserve through the existing inventory API so there is ledger evidence.
+    await adminAgent
+      .post(createInventoryUrl(product.id, originalVariant.id, "reserve"))
+      .send({
+        quantity: 2,
+        referenceId: `VARIANT-INTEGRITY-${suffix}`,
+      })
+      .expect(200);
+
+    const beforeProduct = await Product.findById(product.id).lean();
+
+    expect(beforeProduct.variants[0].inventory.stock).toBe(20);
+    expect(beforeProduct.variants[0].inventory.reservedStock).toBe(2);
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments();
+
+    expect(ledgerCountBefore).toBe(1);
+
+    // Change pricing without asking to change inventory.
+    const updatedVariantInput = structuredClone(payload.variants[0]);
+
+    updatedVariantInput.pricing.sellingPrice = 799;
+    delete updatedVariantInput.inventory;
+
+    const updateResponse = await adminAgent
+      .patch(`${adminProductUrl}/${product.id}`)
+      .send({
+        variants: [updatedVariantInput],
+      });
+
+    const afterProduct = await Product.findById(product.id).lean();
+    const afterVariant = afterProduct.variants[0];
+
+    expect({
+      status: updateResponse.status,
+      variantCount: afterProduct.variants.length,
+      variantId: String(afterVariant._id),
+      stock: afterVariant.inventory.stock,
+      reservedStock: afterVariant.inventory.reservedStock,
+      lowStockThreshold: afterVariant.inventory.lowStockThreshold,
+      sellingPrice: afterVariant.pricing.sellingPrice,
+      ledgerCount: await ProductInventoryLedger.countDocuments(),
+    }).toEqual({
+      status: 200,
+      variantCount: 1,
+      variantId: originalVariant.id,
+      stock: 20,
+      reservedStock: 2,
+      lowStockThreshold: 5,
+      sellingPrice: 799,
+      ledgerCount: ledgerCountBefore,
+    });
+  });
+});
+
+describe("Product variant update safety", () => {
+  const createSafetyFixture = async ({ twoVariants = false } = {}) => {
+    const { agent } = await createAuthenticatedAdminAgent();
+    const category = await createProductDependencyCategory(agent);
+
+    productDependencyFixtureSequence += 1;
+    const suffix = productDependencyFixtureSequence;
+
+    const payload = createProductPayload({
+      name: `Variant Safety Product ${suffix}`,
+      slug: `variant-safety-product-${suffix}`,
+      category: category.id,
+      status: "active",
+      images: [
+        {
+          url: `https://example.com/variant-safety-${suffix}.jpg`,
+          isPrimary: true,
+        },
+      ],
+    });
+
+    payload.variants[0].sku = `VARIANT-SAFETY-${suffix}`;
+    payload.variants[0].inventory = {
+      stock: 20,
+      reservedStock: 0,
+      lowStockThreshold: 5,
+    };
+
+    if (twoVariants) {
+      const secondVariant = structuredClone(payload.variants[0]);
+
+      secondVariant.sku = `VARIANT-SAFETY-SECOND-${suffix}`;
+      secondVariant.size = "XL";
+
+      payload.variants.push(secondVariant);
+    }
+
+    const createResponse = await agent
+      .post(adminProductUrl)
+      .send(payload)
+      .expect(201);
+
+    const product = createResponse.body.data.product;
+    const variant = product.variants[0];
+
+    await agent
+      .post(createInventoryUrl(product.id, variant.id, "reserve"))
+      .send({
+        quantity: 2,
+        referenceId: `VARIANT-SAFETY-INITIAL-${suffix}`,
+      })
+      .expect(200);
+
+    const variantInputs = payload.variants.map((item) => {
+      const input = structuredClone(item);
+      delete input.inventory;
+      return input;
+    });
+
+    return {
+      agent,
+      product,
+      variant,
+      variantInputs,
+      suffix,
+    };
+  };
+
+  const expectRejectedUpdate = async (fixture, variants, expectedErrorCode) => {
+    const beforeProduct = await Product.findById(fixture.product.id).lean();
+
+    const beforeLedger = await ProductInventoryLedger.find({})
+      .sort({ _id: 1 })
+      .lean();
+
+    const response = await fixture.agent
+      .patch(`${adminProductUrl}/${fixture.product.id}`)
+      .send({ variants });
+
+    expect(response.status).toBe(409);
+    expect(response.body.errorCode).toBe(expectedErrorCode);
+
+    const afterProduct = await Product.findById(fixture.product.id).lean();
+
+    const afterLedger = await ProductInventoryLedger.find({})
+      .sort({ _id: 1 })
+      .lean();
+
+    expect(afterProduct).toEqual(beforeProduct);
+    expect(afterLedger).toEqual(beforeLedger);
+  };
+
+  it.each([
+    ["stock", 19],
+    ["reservedStock", 0],
+  ])(
+    "rejects changing existing %s through general Product PATCH",
+    async (field, value) => {
+      const fixture = await createSafetyFixture();
+      const variants = structuredClone(fixture.variantInputs);
+
+      variants[0].inventory = {
+        stock: 20,
+        reservedStock: 2,
+        lowStockThreshold: 5,
+        [field]: value,
+      };
+
+      await expectRejectedUpdate(
+        fixture,
+        variants,
+        "PRODUCT_VARIANT_INVENTORY_UPDATE_FORBIDDEN",
+      );
+    },
+  );
+
+  it.each(["removal", "rename"])(
+    "rejects existing variant %s and preserves inventory and ledger",
+    async (operation) => {
+      const fixture = await createSafetyFixture({
+        twoVariants: true,
+      });
+
+      let variants = structuredClone(fixture.variantInputs);
+
+      if (operation === "removal") {
+        variants = variants.slice(1);
+      } else {
+        variants[0].sku = `RENAMED-VARIANT-${fixture.suffix}`;
+      }
+
+      await expectRejectedUpdate(
+        fixture,
+        variants,
+        "PRODUCT_VARIANT_REMOVAL_FORBIDDEN",
+      );
+    },
+  );
+
+  it("rejects initial reservations on a newly added variant", async () => {
+    const fixture = await createSafetyFixture();
+    const variants = structuredClone(fixture.variantInputs);
+
+    variants.push({
+      ...structuredClone(variants[0]),
+      sku: `NEW-RESERVED-VARIANT-${fixture.suffix}`,
+      size: "XL",
+      inventory: {
+        stock: 5,
+        reservedStock: 1,
+        lowStockThreshold: 2,
+      },
+    });
+
+    await expectRejectedUpdate(
+      fixture,
+      variants,
+      "PRODUCT_VARIANT_INITIAL_RESERVATION_FORBIDDEN",
+    );
+  });
+
+  it("allows a new unreserved variant while preserving the existing variant", async () => {
+    const fixture = await createSafetyFixture();
+    const variants = structuredClone(fixture.variantInputs);
+    const newSku = `NEW-AVAILABLE-VARIANT-${fixture.suffix}`;
+
+    variants.push({
+      ...structuredClone(variants[0]),
+      sku: newSku,
+      size: "XL",
+      inventory: {
+        stock: 5,
+        reservedStock: 0,
+        lowStockThreshold: 2,
+      },
+    });
+
+    const ledgerCountBefore = await ProductInventoryLedger.countDocuments();
+
+    await fixture.agent
+      .patch(`${adminProductUrl}/${fixture.product.id}`)
+      .send({ variants })
+      .expect(200);
+
+    const storedProduct = await Product.findById(fixture.product.id).lean();
+
+    expect(storedProduct.variants).toHaveLength(2);
+
+    const existingVariant = storedProduct.variants.find(
+      (item) => item.sku === fixture.variant.sku,
+    );
+
+    const newVariant = storedProduct.variants.find(
+      (item) => item.sku === newSku,
+    );
+
+    expect(String(existingVariant._id)).toBe(fixture.variant.id);
+
+    expect(existingVariant.inventory).toMatchObject({
+      stock: 20,
+      reservedStock: 2,
+      lowStockThreshold: 5,
+    });
+
+    expect(newVariant).toBeDefined();
+    expect(String(newVariant._id)).not.toBe(fixture.variant.id);
+
+    expect(newVariant.inventory).toMatchObject({
+      stock: 5,
+      reservedStock: 0,
+      lowStockThreshold: 2,
+    });
+
+    expect(await ProductInventoryLedger.countDocuments()).toBe(
+      ledgerCountBefore,
+    );
+  });
+
+  it("retries a pricing update using inventory committed after its first read", async () => {
+    const fixture = await createSafetyFixture();
+    const variants = structuredClone(fixture.variantInputs);
+
+    variants[0].pricing.sellingPrice = 799;
+
+    const originalSave = Product.prototype.save;
+
+    let reservationInjected = false;
+    const observedReservedStock = [];
+
+    const saveSpy = vi
+      .spyOn(Product.prototype, "save")
+      .mockImplementation(async function (...args) {
+        const session = args[0]?.session;
+
+        const isTargetTransactionSave =
+          String(this._id) === fixture.product.id && session?.inTransaction();
+
+        if (isTargetTransactionSave) {
+          observedReservedStock.push(this.variants[0].inventory.reservedStock);
+
+          if (!reservationInjected) {
+            reservationInjected = true;
+
+            /*
+             * The pricing transaction has already read the Product.
+             * Commit a separate reservation before its first save.
+             */
+            await fixture.agent
+              .post(
+                createInventoryUrl(
+                  fixture.product.id,
+                  fixture.variant.id,
+                  "reserve",
+                ),
+              )
+              .send({
+                quantity: 3,
+                referenceId: `VARIANT-SAFETY-CONCURRENT-${fixture.suffix}`,
+              })
+              .expect(200);
+          }
+        }
+
+        return originalSave.apply(this, args);
+      });
+
+    try {
+      const response = await fixture.agent
+        .patch(`${adminProductUrl}/${fixture.product.id}`)
+        .send({ variants });
+
+      expect(response.status).toBe(200);
+      expect(reservationInjected).toBe(true);
+
+      // First attempt saw 2; a later attempt must reload 5.
+      expect(observedReservedStock[0]).toBe(2);
+      expect(observedReservedStock.length).toBeGreaterThanOrEqual(2);
+      expect(observedReservedStock.at(-1)).toBe(5);
+
+      const storedProduct = await Product.findById(fixture.product.id).lean();
+
+      const storedVariant = storedProduct.variants[0];
+
+      expect({
+        variantId: String(storedVariant._id),
+        stock: storedVariant.inventory.stock,
+        reservedStock: storedVariant.inventory.reservedStock,
+        sellingPrice: storedVariant.pricing.sellingPrice,
+        ledgerCount: await ProductInventoryLedger.countDocuments(),
+      }).toEqual({
+        variantId: fixture.variant.id,
+        stock: 20,
+        reservedStock: 5,
+        sellingPrice: 799,
+        ledgerCount: 2,
+      });
     } finally {
       saveSpy.mockRestore();
     }

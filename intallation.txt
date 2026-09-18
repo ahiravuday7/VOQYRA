@@ -10012,6 +10012,16 @@ Part 222.5 — Product image upload security review
 Part 222.5.1 — Restrict storage formats and remove provider error details
 Part 222.5.2 — Check image content before Cloudinary upload
 Part 222.5.3 — Upload authorization and cleanup failures
+Part 222.5.4 — Complete Product and image regression
+Part 222.6 — Request validation and mass-assignment review
+Part 222.6.1 — Registration and login input protection
+Part 222.6.2 — Product create/update validation and protected-field review.
+Part 222.6.2 — Product variant update integrity
+Part 222.6.2 — Preserve variant identity and inventory
+Part 222.6.3 — Verify the inventory protection
+Part 222.6.4 — Customer checkout input protection
+Part 222.6.5 — Return quantity validation
+
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
