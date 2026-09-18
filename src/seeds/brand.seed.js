@@ -2,6 +2,8 @@ import Brand from "../modules/brands/brand.model.js";
 
 import { BRAND_STATUSES } from "../shared/constants/brand.constants.js";
 
+import { findOrCreateSeedDocument } from "./seed-document.helper.js";
+
 /*
 |--------------------------------------------------------------------------
 | Brand Seed Data
@@ -56,83 +58,21 @@ const BRAND_SEED_DATA = Object.freeze([
   },
 ]);
 
-/*
-|--------------------------------------------------------------------------
-| Seed Brands
-|--------------------------------------------------------------------------
-|
-| Idempotent behavior:
-|
-| First run:
-| Brand does not exist
-| → create it
-|
-| Later run:
-| Brand already exists
-| → update/reuse it
-|
-| Deleted seeded Brand:
-| → restore it
-|
-*/
-
 export const seedBrands = async () => {
   const brandsBySlug = new Map();
 
-  for (const brandData of BRAND_SEED_DATA) {
-    const brand = await Brand.findOneAndUpdate(
-      {
-        slug: brandData.slug,
-      },
+  for (const data of BRAND_SEED_DATA) {
+    const brand = await findOrCreateSeedDocument(Brand, data.slug, () => ({
+      ...data,
+      status: BRAND_STATUSES.ACTIVE,
+      createdBy: null,
+      updatedBy: null,
+      deletedAt: null,
+      deletedBy: null,
+    }));
 
-      {
-        $set: {
-          ...brandData,
-
-          status: BRAND_STATUSES.ACTIVE,
-
-          /*
-           * Restore seeded Brand if someone
-           * soft-deleted it in development.
-           */
-          deletedAt: null,
-
-          deletedBy: null,
-
-          updatedBy: null,
-        },
-
-        $setOnInsert: {
-          createdBy: null,
-        },
-      },
-
-      {
-        returnDocument: "after",
-
-        upsert: true,
-
-        runValidators: true,
-
-        setDefaultsOnInsert: true,
-      },
-    );
-
-    brandsBySlug.set(
-      brand.slug,
-
-      brand,
-    );
+    brandsBySlug.set(brand.slug, brand);
   }
 
-  /*
-   * Product seed will later use:
-   *
-   * brandsBySlug.get("aayu-and-aura")._id
-   *
-   * Never:
-   *
-   * brand: "Aayu & Aura"
-   */
   return brandsBySlug;
 };

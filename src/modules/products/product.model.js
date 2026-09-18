@@ -139,7 +139,10 @@ const variantPricingSchema = new Schema(
             return true;
           }
 
-          return value >= 0 && value <= this.sellingPrice;
+          // Support both the owning variant and pricing subdocument.
+          const pricing = this.pricing ?? this;
+
+          return value >= 0 && value <= pricing.sellingPrice;
         },
 
         message: "Discount price must be between zero and the selling price",
@@ -184,7 +187,10 @@ const variantInventorySchema = new Schema(
 
       validate: {
         validator(value) {
-          return value <= this.stock;
+          // Support both the owning variant and inventory subdocument.
+          const inventory = this.inventory ?? this;
+
+          return value <= inventory.stock;
         },
 
         message: "Reserved stock cannot exceed total stock",

@@ -5,6 +5,7 @@ import {
   SIZE_GUIDE_UNITS,
 } from "../shared/constants/size-guide.constants.js";
 
+import { findOrCreateSeedDocument } from "./seed-document.helper.js";
 /*
 |--------------------------------------------------------------------------
 | Size Guide Seed Data
@@ -343,83 +344,29 @@ export const seedSizeGuides = async (categoriesBySlug) => {
 
   const sizeGuidesBySlug = new Map();
 
-  for (const seedData of SIZE_GUIDE_SEED_DATA) {
-    const {
-      categorySlug,
+  for (const { categorySlug, ...data } of SIZE_GUIDE_SEED_DATA) {
+    const guide = await findOrCreateSeedDocument(SizeGuide, data.slug, () => {
+      const category = categorySlug ? categoriesBySlug.get(categorySlug) : null;
 
-      ...sizeGuideData
-    } = seedData;
+      if (categorySlug && !category) {
+        throw new Error(
+          `Missing seed category "${categorySlug}" for "${data.slug}".`,
+        );
+      }
 
-    /*
-     * Generic guides use category:null.
-     *
-     * Category-specific guides resolve the actual
-     * Category document seeded earlier.
-     */
-    const category = categorySlug ? categoriesBySlug.get(categorySlug) : null;
-
-    if (categorySlug && !category) {
-      throw new Error(
-        `SizeGuide seed category "${categorySlug}" was not found for "${sizeGuideData.slug}".`,
-      );
-    }
-
-    /*
-     * Find by globally unique slug.
-     *
-     * We use document.save() so the SizeGuide model's
-     * pre("validate") cross-field checks also execute.
-     */
-    let sizeGuide = await SizeGuide.findOne({
-      slug: sizeGuideData.slug,
+      return {
+        ...data,
+        category: category?._id ?? null,
+        status: SIZE_GUIDE_STATUSES.ACTIVE,
+        createdBy: null,
+        updatedBy: null,
+        deletedAt: null,
+        deletedBy: null,
+      };
     });
 
-    if (!sizeGuide) {
-      sizeGuide = new SizeGuide({
-        slug: sizeGuideData.slug,
-      });
-    }
-
-    sizeGuide.set({
-      ...sizeGuideData,
-
-      category: category?._id ?? null,
-
-      status: SIZE_GUIDE_STATUSES.ACTIVE,
-
-      /*
-       * Restore a seeded guide if it was
-       * soft-deleted in development.
-       */
-      deletedAt: null,
-
-      deletedBy: null,
-
-      updatedBy: null,
-    });
-
-    /*
-     * Keep seed-created audit ownership empty.
-     */
-    if (sizeGuide.isNew) {
-      sizeGuide.createdBy = null;
-    }
-
-    await sizeGuide.save();
-
-    sizeGuidesBySlug.set(
-      sizeGuide.slug,
-
-      sizeGuide,
-    );
+    sizeGuidesBySlug.set(guide.slug, guide);
   }
 
-  /*
-   * Product seed can later use:
-   *
-   * sizeGuidesBySlug
-   *   .get("womens-kurti-size-guide")
-   *   ._id
-   */
   return sizeGuidesBySlug;
 };

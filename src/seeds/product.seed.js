@@ -699,20 +699,14 @@ const PRODUCT_SEED_DATA = Object.freeze([
 
 export const seedProducts = async ({
   categoriesBySlug,
-
   brandsBySlug,
-
   sizeGuidesBySlug,
-
   collectionsBySlug,
 }) => {
   const requiredMaps = [
     ["categoriesBySlug", categoriesBySlug],
-
     ["brandsBySlug", brandsBySlug],
-
     ["sizeGuidesBySlug", sizeGuidesBySlug],
-
     ["collectionsBySlug", collectionsBySlug],
   ];
 
@@ -725,53 +719,48 @@ export const seedProducts = async ({
   const productsBySlug = new Map();
 
   for (const seedData of PRODUCT_SEED_DATA) {
+    /*
+     * Include inactive and soft-deleted Products.
+     * An existing slug belongs to the existing document.
+     */
+    const existingProduct = await Product.findOne({
+      slug: seedData.slug,
+    });
+
+    if (existingProduct) {
+      productsBySlug.set(existingProduct.slug, existingProduct);
+      continue;
+    }
+
     const {
       categorySlug,
-
       brandSlug,
-
       sizeGuideSlug,
-
       collectionSlugs,
-
       images,
-
       variants,
-
       ...productData
     } = seedData;
 
-    /*
-     * Resolve real master-data documents.
-     */
     const category = getRequiredSeedDocument(
       categoriesBySlug,
-
       categorySlug,
-
       "Category",
-
       productData.slug,
     );
 
     const brand = getRequiredSeedDocument(
       brandsBySlug,
-
       brandSlug,
-
       "Brand",
-
       productData.slug,
     );
 
     const sizeGuide = sizeGuideSlug
       ? getRequiredSeedDocument(
           sizeGuidesBySlug,
-
           sizeGuideSlug,
-
           "SizeGuide",
-
           productData.slug,
         )
       : null;
@@ -779,104 +768,57 @@ export const seedProducts = async ({
     const collections = collectionSlugs.map((collectionSlug) => {
       return getRequiredSeedDocument(
         collectionsBySlug,
-
         collectionSlug,
-
         "Collection",
-
         productData.slug,
       );
     });
 
-    /*
-     * Slug is the stable Product seed identity.
-     *
-     * This query also finds soft-deleted Products,
-     * allowing the development seed to restore them.
-     */
-    let product = await Product.findOne({
-      slug: productData.slug,
-    });
-
-    const isNewProduct = !product;
-
-    if (isNewProduct) {
-      product = new Product({
-        slug: productData.slug,
-
-        /*
-         * Variants are created only on initial seed.
-         *
-         * Later seed runs preserve their MongoDB _id values
-         * and existing inventory.
-         */
-        variants,
-
-        /*
-         * Placeholder images are also only needed initially.
-         *
-         * Real uploaded images must survive later seed runs.
-         */
-        images,
-      });
-    }
-
-    product.set({
+    const product = new Product({
       ...productData,
 
       category: category._id,
-
       brand: brand._id,
-
       sizeGuide: sizeGuide?._id ?? null,
+      collections: collections.map((collection) => collection._id),
 
-      collections: collections.map((collection) => {
-        return collection._id;
-      }),
+      images,
+      variants,
 
       status: PRODUCT_STATUSES.ACTIVE,
+      publishedAt: new Date(),
 
-      deletedAt: null,
-
-      deletedBy: null,
-
+      createdBy: null,
       updatedBy: null,
+      deletedAt: null,
+      deletedBy: null,
     });
 
-    /*
-     * Safety:
-     *
-     * If an existing seeded Product somehow has no
-     * variants/images, restore the seed defaults.
-     *
-     * Otherwise preserve existing values.
-     */
-    if (!product.variants?.length) {
-      product.variants = variants;
+    try {
+      await product.save();
+
+      productsBySlug.set(product.slug, product);
+    } catch (error) {
+      /*
+       * Another seed process may have created this slug
+       * after our initial lookup.
+       *
+       * Reuse that document. Other conflicts, including
+       * a SKU belonging to another Product, still fail.
+       */
+      if (error?.code === 11000) {
+        const concurrentProduct = await Product.findOne({
+          slug: productData.slug,
+        });
+
+        if (concurrentProduct) {
+          productsBySlug.set(concurrentProduct.slug, concurrentProduct);
+          continue;
+        }
+      }
+
+      throw error;
     }
-
-    if (!product.images?.length) {
-      product.images = images;
-    }
-
-    /*
-     * Keep the original publication time when possible.
-     */
-    if (!product.publishedAt) {
-      product.publishedAt = new Date();
-    }
-
-    if (product.isNew) {
-      product.createdBy = null;
-    }
-
-    await product.save();
-
-    productsBySlug.set(
-      product.slug,
-
-      product,
-    );
   }
 
   return productsBySlug;

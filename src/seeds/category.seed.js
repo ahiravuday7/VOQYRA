@@ -2,6 +2,8 @@ import Category from "../modules/categories/category.model.js";
 
 import { CATEGORY_STATUSES } from "../shared/constants/category.constants.js";
 
+import { findOrCreateSeedDocument } from "./seed-document.helper.js";
+
 /*
 |--------------------------------------------------------------------------
 | Category Seed Data
@@ -100,124 +102,36 @@ const CATEGORY_SEED_DATA = Object.freeze([
   },
 ]);
 
-/*
-|--------------------------------------------------------------------------
-| Seed Categories
-|--------------------------------------------------------------------------
-|
-| Idempotency:
-|
-| First run:
-| category does not exist
-| → create it
-|
-| Second run:
-| category already exists
-| → update/reuse it
-|
-| No duplicate categories are created.
-|
-| Slug is our stable seed identity.
-|
-*/
-
 export const seedCategories = async () => {
   const categoriesBySlug = new Map();
 
-  for (const seedData of CATEGORY_SEED_DATA) {
-    const {
-      parentSlug,
+  for (const { parentSlug, ...data } of CATEGORY_SEED_DATA) {
+    const category = await findOrCreateSeedDocument(Category, data.slug, () => {
+      const parent = parentSlug ? categoriesBySlug.get(parentSlug) : null;
 
-      ...categoryData
-    } = seedData;
+      if (parentSlug && !parent) {
+        throw new Error(
+          `Missing seed parent "${parentSlug}" for "${data.slug}".`,
+        );
+      }
 
-    /*
-     * Parent categories appear before child categories
-     * inside CATEGORY_SEED_DATA.
-     */
-    const parentCategory = parentSlug ? categoriesBySlug.get(parentSlug) : null;
+      const ancestors = parent ? [...(parent.ancestors ?? []), parent._id] : [];
 
-    if (parentSlug && !parentCategory) {
-      throw new Error(
-        `Category seed parent "${parentSlug}" must be seeded before "${categoryData.slug}".`,
-      );
-    }
+      return {
+        ...data,
+        parent: parent?._id ?? null,
+        ancestors,
+        level: ancestors.length,
+        status: CATEGORY_STATUSES.ACTIVE,
+        createdBy: null,
+        updatedBy: null,
+        deletedAt: null,
+        deletedBy: null,
+      };
+    });
 
-    /*
-     * Root:
-     *
-     * parent = null
-     * ancestors = []
-     * level = 0
-     *
-     * Child:
-     *
-     * parent = parent._id
-     * ancestors = [...parent.ancestors, parent._id]
-     * level = ancestors.length
-     */
-    const ancestors = parentCategory
-      ? [...(parentCategory.ancestors ?? []), parentCategory._id]
-      : [];
-
-    const category = await Category.findOneAndUpdate(
-      {
-        slug: categoryData.slug,
-      },
-
-      {
-        $set: {
-          ...categoryData,
-
-          parent: parentCategory?._id ?? null,
-
-          ancestors,
-
-          level: ancestors.length,
-
-          status: CATEGORY_STATUSES.ACTIVE,
-
-          /*
-           * Running the development seed again
-           * restores one of our seed categories
-           * if it was previously soft-deleted.
-           */
-          deletedAt: null,
-
-          deletedBy: null,
-
-          updatedBy: null,
-        },
-
-        $setOnInsert: {
-          createdBy: null,
-        },
-      },
-
-      {
-        returnDocument: "after",
-
-        upsert: true,
-
-        runValidators: true,
-
-        setDefaultsOnInsert: true,
-      },
-    );
-
-    categoriesBySlug.set(
-      category.slug,
-
-      category,
-    );
+    categoriesBySlug.set(category.slug, category);
   }
 
-  /*
-   * Later Product / SizeGuide seeds can do:
-   *
-   * categoriesBySlug.get("women-sarees")._id
-   *
-   * instead of hardcoding ObjectIds.
-   */
   return categoriesBySlug;
 };

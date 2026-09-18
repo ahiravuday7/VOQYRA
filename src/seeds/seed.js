@@ -14,20 +14,10 @@ import { seedCollections } from "./collection.seed.js";
 
 import { seedProducts } from "./product.seed.js";
 
-/*
-|--------------------------------------------------------------------------
-| Seed Environment Safety
-|--------------------------------------------------------------------------
-|
-| Development seed data must never be written to production.
-|
-*/
-
-const assertSeedEnvironment = () => {
-  if (env.NODE_ENV === "production") {
-    throw new Error("Database seeding is disabled in production.");
-  }
-};
+import {
+  assertSeedDatabaseTarget,
+  assertSeedEnvironment,
+} from "./seed-safety.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -47,7 +37,7 @@ const assertSeedEnvironment = () => {
 */
 
 const runSeed = async () => {
-  assertSeedEnvironment();
+  assertSeedEnvironment(env.NODE_ENV);
 
   logger.info(
     {
@@ -63,6 +53,16 @@ const runSeed = async () => {
   */
 
   await connectDatabase();
+
+  assertSeedDatabaseTarget(mongoose.connection.name);
+
+  logger.info(
+    {
+      environment: env.NODE_ENV,
+      database: mongoose.connection.name,
+    },
+    "Seed database target verified",
+  );
 
   /*
   |--------------------------------------------------------------------------

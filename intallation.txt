@@ -10026,8 +10026,45 @@ Part 222.7 — sensitive-data logging and security headers.
 Part 222.7.1 — protect HTTP request logs
 Part 222.7.2 — protect error-object logs
 Part 222.7.3 — security-header regression tests
-
 |--------------------------------------------------------------------------
+Part 223 — review the existing development seed scripts for safe, repeatable runs.
+Part 223.1 — preserve existing Products when seeding again
+Part 223.2 — preserve existing catalog records during seed reruns
+Part 223.3 — Seed Runner Safety + Database Target Verification
+Part 223.3.3 — Add Testable Database Target Safeguard
+Part 223.3.4 — Automated Tests for Seed Safety
+Part 223.3.5 — Real Seed Preflight, No Writes
+Part 223.3.6 — Verify the Production Block in the Real Runner
+Part 223.4.2 — Verify Real-Database Idempotency
+Part 223.4.3 — Capture Database Counts Before Final Idempotency Check
+Part 223.4.4 — Run Seed Once More
+Part 223.4.5 — Verify Counts Did Not Change
+Part 223.5 — Optional Development Users
+Part 223.5.1 — Inspect Current User Requirements
+Part 223.5.2 — Create the Development User Seed
+Part 223.5.3 — Protected Development-User Seed Runner
+Part 223.5.4 — Verify Missing Credentials Are Blocked
+Part 223.5.5 — Verify .env Is Protected Before Adding Credentials
+Part 223.5.5 — Add Local Dev User Credentials
+Part 223.5.6 — First Controlled Dev-User Seed
+Part 223.5.7 — Verify Users + Password Hashing
+Part 223.5.8 — Verify the Real Login API
+Part 223.5.8.1 — Inspect the Exact 403 Error
+Part 223.5.8.2 — Login With Trusted Origins
+Part 223.5.9 — Dev-User Seed Idempotency
+Part 223.5.10 — Final Read-Only Duplicate Check
+Part 223.6 — Review Transactional Seed Data
+Part 223.7 — Final Seed-System Regression
+Current seed commands
+npm run seed
+
+for master/catalog data.
+
+npm run seed:preflight
+
+for safe DB-target verification.
+
+npm run seed:dev-users
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

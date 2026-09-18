@@ -2,6 +2,7 @@ import Collection from "../modules/collections/collection.model.js";
 
 import { COLLECTION_STATUSES } from "../shared/constants/collection.constants.js";
 
+import { findOrCreateSeedDocument } from "./seed-document.helper.js";
 /*
 |--------------------------------------------------------------------------
 | Collection Seed Data
@@ -95,65 +96,22 @@ const COLLECTION_SEED_DATA = Object.freeze([
 export const seedCollections = async () => {
   const collectionsBySlug = new Map();
 
-  for (const collectionData of COLLECTION_SEED_DATA) {
-    const collection = await Collection.findOneAndUpdate(
-      {
-        slug: collectionData.slug,
-      },
-
-      {
-        $set: {
-          ...collectionData,
-
-          status: COLLECTION_STATUSES.ACTIVE,
-
-          /*
-           * Restore this development seed Collection
-           * if it was previously soft-deleted.
-           */
-          deletedAt: null,
-
-          deletedBy: null,
-
-          updatedBy: null,
-        },
-
-        $setOnInsert: {
-          createdBy: null,
-        },
-      },
-
-      {
-        returnDocument: "after",
-
-        upsert: true,
-
-        runValidators: true,
-
-        setDefaultsOnInsert: true,
-      },
+  for (const data of COLLECTION_SEED_DATA) {
+    const collection = await findOrCreateSeedDocument(
+      Collection,
+      data.slug,
+      () => ({
+        ...data,
+        status: COLLECTION_STATUSES.ACTIVE,
+        createdBy: null,
+        updatedBy: null,
+        deletedAt: null,
+        deletedBy: null,
+      }),
     );
 
-    collectionsBySlug.set(
-      collection.slug,
-
-      collection,
-    );
+    collectionsBySlug.set(collection.slug, collection);
   }
 
-  /*
-   * Product seed will later use:
-   *
-   * collectionsBySlug
-   *   .get("new-arrivals")
-   *   ._id
-   *
-   * or:
-   *
-   * collections: [
-   *   collectionsBySlug.get("new-arrivals")._id,
-   *   collectionsBySlug.get("best-sellers")._id,
-   * ]
-   */
   return collectionsBySlug;
 };
