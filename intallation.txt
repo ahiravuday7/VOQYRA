@@ -10022,6 +10022,11 @@ Part 222.6.3 — Verify the inventory protection
 Part 222.6.4 — Customer checkout input protection
 Part 222.6.5 — Return quantity validation
 
+Part 222.7 — sensitive-data logging and security headers.
+Part 222.7.1 — protect HTTP request logs
+Part 222.7.2 — protect error-object logs
+Part 222.7.3 — security-header regression tests
+
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

@@ -138,7 +138,10 @@ const errorMiddleware = (error, request, response, next) => {
         errorCode: normalizedError.errorCode,
         statusCode: normalizedError.statusCode,
         method: request.method,
-        path: request.originalUrl,
+        path:
+          request.originalUrl?.split("?")[0] ??
+          request.url?.split("?")[0] ??
+          "/",
       },
       "Unhandled request error",
     );
