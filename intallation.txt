@@ -10066,6 +10066,233 @@ for safe DB-target verification.
 
 npm run seed:dev-users
 |--------------------------------------------------------------------------
+Part 224 — API Documentation / Postman Review
+Part 224.1 — Inspect existing API documentation / Postman files
+Part 224.2 — Inspect Current API Route Files
+Part 224.2.1 — Print Route Paths Without Truncation
+currently have 22 route files covering:
+
+Auth
+Public/admin Brands
+Cart
+Public/admin Categories
+Public/admin Collections
+Customer Orders
+Admin Orders
+Admin Returns
+Admin Replacements
+Payment reconciliation/admin webhooks/provider webhooks
+Public/admin Products
+Recently Viewed
+Public/admin Size Guides
+Wishlist
+Health
+
+Part 224.3.1 — Inspect API Base Paths
+Part 224.3.2 — Extract Exact Endpoints From Route Files
+Part 224.3.3 — Exact API Endpoint Inventory
+Part 224.4 — Verify security per router
+Part 224.4.1 — Find Idempotency-Key Requirements
+Part 224.4.2 — Verify CSRF Requirements
+Part 224.4.3 — Verify Authentication Cookies
+Part 224.5.1 — Inspect Auth Request Schemas
+Part 224.5.2 — Inspect Exact Auth Responses
+Part 224.5.3 — Verify exact public user fields
+Part 224.6.1 — Create Postman Folder + Local Environment Template
+Part 224.6.2 — Create Postman Collection With Auth APIs
+Part 224.6.3 — Add Basic Postman Tests to Auth Requests
+Part 224.6.4 — Verify Test Counts Per Auth Request
+Part 224.6.5 — Make Register Repeatable
+Part 224.6.6 — Import and Configure Postman
+Part 224.6.7 — Verify Login Postman Tests + Cookies
+Part 224.6.8 — Test GET /api/v1/auth/me
+Part 224.6.9 — Test Refresh Authentication
+Part 224.6.10 — Test Logout
+Part 224.6.11 — Verify Admin Login
+Part 224.6.12 — Verify Admin Access With a Real Admin Endpoint
+
+Part 224.7.1 — Add Basic Public API Requests
+Part 224.7.2 — Run the Public API folder
+Part 224.7.3 — Add Slug Variables
+Part 224.7.4 — Auto-Capture Slugs From List APIs
+Part 224.7.5 — Run the Five List Requests Again
+Part 224.7.6 — Add Public Detail-by-Slug Requests
+Part 224.7.7 — Test the 5 Detail Requests
+Part 224.7.8 — Add Category Filter Requests
+Part 224.7.9 — Test the 3 Category Filter Requests
+Part 224.7.10 — Add 3 Product Filter Requests
+Part 224.7.11 — Test the 3 Product Filter Requests
+Part 224.7.12 — Add 3 More Product Filters
+Part 224.7.13 — Test the 3 New Product Filters
+Part 224.7.14 — Add Search, Price Range & Price Sort
+Part 224.7.15 — Test the 3 New Product Queries
+Part 224.7.16 — Add Master-Data ID Variables
+Part 224.7.17 — Capture IDs From Existing Detail Requests
+Part 224.7.18 — Populate the IDs
+Part 224.7.19 — Capture Product Category + Brand IDs
+Part 224.7.20 — Add Category + Brand Product Filters
+Part 224.7.21 — Test Category + Brand Product Filters
+Part 224.7.22 — Capture collectionId From Product
+Part 224.7.23 — Add Collection Product Filter
+Part 224.7.24 — Test Collection Product Filter
+Part 224.7.25 — Add Pagination + Remaining Sort Tests
+Part 224.7.26 — Test Pagination + Remaining Sorts
+Part 224.8 — Customer Cart API.
+Part 224.8.1 — Add Customer Cart Folder + Get Cart
+Part 224.8.2 — Test Get Cart
+Part 224.8.3 — Capture productId + variantId
+Part 224.8.4 — Add Add Cart Item
+Part 224.8.5 — Test Add Cart Item
+Part 224.8.6 — Capture cartItemId From Get Cart
+Part 224.8.7 — Add Update Cart Item
+Part 224.8.8 — Test Update Cart Item
+Part 224.8.9 — Add Delete Cart Item
+Part 224.8.10 — Test Delete Cart Item
+Part 224.8.11 — Add Clear Cart
+Part 224.8.12 — Test Clear Cart
+
+Part 224.9.1 — Add Customer Wishlist + Get Wishlist
+Part 224.9.2 — Test Get Wishlist
+Part 224.9.3 — Add Add Wishlist Item
+Part 224.9.5 — Add Delete Wishlist Item
+Part 224.9.6 — Test Delete Wishlist Item
+Part 224.9.7 — Add Clear Wishlist
+
+Part 224.10.1 — Add Get Recently Viewed
+Part 224.10.2 — Test Get Recently Viewed
+Part 224.10.3 — Add Record Recently Viewed
+Part 224.10.4 — Test Record Recently Viewed
+Part 224.10.5 — Add Delete Recently Viewed Item
+Part 224.10.6 — Test Delete Recently Viewed Item
+Part 224.10.7 — Add Clear Recently Viewed
+Part 224.10.8 — Test Clear Recently Viewed
+
+224.11 — Customer Orders API.
+Part 224.11.1 — Add List Customer Orders
+Part 224.11.2 — Test List Customer Orders
+Part 224.11.3 — Add Create Customer Order
+Part 224.11.4 — Test Create Customer Order
+Part 224.11.5 — Add Get Customer Order Details
+Part 224.11.6 — Test Get Customer Order Details
+Part 224.11.7 — Add Cancel Customer Order
+Part 224.11.8 — Test Cancel Customer Order
+Part 224.11.9 — Add List Customer Return Requests
+Part 224.11.10 — Test List Customer Return Requests
+Part 224.11.11 — Add List Customer Replacements
+Part 224.11.12 — Test List Customer Replacements
+Part 224.11.13 — Add Create Online Payment Order
+Part 224.11.14 — Test Create Online Payment Order
+Part 224.11.15 — Add Initiate Online Payment
+Part 224.11.16 — Test Initiate Online Payment
+Part 224.11.17 — Add Confirm Razorpay Payment******
+Part 224.11.18 — Add Create Customer Return Request
+Part 224.11.19 — Add Get Customer Return Request Details
+Part 224.11.20 — Add Cancel Customer Return Request
+Part 224.11.21 — Add Get Customer Replacement Details
+
+Part 224.12.1 — Add Admin Orders Folder + List Admin Orders
+Part 224.12.2 — Add Get Admin Order Details
+Part 224.12.3 — Add Update Admin Order Status
+Part 224.12.4 — Add Ship Admin Order
+Part 224.12.5 — Add Deliver Admin Order
+Part 224.12.6 — Add Refund Admin Order
+
+Part 224.13.1 — Add Admin Returns Folder + List Admin Return Requests
+Part 224.13.2 — Add Get Admin Return Request Details
+Part 224.13.3 — Add Approve Admin Return Request
+Part 224.13.4 — Add Reject Admin Return Request
+Part 224.13.5 — Add Mark Admin Return Request In Transit
+Part 224.13.6 — Add Receive Admin Return Request
+Part 224.13.7 — Add Inspect Admin Return Request
+Part 224.13.8 — Add Complete Admin Return Request
+Part 224.13.9 — Add Refund Admin Return Request
+Part 224.13.10 — Add Create Admin Return Replacement
+Part 224.13.11 — Admin Return Operational Metrics
+Part 224.13.12 — Add Get Admin Return Metrics
+
+Part 224.14 — Admin Replacements.
+Part 224.14.1 — Add Admin Replacements + List Request
+Part 224.14.2 — Get Admin Return Replacement Details
+Part 224.14.3 — Process Admin Return Replacement
+Part 224.14.4 — Ship Admin Return Replacement
+Part 224.14.5 — Deliver Admin Return Replacement
+Part 224.14.6 — Cancel Admin Return Replacement
+Part 224.14.7 — Fail Admin Return Replacement
+
+Part 224.15.1 — List Admin Payment Reconciliations
+
+Part 224.16.1 — List Admin Payment Webhooks
+Part 224.16.2 — Get Admin Payment Webhook Summary
+Part 224.16.3 — Get Admin Payment Webhook Worker Health
+Part 224.16.4 — Requeue Admin Payment Webhook
+Part 224.16.5 — Get Admin Payment Webhook Details
+
+Part 224.17.1 — Razorpay Payment Webhook
+
+Part 224.18 — Final Postman Collection Audit
+|--------------------------------------------------------------------------
+Part 225 — Full Backend Integration Regression.
+Part 225.1 — Integration Test Inventory
+Part 225.2 — Full Integration Regression Baseline
+npx vitest run tests/integration --testTimeout=120000 --no-file-parallelism
+
+ Test Files  39 passed (39)
+      Tests  1035 passed (1035)
+   Start at  18:52:21
+   Duration  3339.41s (transform 7.86s, setup 25.22s, import 67.14s, tests 3228.48s, environment 7ms)
+Part 225.3 — Users / Addresses Coverage Check
+|--------------------------------------------------------------------------
+Part 226 — Dead Code / Dependency Cleanup
+Part 226.1 — TODO / FIXME / console.log audit
+Part 226.2 — Package / Dependency Inventory
+Part 226.3 — Dependency Usage Audit
+Part 226.3 — Dependency Usage Audit
+Part 226.4 — Exact Package Import Audit
+Part 226.5 — Inspect Zero-Import Packages
+Part 226.6 — Unused Imports Audit
+Part 226.7 — Verify the 4 Candidates
+Part 226.8 — Remove Confirmed Unused Imports
+Part 226.9 — Re-run Unused Import Audit
+Part 226.10 — Dead Repository / Service Export Audit
+Part 226.11 — Inspect the 5 Candidate Exports
+Part 226.12 — Verify Reservation Worker Wiring
+Part 226.13 — Get Exact Dead-Code Blocks
+Part 226.14 — Remove the 5 Confirmed Dead Exports
+Part 226.15 — Re-run Dead Export Audit
+Part 226.16 — Inspect the 7 Order-Service Candidates
+Part 226.17 — Get Exact Function Boundaries
+Part 226.17.1 — Correct the Function Boundary Audit
+Part 226.18 — Remove the 7 Confirmed Dead Functions
+Part 226.19 — Recheck Unused Imports in order.service.js
+Part 226.20 — Inspect Current Import Block
+Part 226.21 — Remove Confirmed Unused Imports
+Part 226.22 — Recheck order.service.js Imports
+Part 226.23 — Global Dead Export Recheck
+Part 226.24 — Inspect the 10 Repository Candidates
+Part 226.25 — Exact Repository Function Boundaries
+Part 226.26 — Remove the 10 Dead Repository Functions
+Part 226.27 — Re-run Global Dead Export Audit
+Part 226.28 — Global Unused Import Recheck
+Part 226.29 — Targeted Order Regression
+Part 226.29.1 — Capture One Failure Only
+Part 226.29.2 — Inspect the Order Creation Path
+Part 226.29.3 — Check Git Diff for the Accidentally Removed Block
+Part 226 Recovery — Step 1
+Recovery Step 2 — Check working-tree state
+Recovery Step 3 — Create backup
+Recovery Step 4 — Check VS Code Local History
+Recovery Step 5 — Ignore whitespace and inspect the real diff size
+Recovery Step 6 — Identify the 47 additions we must preserve
+Recovery Step 7 — Verify HEAD has the current Order features
+Recovery Step 8 — Restore only cleanup-touched source files
+Recovery Step 9 — Re-run only the single Order test
+Recovery Step 10 — Run the complete Order integration suite
+Recovery Step 11 — Run only this failing test
+Next step — repeat only this test 5 times
+Next: full backend regression checkpoint
+Next — remove only temporary recovery/debug files
+|--------------------------------------------------------------------------
+
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

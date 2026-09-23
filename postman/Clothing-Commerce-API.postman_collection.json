@@ -1,0 +1,5311 @@
+{
+  "info": {
+    "_postman_id": "clothing-commerce-api",
+    "name": "Clothing Commerce API",
+    "description": "Postman collection for the Clothing Commerce MERN backend.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authentication endpoints. Postman automatically stores HTTP-only authentication cookies returned by login and refresh.",
+      "item": [
+        {
+          "name": "Register Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Postman\",\n  \"lastName\": \"Customer\",\n  \"email\": \"{{$randomEmail}}\",\n  \"password\": \"Postman@123\",\n  \"confirmPassword\": \"Postman@123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Registers a new customer. Uses Postman's random email variable so the request can be executed repeatedly without reusing the same email."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Registration succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Account created successfully\");",
+                  "  pm.expect(body.data.user).to.be.an(\"object\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{customerEmail}}\",\n  \"password\": \"{{customerPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in the configured development customer. The backend returns cc_access_token and cc_refresh_token cookies."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Customer login succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Login successful\");",
+                  "  pm.expect(body.data.user.role).to.eql(\"customer\");",
+                  "});",
+                  "",
+                  "pm.test(\"Authentication cookies were returned\", function () {",
+                  "  pm.expect(pm.cookies.has(\"cc_access_token\")).to.eql(true);",
+                  "  pm.expect(pm.cookies.has(\"cc_refresh_token\")).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in the configured development admin. Login cookies are stored by Postman automatically."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin login succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Login successful\");",
+                  "  pm.expect(body.data.user.role).to.eql(\"admin\");",
+                  "});",
+                  "",
+                  "pm.test(\"Authentication cookies were returned\", function () {",
+                  "  pm.expect(pm.cookies.has(\"cc_access_token\")).to.eql(true);",
+                  "  pm.expect(pm.cookies.has(\"cc_refresh_token\")).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns the currently authenticated user using the cc_access_token cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Current user returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Authenticated user retrieved successfully\");",
+                  "  pm.expect(body.data.user).to.be.an(\"object\");",
+                  "  pm.expect(body.data.user.id).to.be.a(\"string\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh Authentication",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Refreshes authentication using the cc_refresh_token cookie and rotates the authentication cookies."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Authentication refresh succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Authentication refreshed successfully\");",
+                  "});",
+                  "",
+                  "pm.test(\"Authentication cookies are available\", function () {",
+                  "  pm.expect(pm.cookies.has(\"cc_access_token\")).to.eql(true);",
+                  "  pm.expect(pm.cookies.has(\"cc_refresh_token\")).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Revokes the refresh session and clears the access and refresh cookies."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Logout succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Logout successful\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Public API",
+      "description": "Public read-only API endpoints. Authentication is not required.",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "health"
+              ]
+            },
+            "description": "Returns API and database health information."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories"
+              ]
+            },
+            "description": "Returns active public categories."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture categorySlug\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const arrays = Object.values(body.data ?? {})",
+                  "    .filter((value) => Array.isArray(value));",
+                  "",
+                  "  const items = arrays.find(",
+                  "    (value) =>",
+                  "      value.length > 0 &&",
+                  "      typeof value[0]?.slug === \"string\"",
+                  "  );",
+                  "",
+                  "  pm.expect(items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slug = items[0].slug;",
+                  "",
+                  "  pm.expect(slug).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"categorySlug\", slug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Category Tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories/tree",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories",
+                "tree"
+              ]
+            },
+            "description": "Returns the public category hierarchy."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Brands",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/brands",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "brands"
+              ]
+            },
+            "description": "Returns public brands."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture brandSlug\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const arrays = Object.values(body.data ?? {})",
+                  "    .filter((value) => Array.isArray(value));",
+                  "",
+                  "  const items = arrays.find(",
+                  "    (value) =>",
+                  "      value.length > 0 &&",
+                  "      typeof value[0]?.slug === \"string\"",
+                  "  );",
+                  "",
+                  "  pm.expect(items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slug = items[0].slug;",
+                  "",
+                  "  pm.expect(slug).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"brandSlug\", slug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Size Guides",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/size-guides",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "size-guides"
+              ]
+            },
+            "description": "Returns public size guides."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture sizeGuideSlug\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const arrays = Object.values(body.data ?? {})",
+                  "    .filter((value) => Array.isArray(value));",
+                  "",
+                  "  const items = arrays.find(",
+                  "    (value) =>",
+                  "      value.length > 0 &&",
+                  "      typeof value[0]?.slug === \"string\"",
+                  "  );",
+                  "",
+                  "  pm.expect(items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slug = items[0].slug;",
+                  "",
+                  "  pm.expect(slug).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"sizeGuideSlug\", slug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Collections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "collections"
+              ]
+            },
+            "description": "Returns public collections."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture collectionSlug\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const arrays = Object.values(body.data ?? {})",
+                  "    .filter((value) => Array.isArray(value));",
+                  "",
+                  "  const items = arrays.find(",
+                  "    (value) =>",
+                  "      value.length > 0 &&",
+                  "      typeof value[0]?.slug === \"string\"",
+                  "  );",
+                  "",
+                  "  pm.expect(items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slug = items[0].slug;",
+                  "",
+                  "  pm.expect(slug).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"collectionSlug\", slug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ]
+            },
+            "description": "Returns public products."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture productSlug\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const arrays = Object.values(body.data ?? {})",
+                  "    .filter((value) => Array.isArray(value));",
+                  "",
+                  "  const items = arrays.find(",
+                  "    (value) =>",
+                  "      value.length > 0 &&",
+                  "      typeof value[0]?.slug === \"string\"",
+                  "  );",
+                  "",
+                  "  pm.expect(items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slug = items[0].slug;",
+                  "",
+                  "  pm.expect(slug).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"productSlug\", slug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Category by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories/{{categorySlug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories",
+                "{{categorySlug}}"
+              ]
+            },
+            "description": "Returns one public resource using {{categorySlug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Returned slug matches environment\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.slug === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "",
+                  "  pm.expect(resource.slug).to.eql(",
+                  "    pm.environment.get(\"categorySlug\")",
+                  "  );",
+                  "});",
+                  "",
+                  "pm.test(\"Capture categoryId\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.id === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "  pm.expect(resource.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"categoryId\", resource.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Brand by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/brands/{{brandSlug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "brands",
+                "{{brandSlug}}"
+              ]
+            },
+            "description": "Returns one public resource using {{brandSlug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Returned slug matches environment\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.slug === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "",
+                  "  pm.expect(resource.slug).to.eql(",
+                  "    pm.environment.get(\"brandSlug\")",
+                  "  );",
+                  "});",
+                  "",
+                  "pm.test(\"Capture brandId\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.id === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "  pm.expect(resource.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"brandId\", resource.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Size Guide by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/size-guides/{{sizeGuideSlug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "size-guides",
+                "{{sizeGuideSlug}}"
+              ]
+            },
+            "description": "Returns one public resource using {{sizeGuideSlug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Returned slug matches environment\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.slug === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "",
+                  "  pm.expect(resource.slug).to.eql(",
+                  "    pm.environment.get(\"sizeGuideSlug\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Collection by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/collections/{{collectionSlug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "collections",
+                "{{collectionSlug}}"
+              ]
+            },
+            "description": "Returns one public resource using {{collectionSlug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Returned slug matches environment\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.slug === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "",
+                  "  pm.expect(resource.slug).to.eql(",
+                  "    pm.environment.get(\"collectionSlug\")",
+                  "  );",
+                  "});",
+                  "",
+                  "pm.test(\"Capture collectionId\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.id === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "  pm.expect(resource.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"collectionId\", resource.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Product by Slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products/{{productSlug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products",
+                "{{productSlug}}"
+              ]
+            },
+            "description": "Returns one public resource using {{productSlug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Returned slug matches environment\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  const resource = Object.values(body.data ?? {})",
+                  "    .find(",
+                  "      (value) =>",
+                  "        value &&",
+                  "        typeof value === \"object\" &&",
+                  "        !Array.isArray(value) &&",
+                  "        typeof value.slug === \"string\"",
+                  "    );",
+                  "",
+                  "  pm.expect(resource).to.be.an(\"object\");",
+                  "",
+                  "  pm.expect(resource.slug).to.eql(",
+                  "    pm.environment.get(\"productSlug\")",
+                  "  );",
+                  "});",
+                  "",
+                  "pm.test(\"Capture Product master-data IDs\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const product = body.data.product;",
+                  "",
+                  "  pm.expect(product.category.id).to.be.a(\"string\").and.not.empty;",
+                  "  pm.expect(product.brand.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"categoryId\", product.category.id);",
+                  "  pm.environment.set(\"brandId\", product.brand.id);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture Product collectionId\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const product = body.data.product;",
+                  "",
+                  "  pm.expect(product.collections).to.be.an(\"array\");",
+                  "",
+                  "  if (product.collections.length > 0) {",
+                  "    const collection = product.collections[0];",
+                  "",
+                  "    pm.expect(collection.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "    pm.environment.set(\"collectionId\", collection.id);",
+                  "  }",
+                  "});",
+                  "",
+                  "pm.test(\"Capture Product and Variant IDs\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const product = body.data.product;",
+                  "",
+                  "  pm.expect(product.id).to.be.a(\"string\").and.not.empty;",
+                  "  pm.expect(product.variants).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const variant =",
+                  "    product.variants.find(",
+                  "      (item) => item.availability?.isInStock === true",
+                  "    );",
+                  "",
+                  "  pm.expect(variant, \"Expected an in-stock Product variant\").to.exist;",
+                  "  pm.expect(variant.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"productId\", product.id);",
+                  "  pm.environment.set(\"variantId\", variant.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Root Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories?parent=root",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories"
+              ],
+              "query": [
+                {
+                  "key": "parent",
+                  "value": "root"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only root categories returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const categories = body.data.categories;",
+                  "",
+                  "  pm.expect(categories).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  categories.forEach((category) => {",
+                  "    pm.expect(category.parent).to.eql(null);",
+                  "    pm.expect(category.isRoot).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Featured Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories?isFeatured=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories"
+              ],
+              "query": [
+                {
+                  "key": "isFeatured",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only featured categories returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const categories = body.data.categories;",
+                  "",
+                  "  pm.expect(categories).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  categories.forEach((category) => {",
+                  "    pm.expect(category.isFeatured).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Level Zero Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/categories?level=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "categories"
+              ],
+              "query": [
+                {
+                  "key": "level",
+                  "value": "0"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only level zero categories returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const categories = body.data.categories;",
+                  "",
+                  "  pm.expect(categories).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  categories.forEach((category) => {",
+                  "    pm.expect(category.level).to.eql(0);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Products With Limit",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Product limit is respected\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\");",
+                  "  pm.expect(products.length).to.be.at.most(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Featured Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?isFeatured=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "isFeatured",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only featured products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\");",
+                  "  pm.expect(body.data.filters.isFeatured).to.eql(true);",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.isFeatured).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sort Products By Name Ascending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?sort=name-asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "name-asc"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Products are sorted by name ascending\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(body.data.filters.sort).to.eql(",
+                  "    \"name-asc\"",
+                  "  );",
+                  "",
+                  "  const names = products.map(",
+                  "    (product) => product.name",
+                  "  );",
+                  "",
+                  "  const sortedNames = [...names].sort(",
+                  "    (a, b) => a.localeCompare(b)",
+                  "  );",
+                  "",
+                  "  pm.expect(names).to.eql(sortedNames);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List New Arrival Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?isNewArrival=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "isNewArrival",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only new arrival products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\");",
+                  "  pm.expect(body.data.filters.isNewArrival).to.eql(true);",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.isNewArrival).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Best Seller Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?isBestSeller=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "isBestSeller",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only best seller products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\");",
+                  "  pm.expect(body.data.filters.isBestSeller).to.eql(true);",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.isBestSeller).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List In Stock Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?inStock=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "inStock",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only in-stock products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\");",
+                  "  pm.expect(body.data.filters.inStock).to.eql(true);",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.availability.isInStock).to.eql(true);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?search=classic",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "classic"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Product search applied\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(body.data.filters.search).to.eql(\"classic\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter Products By Price Range",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?minPrice=0&maxPrice=10000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "minPrice",
+                  "value": "0"
+                },
+                {
+                  "key": "maxPrice",
+                  "value": "10000000"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Price range filter applied\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(body.data.filters.minPrice).to.eql(0);",
+                  "  pm.expect(body.data.filters.maxPrice).to.eql(10000000);",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.priceRange.minimum).to.be.at.least(0);",
+                  "    pm.expect(product.priceRange.minimum).to.be.at.most(10000000);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sort Products By Price High To Low",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?sort=price-high-to-low",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "price-high-to-low"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Products are sorted by price high to low\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(body.data.filters.sort).to.eql(\"price-high-to-low\");",
+                  "",
+                  "  const prices = products.map(",
+                  "    (product) => product.priceRange.minimum",
+                  "  );",
+                  "",
+                  "  const sortedPrices = [...prices].sort(",
+                  "    (a, b) => b - a",
+                  "  );",
+                  "",
+                  "  pm.expect(prices).to.eql(sortedPrices);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter Products By Category",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?category={{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "{{categoryId}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only selected category products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "  const categoryId = pm.environment.get(\"categoryId\");",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\").that.is.not.empty;",
+                  "  pm.expect(body.data.filters.category).to.eql(categoryId);",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.category.id).to.eql(categoryId);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter Products By Brand",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?brand={{brandId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "brand",
+                  "value": "{{brandId}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Only selected brand products returned\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "  const brandId = pm.environment.get(\"brandId\");",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  products.forEach((product) => {",
+                  "    pm.expect(product.brand.id).to.eql(brandId);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter Products By Collection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?collection={{collectionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "collection",
+                  "value": "{{collectionId}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Selected collection returns the known Product\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "  const productSlug = pm.environment.get(\"productSlug\");",
+                  "",
+                  "  pm.expect(products).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const slugs = products.map(",
+                  "    (product) => product.slug",
+                  "  );",
+                  "",
+                  "  pm.expect(slugs).to.include(productSlug);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Paginate Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?page=2&limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "2"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Pagination is applied correctly\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "  const pagination = body.data.pagination;",
+                  "",
+                  "  pm.expect(pagination.page).to.eql(2);",
+                  "  pm.expect(pagination.limit).to.eql(2);",
+                  "  pm.expect(pagination.hasPreviousPage).to.eql(true);",
+                  "  pm.expect(products.length).to.be.at.most(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sort Products By Price Low To High",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?sort=price-low-to-high",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "price-low-to-high"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Products are sorted by price low to high\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(body.data.filters.sort).to.eql(\"price-low-to-high\");",
+                  "",
+                  "  const prices = products.map(",
+                  "    (product) => product.priceRange.minimum",
+                  "  );",
+                  "",
+                  "  const sortedPrices = [...prices].sort(",
+                  "    (a, b) => a - b",
+                  "  );",
+                  "",
+                  "  pm.expect(prices).to.eql(sortedPrices);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sort Products By Name Descending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?sort=name-desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "name-desc"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Products are sorted by name descending\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const products = body.data.products;",
+                  "",
+                  "  pm.expect(body.data.filters.sort).to.eql(\"name-desc\");",
+                  "",
+                  "  const names = products.map(",
+                  "    (product) => product.name",
+                  "  );",
+                  "",
+                  "  const sortedNames = [...names].sort(",
+                  "    (a, b) => b.localeCompare(a)",
+                  "  );",
+                  "",
+                  "  pm.expect(names).to.eql(sortedNames);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Customer Cart",
+      "item": [
+        {
+          "name": "Get Cart",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Capture Cart Item ID\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const cart = body.data?.cart ?? body.data;",
+                  "",
+                  "  pm.expect(cart.items).to.be.an(\"array\").that.is.not.empty;",
+                  "",
+                  "  const productId = pm.environment.get(\"productId\");",
+                  "  const variantId = pm.environment.get(\"variantId\");",
+                  "",
+                  "  const cartItem = cart.items.find(",
+                  "    (item) =>",
+                  "      item.product?.id === productId &&",
+                  "      item.variant?.id === variantId",
+                  "  );",
+                  "",
+                  "  pm.expect(cartItem, \"Expected matching Cart item\").to.exist;",
+                  "  pm.expect(cartItem.id).to.be.a(\"string\").and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"cartItemId\", cartItem.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add Cart Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"variantId\": \"{{variantId}}\",\n  \"quantity\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Cart item added successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Cart Item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart/items/{{cartItemId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items",
+                "{{cartItemId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Cart item updated successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Cart Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart/items/{{cartItemId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart",
+                "items",
+                "{{cartItemId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Cart item deleted successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear Cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/cart",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cart"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Cart cleared successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Customer Wishlist",
+      "item": [
+        {
+          "name": "Get Wishlist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/wishlist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wishlist"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add Wishlist Item",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/wishlist/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wishlist",
+                "items"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Wishlist item added successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Wishlist Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/wishlist/items/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wishlist",
+                "items",
+                "{{productId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Wishlist item deleted successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear Wishlist",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/wishlist",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "wishlist"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Wishlist cleared successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Recently Viewed",
+      "item": [
+        {
+          "name": "Get Recently Viewed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/recently-viewed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recently-viewed"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record Recently Viewed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/recently-viewed/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recently-viewed",
+                "{{productId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Recently viewed Product recorded successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Recently Viewed Item",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/recently-viewed/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recently-viewed",
+                "{{productId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Clear Recently Viewed",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/recently-viewed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recently-viewed"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Customer Orders",
+      "item": [
+        {
+          "name": "List Customer Orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Orders retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Orders retrieved successfully\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Customer Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"variantId\": \"{{variantId}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"shippingAddress\": {\n    \"fullName\": \"Test Customer\",\n    \"phone\": \"+91 98765-43210\",\n    \"email\": \"customer@example.com\",\n    \"addressLine1\": \"Flat 101, Example Residency\",\n    \"addressLine2\": \"Baner Road\",\n    \"landmark\": \"Near Example Mall\",\n    \"city\": \"Pune\",\n    \"state\": \"Maharashtra\",\n    \"postalCode\": \"411045\",\n    \"country\": \"India\"\n  },\n  \"paymentMethod\": \"cash-on-delivery\",\n  \"customerNote\": \"Postman API documentation test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 201\", function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "pm.test(\"Order request succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "});",
+                  "",
+                  "pm.test(\"Order ID captured\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const orderId = body?.data?.order?.id;",
+                  "  pm.expect(orderId).to.be.a('string').and.not.empty;",
+                  "  pm.environment.set(\"orderId\", orderId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Customer Order Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order details retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.have.property('order');",
+                  "  pm.expect(body.data.order.id).to.eql(pm.environment.get('orderId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Customer Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"I selected the wrong size while placing the Order.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{orderId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order cancelled successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Order cancelled successfully\");",
+                  "  pm.expect(body.data.order.status).to.eql(\"cancelled\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Customer Return Requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/returns",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "returns"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return requests retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Return requests retrieved successfully\");",
+                  "  pm.expect(body.data.returnRequests).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Customer Replacements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/replacements",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "replacements"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacements retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Return replacements retrieved successfully\");",
+                  "  pm.expect(body.data.replacements).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Online Payment Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{onlineIdempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"productId\": \"{{productId}}\",\n      \"variantId\": \"{{variantId}}\",\n      \"quantity\": 1\n    }\n  ],\n  \"shippingAddress\": {\n    \"fullName\": \"Test Customer\",\n    \"phone\": \"+91 98765-43210\",\n    \"email\": \"customer@example.com\",\n    \"addressLine1\": \"Flat 101, Example Residency\",\n    \"addressLine2\": \"Baner Road\",\n    \"landmark\": \"Near Example Mall\",\n    \"city\": \"Pune\",\n    \"state\": \"Maharashtra\",\n    \"postalCode\": \"411045\",\n    \"country\": \"India\"\n  },\n  \"paymentMethod\": \"online\",\n  \"customerNote\": \"Postman online payment test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 201\", function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "pm.test(\"Online order created successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data.order.payment.method).to.eql('online');",
+                  "});",
+                  "",
+                  "pm.test(\"Online Order ID captured\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const orderId = body?.data?.order?.id;",
+                  "  pm.expect(orderId).to.be.a('string').and.not.empty;",
+                  "  pm.environment.set(\"onlineOrderId\", orderId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Initiate Online Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"razorpay\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{onlineOrderId}}/payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{onlineOrderId}}",
+                "payments"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status is 200 or 201\", function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "pm.test(\"Payment attempt succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data.payment.provider).to.eql('razorpay');",
+                  "});",
+                  "",
+                  "pm.test(\"Payment IDs captured\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const paymentId = body?.data?.payment?.id;",
+                  "  const razorpayOrderId = body?.data?.payment?.providerReference?.orderId;",
+                  "",
+                  "  pm.expect(paymentId).to.be.a('string').and.not.empty;",
+                  "  pm.expect(razorpayOrderId).to.be.a('string').and.not.empty;",
+                  "",
+                  "  pm.environment.set(\"paymentTransactionId\", paymentId);",
+                  "  pm.environment.set(\"razorpayOrderId\", razorpayOrderId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm Razorpay Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"razorpay_order_id\": \"{{razorpayOrderId}}\",\n  \"razorpay_payment_id\": \"{{razorpayPaymentId}}\",\n  \"razorpay_signature\": \"{{razorpaySignature}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{onlineOrderId}}/payments/{{paymentTransactionId}}/confirm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{onlineOrderId}}",
+                "payments",
+                "{{paymentTransactionId}}",
+                "confirm"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Payment confirmation succeeded\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.have.property('payment');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Customer Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requestedResolution\": \"refund\",\n  \"items\": [\n    {\n      \"orderItemId\": \"{{returnOrderItemId}}\",\n      \"quantity\": 1,\n      \"reason\": \"defective\",\n      \"details\": \"The stitching near the sleeve is damaged.\"\n    }\n  ],\n  \"customerNote\": \"Please arrange pickup from the delivery address.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{returnOrderId}}/returns",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{returnOrderId}}",
+                "returns"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Return request created successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Return request created successfully\");",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request ID captured\", function () {",
+                  "  const body = pm.response.json();",
+                  "  const returnRequestId = body?.data?.returnRequest?.id;",
+                  "  pm.expect(returnRequestId).to.be.a('string').and.not.empty;",
+                  "  pm.environment.set(\"returnRequestId\", returnRequestId);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Customer Return Request Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/returns/{{returnRequestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "returns",
+                "{{returnRequestId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return request retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Return request retrieved successfully\");",
+                  "  pm.expect(body.data.returnRequest.id).to.eql(pm.environment.get('returnRequestId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Customer Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"I no longer want to return this product.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/returns/{{returnRequestId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "returns",
+                "{{returnRequestId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return request cancelled successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.message).to.eql(\"Return request cancelled successfully\");",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"cancelled\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Customer Replacement Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/replacements/{{replacementId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "replacements",
+                "{{replacementId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Replacement retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.id).to.eql(",
+                  "    pm.environment.get(\"replacementId\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin Orders",
+      "item": [
+        {
+          "name": "List Admin Orders",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Orders retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Orders retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.orders).to.be.an('array');",
+                  "",
+                  "  pm.expect(body.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Order Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders/{{adminOrderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders",
+                "{{adminOrderId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Order retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Order retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.order.id).to.eql(",
+                  "    pm.environment.get(\"adminOrderId\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Admin Order Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\",\n  \"note\": \"Order verified and confirmed.\",\n  \"adminNote\": \"Address and stock verified.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders/{{adminOrderId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders",
+                "{{adminOrderId}}",
+                "status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order status updated successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Order status updated successfully\");",
+                  "",
+                  "  pm.expect(body.data.order.status).to.eql(\"confirmed\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ship Admin Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"carrier\": \"Blue Dart\",\n  \"trackingNumber\": \"BD123456789IN\",\n  \"trackingUrl\": \"https://tracking.example.com/BD123456789IN\",\n  \"note\": \"Order handed over to the delivery partner.\",\n  \"adminNote\": \"Package verified before dispatch.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders/{{adminOrderId}}/ship",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders",
+                "{{adminOrderId}}",
+                "ship"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order shipped successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Order shipped successfully\");",
+                  "",
+                  "  pm.expect(body.data.order.status).to.eql(\"shipped\");",
+                  "",
+                  "  pm.expect(body.data.order.shipment.carrier).to.eql(\"Blue Dart\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deliver Admin Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Delivery confirmed by the courier partner.\",\n  \"adminNote\": \"Customer received the package successfully.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders/{{adminOrderId}}/deliver",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders",
+                "{{adminOrderId}}",
+                "deliver"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order delivered successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Order delivered successfully\");",
+                  "",
+                  "  pm.expect(body.data.order.status).to.eql(\"delivered\");",
+                  "",
+                  "  pm.expect(body.data.order.shipment.deliveredAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund Admin Order",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"refundReferenceId\", `RFND-POSTMAN-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order refunded successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Order refunded successfully\");",
+                  "",
+                  "  pm.expect(body.data.order.status).to.eql(\"refunded\");",
+                  "",
+                  "  pm.expect(body.data.order.payment.status).to.eql(\"refunded\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Customer returned the delivered product because it was defective.\",\n  \"referenceId\": \"{{refundReferenceId}}\",\n  \"note\": \"Full refund completed after return verification.\",\n  \"adminNote\": \"Returned product requires warehouse inspection.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/orders/{{adminOrderId}}/refund",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "orders",
+                "{{adminOrderId}}",
+                "refund"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Returns",
+      "item": [
+        {
+          "name": "List Admin Return Requests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return Requests retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return Requests retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequests).to.be.an('array');",
+                  "",
+                  "  pm.expect(body.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Return Request Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return Request retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return Request retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.id).to.eql(",
+                  "    pm.environment.get(\"adminReturnRequestId\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Approve Admin Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adminNote\": \"The Return Request was reviewed and approved.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "approve"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request approved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request approved successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"approved\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.approval.approvedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reject Admin Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"The Return Request does not satisfy the return policy.\",\n  \"adminNote\": \"The submitted evidence was insufficient.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "reject"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request rejected successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request rejected successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"rejected\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.rejection.rejectedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark Admin Return Request In Transit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"carrier\": \"Blue Dart\",\n  \"trackingNumber\": \"BD-RETURN-SUCCESS-001\",\n  \"trackingUrl\": \"https://tracking.example.com/BD-RETURN-SUCCESS-001\",\n  \"note\": \"Customer pickup completed at the registered address.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/mark-in-transit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "mark-in-transit"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request marked as in transit successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request marked as in transit successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"in-transit\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.shipment.carrier).to.eql(\"Blue Dart\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.shipment.markedInTransitAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Receive Admin Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"The sealed parcel was received at the warehouse.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/receive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "receive"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request received successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request received successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"received\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.receipt.receivedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inspect Admin Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"orderItemId\": \"{{adminReturnOrderItemId}}\",\n      \"resellableQuantity\": 1,\n      \"damagedQuantity\": 0,\n      \"rejectedQuantity\": 0,\n      \"note\": \"Returned item inspected and found suitable for resale.\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/inspect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "inspect"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request inspected successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request inspected successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"inspected\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.items[0].inspection.inspectedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete Admin Return Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adminNote\": \"Warehouse Return processing completed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "complete"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request completed successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request completed successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"completed\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.completion.completedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund Admin Return Request",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"returnRefundReferenceId\", `RFND-RETURN-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return Request refunded successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return Request refunded successfully\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.status).to.eql(\"completed\");",
+                  "",
+                  "  pm.expect(body.data.returnRequest.refund.refundedAt).to.exist;",
+                  "",
+                  "  pm.expect(body.data.returnRequest.refund.referenceId).to.eql(",
+                  "    pm.variables.get(\"returnRefundReferenceId\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"referenceId\": \"{{returnRefundReferenceId}}\",\n  \"note\": \"Customer Return refund processed.\",\n  \"adminNote\": \"Financial Return refund completed.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/refund",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "refund"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Admin Return Replacement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/{{adminReturnRequestId}}/replacement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "{{adminReturnRequestId}}",
+                "replacement"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement created\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"reserved\");",
+                  "",
+                  "  pm.expect(body.data.replacement.id).to.exist;",
+                  "",
+                  "  pm.environment.set(\"replacementId\", body.data.replacement.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Return Operational Metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "metrics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return operational metrics retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return operational metrics retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.metrics).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.metrics.returns).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.metrics.replacements).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.metrics.actionRequired).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Return Metrics Trend",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-returns/metrics/trends?from=2026-08-01&to=2026-08-07",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-returns",
+                "metrics",
+                "trends"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-08-01"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-08-07"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return metrics trend retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return operational metrics trend retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.trend).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.trend.period).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.trend.points).to.be.an('array');",
+                  "",
+                  "  pm.expect(body.data.trend.totals).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin Replacements",
+      "item": [
+        {
+          "name": "List Admin Return Replacements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return replacements retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return replacements retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacements).to.be.an('array');",
+                  "",
+                  "  pm.expect(body.data.pagination).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Return Replacement Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Admin Return replacement retrieved successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Admin Return replacement retrieved successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement).to.be.an('object');",
+                  "",
+                  "  pm.expect(body.data.replacement.id).to.eql(",
+                  "    pm.environment.get(\"replacementId\")",
+                  "  );",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Process Admin Return Replacement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"note\": \"Warehouse started preparing the replacement package.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}/process",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}",
+                "process"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement processing started successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement processing started successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"processing\");",
+                  "",
+                  "  pm.expect(body.data.replacement.processing.processedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ship Admin Return Replacement",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"replacementTrackingNumber\", `RPL-POSTMAN-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement shipped successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement shipped successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"shipped\");",
+                  "",
+                  "  pm.expect(body.data.replacement.shipment.carrier).to.eql(\"Blue Dart\");",
+                  "",
+                  "  pm.expect(body.data.replacement.shipment.trackingNumber).to.eql(",
+                  "    pm.variables.get(\"replacementTrackingNumber\")",
+                  "  );",
+                  "",
+                  "  pm.expect(body.data.replacement.shipment.shippedAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"carrier\": \"Blue Dart\",\n  \"trackingNumber\": \"{{replacementTrackingNumber}}\",\n  \"trackingUrl\": \"https://tracking.example.com/{{replacementTrackingNumber}}\",\n  \"note\": \"Replacement package handed over to courier.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}/ship",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}",
+                "ship"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Admin Return Replacement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}/deliver",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}",
+                "deliver"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement delivered successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement delivered successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"delivered\");",
+                  "",
+                  "  pm.expect(body.data.replacement.shipment.deliveredAt).to.exist;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Admin Return Replacement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Customer no longer requires the replacement.\",\n  \"note\": \"Replacement cancelled before shipment.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}",
+                "cancel"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement cancelled successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement cancelled successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"cancelled\");",
+                  "",
+                  "  pm.expect(body.data.replacement.cancellation.cancelledAt).to.exist;",
+                  "",
+                  "  pm.expect(body.data.replacement.cancellation.reason).to.eql(\"Customer no longer requires the replacement.\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fail Admin Return Replacement",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Replacement fulfillment could not continue.\",\n  \"note\": \"Reserved units were unsuitable for dispatch.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/order-return-replacements/{{replacementId}}/fail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "order-return-replacements",
+                "{{replacementId}}",
+                "fail"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Return replacement marked as failed successfully\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "",
+                  "  pm.expect(body.message).to.eql(\"Return replacement marked as failed successfully\");",
+                  "",
+                  "  pm.expect(body.data.replacement.status).to.eql(\"failed\");",
+                  "",
+                  "  pm.expect(body.data.replacement.failure.failedAt).to.exist;",
+                  "",
+                  "  pm.expect(body.data.replacement.failure.reason).to.eql(\"Replacement fulfillment could not continue.\");",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin Payment Reconciliation",
+      "item": [
+        {
+          "name": "List Admin Payment Reconciliations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-reconciliations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-reconciliations"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin Payment Webhooks",
+      "item": [
+        {
+          "name": "List Admin Payment Webhooks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-webhooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-webhooks"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Payment Webhook Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-webhooks/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-webhooks",
+                "summary"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Payment Webhook Worker Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-webhooks/worker-health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-webhooks",
+                "worker-health"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Requeue Admin Payment Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-CSRF-Protection",
+                "value": "1"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-webhooks/{{paymentWebhookEventId}}/requeue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-webhooks",
+                "{{paymentWebhookEventId}}",
+                "requeue"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Webhook requeue response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Admin Payment Webhook Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/payment-webhooks/{{paymentWebhookEventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "payment-webhooks",
+                "{{paymentWebhookEventId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Payment webhook details response is successful\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.success).to.eql(true);",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment Provider Webhooks",
+      "item": [
+        {
+          "name": "Razorpay Payment Webhook",
+          "request": {
+            "method": "POST",
+            "description": "Razorpay provider webhook endpoint. The x-razorpay-signature must be generated from the exact raw request body using the configured Razorpay webhook secret. Never commit the webhook secret to the Postman environment.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-razorpay-event-id",
+                "value": "{{razorpayWebhookEventId}}"
+              },
+              {
+                "key": "x-razorpay-signature",
+                "value": "{{razorpayWebhookSignature}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entity\": \"event\",\n  \"event\": \"payment.captured\",\n  \"contains\": [\n    \"payment\"\n  ],\n  \"payload\": {\n    \"payment\": {\n      \"entity\": {\n        \"id\": \"{{razorpayPaymentId}}\",\n        \"entity\": \"payment\",\n        \"amount\": 10000,\n        \"currency\": \"INR\",\n        \"status\": \"captured\",\n        \"order_id\": \"{{razorpayOrderId}}\",\n        \"method\": \"upi\",\n        \"captured\": true\n      }\n    }\n  },\n  \"created_at\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/webhooks/payments/razorpay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "webhooks",
+                "payments",
+                "razorpay"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Webhook was stored or safely reused\", function () {",
+                  "  const body = pm.response.json();",
+                  "",
+                  "  pm.expect(body.data).to.be.an('object');",
+                  "  pm.expect(['store', 'reuse']).to.include(body.data.action);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
