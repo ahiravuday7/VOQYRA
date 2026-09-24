@@ -10411,9 +10411,14 @@ Part 228.26 — Mapper responsibility hotspot
 Part 228.27 — Large category service responsibility review
 Part 228.28 — Order repository responsibility review
 Part 228.29 — Payment model responsibility review
-Part 229.1 — Backend v1 final regression
 
 |--------------------------------------------------------------------------
+Part 229.1 — Backend v1 final regression
+Part 229.2 — Final production dependency audit
+Part 229.3 — Final MongoDB index audit
+Part 229.4 — Final working-tree review
+Part 229.5 — Final diff cleanliness check
+
 |--------------------------------------------------------------------------
 
 info:
