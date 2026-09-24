@@ -157,7 +157,7 @@ app.use("/api", apiRateLimiter);
 | Routes
 */
 
-// Temporary root route
+// API root route
 app.get("/", (request, response) => {
   return response.status(200).json({
     success: true,
