@@ -18,7 +18,8 @@
     "migrate:product-search-index": "node src/scripts/migrate-product-search-index.js",
     "seed": "node src/seeds/seed.js",
     "seed:preflight": "node src/seeds/seed-preflight.js",
-    "seed:dev-users": "node src/seeds/seed-dev-users.js"
+    "seed:dev-users": "node src/seeds/seed-dev-users.js",
+    "audit:indexes": "node src/scripts/audit-model-indexes.js"
   },
   "keywords": [
     "clothing",

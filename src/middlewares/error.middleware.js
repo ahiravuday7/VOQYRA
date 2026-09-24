@@ -102,10 +102,10 @@ const errorMiddleware = (error, request, response, next) => {
 
   const isProduction = env.NODE_ENV === "production";
 
-  const isOperationalError =
-    error.isOperational === true || normalizedError.statusCode < 500;
+  const shouldExposeError =
+    normalizedError.statusCode < 500 || error.expose === true;
 
-  const hideInternalDetails = isProduction && !isOperationalError;
+  const hideInternalDetails = isProduction && !shouldExposeError;
 
   const responseBody = {
     success: false,

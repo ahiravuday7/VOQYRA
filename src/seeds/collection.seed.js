@@ -75,22 +75,24 @@ const COLLECTION_SEED_DATA = Object.freeze([
 | Seed Collections
 |--------------------------------------------------------------------------
 |
-| Idempotency:
+| Seed Behavior
 |
 | First run:
 | Collection not found
-| → create
+| -> create
 |
 | Later runs:
 | same slug found
-| → update/reuse
+| -> reuse existing Collection unchanged
 |
-| Soft-deleted seeded Collection:
-| → restore
+| Soft-deleted or inactive seeded Collection:
+| -> reuse existing Collection unchanged
+| -> do not automatically restore or reactivate it
 |
-| We intentionally do NOT overwrite banner.
+| Existing banner and other catalog edits are preserved.
+|
 | Real banner images can be uploaded later.
-|
+|--------------------------------------------------------------------------
 */
 
 export const seedCollections = async () => {

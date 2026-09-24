@@ -10292,7 +10292,74 @@ Next step — repeat only this test 5 times
 Next: full backend regression checkpoint
 Next — remove only temporary recovery/debug files
 |--------------------------------------------------------------------------
-
+Part 227 — Deployment Readiness
+Part 227.1 — Check startup + environment configuration
+Part 227.2 — Database + HTTP production configuration
+Part 227.3 — Inspect rate limiting, health check, and proxy-sensitive auth
+Part 227.4 — Identify deployment topology
+Part 227.5 — Secrets + repository hygiene
+Part 227.6 — Verify .env.example completeness
+Part 227.6.1 — Verify seed variables are actually used
+Part 227.7 — Verify seed scripts are safe in production
+Part 227.7.1 — Inspect seed safety rules
+Part 227.7.2 — Check seed idempotency/destructive operations
+Part 227.7.3 — Check development-user seed repeatability
+Part 227.7.4 — Check the remaining seed modules
+Part 227.7.5 — Inspect shared seed helper
+Part 227.7.6 — Check seed tests
+Part 227.7.6 — Show exact seed tests and assertions
+Part 227.7.6 — Show only seed test names
+Part 227.7.7 — Find misleading seed comments only
+Part 227.7.8 — Fix Collection seed documentation
+Part 227.8 — Production dependency security audit
+Part 227.8.1 — Find dependency paths
+Part 227.8.2 — Dry-run the security fix
+Part 227.8.3 — Safer dry run
+Part 227.8.4 — Apply the controlled audit fix
+Part 227.8.5 — Verify production audit + resolved versions
+Part 227.8.6 — Full backend regression
+Part 227.9 — Error handling & sensitive-data exposure
+Part 227.9.1 — Logger configuration
+Part 227.9.2 — Global error middleware
+Part 227.9.3 — AppError contract
+Part 227.9.3 — AppError contract: needs usage review
+Part 227.9.4 — Narrow the output to only 5xx AppErrors
+Part 227.9.5 — Harden production 5xx responses
+Part 227.9.6 — Verify production 5xx behavior with existing tests
+Part 227.9.7 — Add explicit expose support
+Part 227.9.8 — Error logging security
+Part 227.9.9 — Request logging security
+Part 227.9.10 — Image storage error exposure
+Part 227.9.11 — Full backend regression
+Part 227.10 — Background Worker Production Safety
+Part 227.10.1 — Payment webhook worker
+Part 227.10.2 — Payment reconciliation worker
+Part 227.10.3 — Reservation-expiry worker
+Part 227.10.4 — Run worker test suites
+Part 227.11 — Worker health/admin endpoint exposure
+Part 227.11.1 — Verify admin protection
+Part 227.11.2 — Check exactly what health data admins receive
+Part 227.11.2 — Finish the mapper check
+Part 227.12 — MongoDB index deployment safety
+Part 227.12.1 — Check normal DB connection
+Part 227.12.2 — Disable automatic index creation in production
+Part 227.12.3 — Verify explicit index-management scripts
+Part 227.12.4 — List index scripts
+Part 227.12.5 — Inspect model-index audit coverage
+Part 227.12.6 — Verify audit failure behavior
+Part 227.12.7 — Expose the index audit through npm
+Part 227.13 — Production process / package startup check
+Part 227.13.1 — Production startup/package configuration: PASS
+Part 227.13.2 — Verify reproducible production install
+Part 227.14 — Regression checkpoint after deployment changes
+Part 227.15 — Final working-tree review
+Part 227.15.1 — Review only our source-code changes
+Part 227.15.2 — Verify database.js
+Part 227.15.3 — error.middleware.js: PASS
+Part 227.15.4 — app-error.js: PASS
+Part 227.15.5 — error middleware test fixture: PASS
+Part 227.15.6 — collection.seed.js: PASS
+Part 227 — Deployment Readiness: COMPLETE ✅
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------
 |--------------------------------------------------------------------------

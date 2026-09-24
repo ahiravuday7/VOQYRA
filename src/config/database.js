@@ -10,6 +10,7 @@ import logger from "./logger.js";
 const connectDatabase = async () => {
   const connection = await mongoose.connect(env.MONGODB_URI, {
     serverSelectionTimeoutMS: 10000,
+    autoIndex: env.NODE_ENV !== "production",
   });
 
   logger.info(

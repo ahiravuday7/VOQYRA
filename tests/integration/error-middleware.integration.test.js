@@ -86,6 +86,7 @@ const buildApp = () => {
       details: {
         retryable: true,
       },
+      expose: true,
     });
   });
 

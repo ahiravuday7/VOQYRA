@@ -8,6 +8,8 @@ class AppError extends Error {
     this.details = options.details ?? null;
     this.isOperational = true;
 
+    this.expose = options.expose ?? statusCode < 500;
+
     Error.captureStackTrace(this, this.constructor);
   }
 }
